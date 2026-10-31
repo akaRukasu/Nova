@@ -36,14 +36,7 @@ actor AudioCache {
         inFlight.insert(id)
         defer { inFlight.remove(id) }
         do {
-            let (temp, response) = try await URLSession.shared.download(from: remote)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                try? FileManager.default.removeItem(at: temp)
-                return
-            }
-            let destination = fileURL(for: id)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: temp, to: destination)
+            try await ChunkedDownloader.download(remote, to: fileURL(for: id))
             prune()
         } catch {
             // Le cache est un bonus : un échec ne bloque jamais la lecture.

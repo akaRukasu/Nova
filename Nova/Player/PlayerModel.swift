@@ -15,9 +15,21 @@ final class PlayerModel {
     private(set) var isLoading = false
     private(set) var currentTime: TimeInterval = 0
     private(set) var duration: TimeInterval = 0
+    private(set) var isShuffled = false
+    var repeatMode: RepeatMode = .off {
+        didSet { saveSession() }
+    }
+    /// Fin du minuteur de veille.
+    private(set) var sleepTimerEnd: Date?
     var errorMessage: String?
 
+    enum RepeatMode: Int, Codable {
+        case off, all, one
+    }
+
     let library = LibraryStore()
+    let downloads = DownloadStore()
+    let account = AccountStore()
 
     var current: Track? { queue.indices.contains(index) ? queue[index] : nil }
     var hasNext: Bool { index + 1 < queue.count }
@@ -32,11 +44,16 @@ final class PlayerModel {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var artwork: MPMediaItemArtwork?
     @ObservationIgnored private var failureCount = 0
+    /// Ordre de la file avant le mode aléatoire.
+    @ObservationIgnored private var unshuffledQueue: [Track]?
+    @ObservationIgnored private var sleepTask: Task<Void, Never>?
+    @ObservationIgnored private var lastSessionSave = Date.distantPast
 
     init() {
         configureAudioSession()
         configureRemoteCommands()
         player.automaticallyWaitsToMinimizeStalling = true
+        restoreSession()
 
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in self?.tick(time) }
@@ -58,27 +75,119 @@ final class PlayerModel {
     // MARK: Commandes
 
     /// Lance une liste à partir d'un index, puis complète la file avec la radio du titre.
-    func play(_ tracks: [Track], startAt start: Int) {
-        guard tracks.indices.contains(start) else { return }
-        queue = tracks
-        index = start
+    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false) {
+        guard !tracks.isEmpty else { return }
+        if shuffled {
+            unshuffledQueue = tracks
+            queue = tracks.shuffled()
+            index = 0
+            isShuffled = true
+        } else {
+            unshuffledQueue = nil
+            isShuffled = false
+            queue = tracks
+            index = min(max(start, 0), tracks.count - 1)
+        }
         load()
-        if tracks.count - start <= 1 { extendWithRadio(from: tracks[start]) }
+        if queue.count - index <= 1 { extendWithRadio(from: queue[index]) }
     }
 
     func startRadio(from track: Track) {
         play([track], startAt: 0)
     }
 
+    /// Lance un album, une playlist ou un artiste.
+    func play(_ collection: MusicCollection, shuffled: Bool = false) {
+        Task {
+            do {
+                let tracks = try await client.allTracks(of: collection)
+                guard !tracks.isEmpty else { throw NovaError.emptyPage }
+                play(tracks, shuffled: shuffled)
+            } catch {
+                errorMessage = "« \(collection.title) » : \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func enqueue(_ collection: MusicCollection) {
+        Task {
+            guard let tracks = try? await client.allTracks(of: collection) else { return }
+            enqueue(tracks)
+        }
+    }
+
     func playNext(_ track: Track) {
         guard current != nil else { play([track], startAt: 0); return }
-        queue.removeAll { $0.id == track.id && $0.id != current?.id }
+        if let existing = queue.indices.first(where: { $0 > index && queue[$0].id == track.id }) {
+            queue.remove(at: existing)
+        }
         queue.insert(track, at: min(index + 1, queue.count))
+        saveSession()
     }
 
     func enqueue(_ track: Track) {
-        guard current != nil else { play([track], startAt: 0); return }
-        queue.append(track)
+        enqueue([track])
+    }
+
+    func enqueue(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        guard current != nil else { play(tracks); return }
+        queue.append(contentsOf: tracks)
+        saveSession()
+    }
+
+    func toggleShuffle() {
+        guard let current else { return }
+        if isShuffled {
+            // Retour à l'ordre d'origine, en gardant les titres ajoutés depuis.
+            var restored = unshuffledQueue ?? queue
+            let known = Set(restored.map(\.id))
+            restored += queue.filter { !known.contains($0.id) }
+            queue = restored
+            index = restored.firstIndex { $0.id == current.id } ?? 0
+            unshuffledQueue = nil
+            isShuffled = false
+        } else {
+            unshuffledQueue = queue
+            let upcoming = upNext.shuffled()
+            queue.replaceSubrange((index + 1)..<queue.count, with: upcoming)
+            isShuffled = true
+        }
+        saveSession()
+    }
+
+    func cycleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+    }
+
+    func clearUpNext() {
+        guard current != nil, hasNext else { return }
+        queue.removeSubrange((index + 1)..<queue.count)
+        saveSession()
+    }
+
+    /// Minuteur de veille : met en pause après `minutes`, ou l'annule avec `nil`.
+    func setSleepTimer(minutes: Int?) {
+        sleepTask?.cancel()
+        sleepTimerEnd = nil
+        guard let minutes else { return }
+        sleepTimerEnd = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        sleepTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(minutes * 60))
+            guard !Task.isCancelled, let self else { return }
+            self.pause()
+            self.sleepTimerEnd = nil
+        }
+    }
+
+    func toggleLike(_ track: Track) {
+        let liked = library.toggleLike(track)
+        guard account.isSignedIn else { return }
+        Task { try? await client.setLiked(liked, videoID: track.id) }
     }
 
     func jump(to position: Int) {
@@ -91,6 +200,7 @@ final class PlayerModel {
         // Positions relatives à « À suivre ».
         let absolute = IndexSet(offsets.map { $0 + index + 1 })
         queue.remove(atOffsets: absolute)
+        saveSession()
     }
 
     func moveInQueue(from source: IndexSet, to destination: Int) {
@@ -98,6 +208,7 @@ final class PlayerModel {
         var upcoming = upNext
         upcoming.move(fromOffsets: source, toOffset: destination)
         queue.replaceSubrange(base..., with: upcoming)
+        saveSession()
     }
 
     func togglePlay() {
@@ -106,7 +217,7 @@ final class PlayerModel {
 
     func resume() {
         guard current != nil else { return }
-        if player.currentItem == nil { load(); return }
+        if player.currentItem == nil { load(resumeAt: currentTime); return }
         try? AVAudioSession.sharedInstance().setActive(true)
         player.play()
         isPlaying = true
@@ -117,11 +228,17 @@ final class PlayerModel {
         player.pause()
         isPlaying = false
         updateNowPlaying()
+        saveSession()
     }
 
     func next() {
         guard hasNext else {
-            if let current { extendWithRadio(from: current, thenAdvance: true) }
+            if repeatMode == .all, !queue.isEmpty {
+                index = 0
+                load()
+            } else if let current {
+                extendWithRadio(from: current, thenAdvance: true)
+            }
             return
         }
         index += 1
@@ -138,6 +255,10 @@ final class PlayerModel {
     }
 
     func seek(to seconds: TimeInterval) {
+        guard player.currentItem != nil else {
+            currentTime = max(0, seconds)
+            return
+        }
         let target = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         currentTime = max(0, seconds)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
@@ -147,7 +268,7 @@ final class PlayerModel {
 
     // MARK: Chargement
 
-    private func load() {
+    private func load(resumeAt startTime: TimeInterval = 0) {
         guard let track = current else { return }
         loadTask?.cancel()
         statusObservation = nil
@@ -155,17 +276,18 @@ final class PlayerModel {
         player.replaceCurrentItem(with: nil)
         isLoading = true
         isPlaying = false
-        currentTime = 0
+        currentTime = startTime
         duration = track.duration ?? 0
         artwork = nil
         updateNowPlaying()
+        saveSession(force: true)
 
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let url = try await self.playableURL(for: track)
                 try Task.checkCancellation()
-                self.start(url: url, track: track)
+                self.start(url: url, track: track, at: startTime)
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -176,6 +298,7 @@ final class PlayerModel {
     }
 
     private func playableURL(for track: Track) async throws -> URL {
+        if let file = downloads.localURL(for: track.id) { return file }
         if let local = await AudioCache.shared.localURL(for: track.id) { return local }
         let stream = try await StreamResolver.audioStream(for: track.id)
         if stream.isM4A {
@@ -184,7 +307,7 @@ final class PlayerModel {
         return stream.url
     }
 
-    private func start(url: URL, track: Track) {
+    private func start(url: URL, track: Track, at startTime: TimeInterval) {
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 30
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
@@ -196,6 +319,9 @@ final class PlayerModel {
             }
         }
         player.replaceCurrentItem(with: item)
+        if startTime > 1 {
+            player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
+        }
         try? AVAudioSession.sharedInstance().setActive(true)
         player.play()
         isPlaying = true
@@ -222,18 +348,19 @@ final class PlayerModel {
     }
 
     private func trackDidEnd() {
-        if hasNext {
-            index += 1
-            load()
-        } else if let current {
-            extendWithRadio(from: current, thenAdvance: true)
+        if repeatMode == .one {
+            seek(to: 0)
+            player.play()
+            return
         }
+        next()
     }
 
     /// Prépare le titre suivant dans le cache pour un enchaînement instantané.
     private func prefetchNext() {
         guard hasNext else { return }
         let next = queue[index + 1]
+        guard downloads.localURL(for: next.id) == nil else { return }
         Task.detached(priority: .background) {
             guard await !AudioCache.shared.contains(next.id),
                   let stream = try? await StreamResolver.audioStream(for: next.id),
@@ -249,6 +376,7 @@ final class PlayerModel {
             let fresh = radio.filter { !known.contains($0.id) }
             guard !fresh.isEmpty else { return }
             self.queue.append(contentsOf: fresh)
+            self.saveSession()
             if thenAdvance, self.current?.id == seed.id { self.next() } else { self.prefetchNext() }
         }
     }
@@ -257,7 +385,8 @@ final class PlayerModel {
 
     private func tick(_ time: CMTime) {
         let seconds = time.seconds
-        if seconds.isFinite { currentTime = seconds }
+        if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
+        if isPlaying, Date().timeIntervalSince(lastSessionSave) > 15 { saveSession() }
         if let itemDuration = player.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
             if abs(itemDuration - duration) > 0.5 {
                 duration = itemDuration
@@ -343,5 +472,44 @@ final class PlayerModel {
             self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             self.updateNowPlaying()
         }
+    }
+
+    // MARK: Reprise de la session
+
+    private struct Session: Codable {
+        var queue: [Track]
+        var index: Int
+        var time: TimeInterval
+        var repeatMode: RepeatMode
+        var unshuffledQueue: [Track]?
+    }
+
+    @ObservationIgnored private let sessionURL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Nova", isDirectory: true)
+        .appendingPathComponent("session.json")
+
+    /// Enregistre la file et la position pour les retrouver au prochain lancement.
+    func saveSession(force: Bool = false) {
+        guard force || Date().timeIntervalSince(lastSessionSave) > 1 else { return }
+        lastSessionSave = Date()
+        let session = Session(queue: queue, index: index, time: currentTime,
+                              repeatMode: repeatMode, unshuffledQueue: unshuffledQueue)
+        try? FileManager.default.createDirectory(at: sessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(session).write(to: sessionURL, options: .atomic)
+    }
+
+    private func restoreSession() {
+        guard let data = try? Data(contentsOf: sessionURL),
+              let session = try? JSONDecoder().decode(Session.self, from: data),
+              session.queue.indices.contains(session.index) else { return }
+        queue = session.queue
+        index = session.index
+        currentTime = session.time
+        duration = session.queue[session.index].duration ?? 0
+        repeatMode = session.repeatMode
+        unshuffledQueue = session.unshuffledQueue
+        isShuffled = session.unshuffledQueue != nil
+        updateNowPlaying()
     }
 }

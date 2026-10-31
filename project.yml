@@ -23,8 +23,8 @@ targets:
       path: Nova/Info.plist
       properties:
         CFBundleDisplayName: Nova
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "2"
         LSApplicationCategoryType: public.app-category.music
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
