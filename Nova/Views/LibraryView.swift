@@ -5,6 +5,8 @@ struct LibraryView: View {
     @Environment(DownloadStore.self) private var downloads
     @Environment(AccountStore.self) private var account
     @Environment(Router.self) private var router
+    @Environment(ImportManager.self) private var importer
+    @State private var showImport = false
     @State private var cacheSize: Int64 = 0
     @State private var downloadsSize: Int64 = 0
     @State private var confirmClearCache = false
@@ -12,11 +14,25 @@ struct LibraryView: View {
 
     var body: some View {
         List {
+            if !importer.jobs.isEmpty {
+                ImportJobsSection()
+            }
             Section {
                 link(.liked, "Titres likés", "heart.fill", .pink, count: library.liked.count)
                 link(.downloads, "Téléchargements", "arrow.down.circle.fill", .novaAccent,
                      count: downloads.tracks.count, busy: !downloads.pending.isEmpty)
                 link(.history, "Historique", "clock.fill", .orange, count: library.recents.count)
+                Button {
+                    showImport = true
+                } label: {
+                    Label {
+                        Text("Importer depuis une autre plateforme")
+                            .foregroundStyle(Color.primary)
+                    } icon: {
+                        Image(systemName: "square.and.arrow.down.on.square.fill")
+                            .foregroundStyle(Color.novaAccent)
+                    }
+                }
             }
 
             if account.isSignedIn {
@@ -98,7 +114,18 @@ struct LibraryView: View {
         }
         .navigationTitle("Bibliothèque")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showImport = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .accessibilityLabel("Importer")
+            }
             ToolbarItem(placement: .topBarTrailing) { AccountButton() }
+        }
+        .sheet(isPresented: $showImport) {
+            ImportView()
         }
         .task(id: downloads.tracks.count) { await refreshSizes() }
         .confirmationDialog("Vider le cache d'écoute ?", isPresented: $confirmClearCache, titleVisibility: .visible) {

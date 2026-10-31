@@ -81,6 +81,13 @@ final class LibraryStore {
         return true
     }
 
+    /// Ajoute des titres importés aux titres likés.
+    func addLiked(_ tracks: [Track]) {
+        let fresh = tracks.filter { likedIDs.insert($0.id).inserted }
+        liked.insert(contentsOf: fresh, at: 0)
+        save()
+    }
+
     func removeLiked(at offsets: IndexSet) {
         liked.remove(atOffsets: offsets)
         likedIDs = Set(liked.map(\.id))

@@ -72,39 +72,6 @@ await step("Suggestions") {
 await step("Recherche « Tout »") {
     let shelves = try await client.search(query, scope: .all)
     show(shelves)
-    print("  RENDERERS : " + rendererSummary(lastResponse))
-    // Clés des sections de la recherche, dans l'ordre.
-    if let list = JSONWalk.first("sectionListRenderer", in: lastResponse) as? [String: Any],
-       let contents = list["contents"] as? [[String: Any]] {
-        for section in contents {
-            let key = section.keys.sorted().joined(separator: ",")
-            let inner = (section.values.first as? [String: Any])?.keys.sorted().joined(separator: ",") ?? ""
-            print("  section : \(key) → \(inner)")
-            if let inner = section["itemSectionRenderer"] as? [String: Any],
-               let contents = inner["contents"] as? [[String: Any]] {
-                print("    contenu : " + contents.map { $0.keys.sorted().joined(separator: "+") }.joined(separator: ", "))
-                if let first = contents.first,
-                   let data = try? JSONSerialization.data(withJSONObject: first, options: [.sortedKeys]),
-                   let text = String(data: data, encoding: .utf8) {
-                    print("    " + text.prefix(2500))
-                }
-            }
-            if let shelf = section["musicShelfRenderer"] as? [String: Any],
-               let first = (shelf["contents"] as? [[String: Any]])?.first {
-                print("    premier élément : \(first.keys.sorted())")
-                if let data = try? JSONSerialization.data(withJSONObject: first, options: [.sortedKeys]),
-                   let text = String(data: data, encoding: .utf8) {
-                    print("    " + text.prefix(1500))
-                }
-            }
-        }
-    }
-    if let card = JSONWalk.first("musicCardShelfRenderer", in: lastResponse) as? [String: Any],
-       let item = (card["contents"] as? [[String: Any]])?.dropFirst().first,
-       let data = try? JSONSerialization.data(withJSONObject: item, options: [.sortedKeys]),
-       let text = String(data: data, encoding: .utf8) {
-        print("  élément de la carte : " + text.prefix(2500))
-    }
 }
 
 for scope in SearchScope.allCases where scope != .all {

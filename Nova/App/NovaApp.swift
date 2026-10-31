@@ -4,6 +4,7 @@ import SwiftUI
 struct NovaApp: App {
     @State private var player = PlayerModel()
     @State private var router = Router()
+    @State private var importer = ImportManager()
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +14,7 @@ struct NovaApp: App {
                 .environment(player.downloads)
                 .environment(player.account)
                 .environment(router)
+                .environment(importer)
                 .tint(.novaAccent)
         }
     }

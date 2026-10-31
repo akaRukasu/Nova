@@ -252,8 +252,8 @@ enum ImportSources {
     static func appleMusic(_ url: URL) async throws -> ImportedPlaylist {
         let html = try await fetchText(url, service: "Apple Music")
         var name = metaContent(in: html, property: "og:title") ?? "Playlist Apple Music"
-        name = name.replacingOccurrences(of: " sur Apple Music", with: "")
-            .replacingOccurrences(of: " on Apple Music", with: "")
+        name = name.replacingOccurrences(of: #"\s+(par|by)\s+.+\s+(sur|on)\s+Apple Music$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+(sur|on)\s+Apple Music$"#, with: "", options: .regularExpression)
         var tracks: [ImportedTrack] = []
 
         if let data = scriptJSON(in: html, id: "serialized-server-data") {

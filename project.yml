@@ -32,6 +32,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
+        NSAppleMusicUsageDescription: Nova lit tes playlists Apple Music pour les importer.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.akarukasu.nova

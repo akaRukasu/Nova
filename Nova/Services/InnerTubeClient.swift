@@ -269,6 +269,9 @@ struct InnerTubeClient {
         request.setValue("67", forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue(Self.clientVersion, forHTTPHeaderField: "X-YouTube-Client-Version")
 
+        let visitor = VisitorStore.shared.value
+        if let visitor { request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id") }
+
         if let cookies = AuthSession.shared.cookieHeader {
             request.setValue(cookies, forHTTPHeaderField: "Cookie")
             request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
@@ -279,13 +282,15 @@ struct InnerTubeClient {
         }
 
         var payload = body
+        var client: [String: Any] = [
+            "clientName": Self.clientName,
+            "clientVersion": Self.clientVersion,
+            "hl": "fr",
+            "gl": "FR",
+        ]
+        if let visitor { client["visitorData"] = visitor }
         payload["context"] = [
-            "client": [
-                "clientName": Self.clientName,
-                "clientVersion": Self.clientVersion,
-                "hl": "fr",
-                "gl": "FR",
-            ],
+            "client": client,
             "user": ["lockedSafetyMode": false],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -294,7 +299,12 @@ struct InnerTubeClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         Self.debugHook?(endpoint, body, data)
         guard status == 200 else { throw NovaError.badResponse(status) }
-        return (try JSONSerialization.jsonObject(with: data) as? JSONObject) ?? [:]
+        let json = (try JSONSerialization.jsonObject(with: data) as? JSONObject) ?? [:]
+        // Les jetons de continuation sont liés à l'identifiant de visiteur de la session.
+        if visitor == nil, let value = (json["responseContext"] as? JSONObject)?["visitorData"] as? String {
+            VisitorStore.shared.value = value
+        }
+        return json
     }
 
     /// Réservé au diagnostic : reçoit chaque réponse brute.
@@ -306,5 +316,17 @@ struct InnerTubeClient {
         let digest = Insecure.SHA1.hash(data: Data("\(timestamp) \(sapisid) \(origin)".utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "SAPISIDHASH \(timestamp)_\(hex)"
+    }
+}
+
+/// Identifiant de visiteur YouTube, partagé par toutes les requêtes.
+final class VisitorStore: @unchecked Sendable {
+    static let shared = VisitorStore()
+    private let lock = NSLock()
+    private var stored: String?
+
+    var value: String? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
     }
 }
