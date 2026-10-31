@@ -107,7 +107,7 @@ struct BrowseView: View {
             if let page {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     ForEach(page.shelves) { shelf in
-                        if shelf.layout == .cards && (page.shelves.count == 1 || shelf.isCategories) {
+                        if shelf.layout == .cards && (page.shelves.count == 1 || (shelf.isCategories && shelf.items.count <= 8)) {
                             CardGrid(shelf: shelf, showTitle: page.shelves.count > 1)
                         } else {
                             ShelfView(shelf: shelf, listLimit: .max)
