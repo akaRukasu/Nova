@@ -198,7 +198,7 @@ struct ImportSelectionView: View {
                                 .font(.title3)
                                 .foregroundStyle(selected.contains(playlist.id) ? Color.novaAccent : .secondary)
                             Image(systemName: playlist.isLiked ? "heart.fill" : "music.note.list")
-                                .foregroundStyle(playlist.isLiked ? .pink : .secondary)
+                                .foregroundStyle(playlist.isLiked ? Color.pink : Color.secondary)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(playlist.name)

@@ -20,6 +20,13 @@ Lecteur musical iOS personnel qui lit le catalogue YouTube Music, avec une inter
 - Téléchargements hors ligne (titre, album ou playlist entière)
 - Cache des titres écoutés (1,5 Go max) et préchargement du titre suivant
 
+**Importer depuis les autres plateformes** (Bibliothèque › Importer)
+- Spotify et Deezer : connexion au compte, puis choix des playlists et des titres likés
+- Apple Music : playlists de la bibliothèque de l'iPhone
+- Lien public de playlist ou d'album : Spotify, Deezer, Apple Music, YouTube / YouTube Music
+- Fichier CSV, TXT ou JSON : TuneMyMusic et Soundiiz (pour Tidal, Amazon Music, SoundCloud, Qobuz…), Exportify, export de données Spotify
+- Chaque titre est retrouvé sur YouTube Music ; les titres introuvables sont listés
+
 **Compte YouTube**
 - Connexion avec ton compte Google (bouton profil en haut de l'Accueil ou de la Bibliothèque)
 - Accueil personnalisé, et dans la Bibliothèque : titres likés, playlists, albums, artistes et historique du compte
@@ -32,6 +39,10 @@ Pas besoin de Mac : chaque push lance GitHub Actions (`.github/workflows/build.y
 1. génère le projet Xcode avec XcodeGen (`project.yml`) ;
 2. compile l'app sans signature ;
 3. publie `Nova.ipa` dans la release **latest** du dépôt (seulement depuis `main` ; sur les autres branches, l'IPA est dans les artefacts du build).
+
+Le workflow `diagnostic.yml` compile le client YouTube Music pour macOS et l'exécute contre les vrais serveurs (recherche, accueil, pages, paroles, import) : son journal montre ce que Nova comprend des réponses.
+
+> Dépôt privé : chaque build macOS consomme dix fois plus de minutes GitHub Actions. Si les builds échouent en quelques secondes sans démarrer, le quota mensuel est épuisé (Réglages GitHub › Billing).
 
 ## Installer sur l'iPhone
 
