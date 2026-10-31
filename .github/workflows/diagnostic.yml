@@ -1,0 +1,33 @@
+name: Diagnostic YouTube Music
+
+on:
+  push:
+    paths:
+      - "Nova/Models/**"
+      - "Nova/Services/**"
+      - "Tools/Diagnostic/**"
+      - ".github/workflows/diagnostic.yml"
+  workflow_dispatch:
+
+jobs:
+  diagnostic:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compiler le diagnostic
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          mkdir -p diag
+          xcrun --sdk macosx swiftc -O \
+            Nova/Models/*.swift \
+            Nova/Services/InnerTubeParser.swift \
+            Nova/Services/InnerTubeClient.swift \
+            Nova/Services/Account.swift \
+            Tools/Diagnostic/main.swift \
+            -o diag/nova-diagnostic
+
+      - name: Interroger YouTube Music
+        run: ./diag/nova-diagnostic

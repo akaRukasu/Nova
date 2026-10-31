@@ -254,9 +254,13 @@ struct InnerTubeClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        Self.debugHook?(endpoint, body, data)
         guard status == 200 else { throw NovaError.badResponse(status) }
         return (try JSONSerialization.jsonObject(with: data) as? JSONObject) ?? [:]
     }
+
+    /// Réservé au diagnostic : reçoit chaque réponse brute.
+    nonisolated(unsafe) static var debugHook: ((String, [String: Any], Data) -> Void)?
 
     /// En-tête d'autorisation utilisé par le site YouTube Music.
     private static func sapisidHash(_ sapisid: String) -> String {
