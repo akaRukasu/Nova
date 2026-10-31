@@ -209,12 +209,22 @@ struct InnerTubeClient {
 
     // MARK: - Transport
 
-    private func continuation(_ token: String) async throws -> JSONObject {
-        try await post("browse", body: ["continuation": token], query: [
+    enum ContinuationStyle: CaseIterable { case body, query, both }
+
+    /// Style de requête de continuation (voir le diagnostic).
+    nonisolated(unsafe) static var continuationStyle: ContinuationStyle = .both
+
+    func continuation(_ token: String, style: ContinuationStyle? = nil) async throws -> JSONObject {
+        let query = [
             URLQueryItem(name: "ctoken", value: token),
             URLQueryItem(name: "continuation", value: token),
             URLQueryItem(name: "type", value: "next"),
-        ])
+        ]
+        switch style ?? Self.continuationStyle {
+        case .body: return try await post("browse", body: ["continuation": token])
+        case .query: return try await post("browse", body: [:], query: query)
+        case .both: return try await post("browse", body: ["continuation": token], query: query)
+        }
     }
 
     private func post(_ endpoint: String, body: [String: Any], query: [URLQueryItem] = []) async throws -> JSONObject {

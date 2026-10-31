@@ -80,6 +80,15 @@ await step("Recherche « Tout »") {
             let key = section.keys.sorted().joined(separator: ",")
             let inner = (section.values.first as? [String: Any])?.keys.sorted().joined(separator: ",") ?? ""
             print("  section : \(key) → \(inner)")
+            if let inner = section["itemSectionRenderer"] as? [String: Any],
+               let contents = inner["contents"] as? [[String: Any]] {
+                print("    contenu : " + contents.map { $0.keys.sorted().joined(separator: "+") }.joined(separator: ", "))
+                if let first = contents.first,
+                   let data = try? JSONSerialization.data(withJSONObject: first, options: [.sortedKeys]),
+                   let text = String(data: data, encoding: .utf8) {
+                    print("    " + text.prefix(2500))
+                }
+            }
             if let shelf = section["musicShelfRenderer"] as? [String: Any],
                let first = (shelf["contents"] as? [[String: Any]])?.first {
                 print("    premier élément : \(first.keys.sorted())")
@@ -126,6 +135,10 @@ await step("Accueil") {
         print("  continuations : " + text.prefix(600))
     }
     if let token = page.continuation {
+        for style in InnerTubeClient.ContinuationStyle.allCases {
+            let json = try await client.continuation(token, style: style)
+            print("  style \(style) : \(InnerTubeParser.shelves(in: json).count) étagère(s) — " + rendererSummary(json).prefix(200))
+        }
         let next = try await client.browseContinuation(token)
         print("  -- page suivante")
         show(next.shelves, items: 1)
