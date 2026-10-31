@@ -27,6 +27,8 @@ jobs:
             Nova/Services/InnerTubeClient.swift \
             Nova/Services/Account.swift \
             Nova/Services/ImportSources.swift \
+            Nova/Services/PlaybackSettings.swift \
+            Nova/Services/DiscoverySources.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
 

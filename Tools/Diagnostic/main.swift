@@ -251,4 +251,28 @@ await step("Correspondance avec YouTube Music") {
     }
 }
 
+// MARK: - Découvrir et sorties
+
+await step("Titres similaires (Découvrir)") {
+    let shelves = try await client.related(for: "wU26xVT_vBU")
+    show(shelves, items: 3)
+}
+
+await step("Genres et sorties (Deezer)") {
+    let genres = try await ReleasesService.genres()
+    print("  " + genres.map { "\($0.id) \($0.name)" }.joined(separator: " | "))
+    if let rap = genres.first(where: { $0.id == 116 }) ?? genres.first {
+        let releases = try await ReleasesService.releases(genre: rap)
+        print("  sorties « \(rap.name) » : \(releases.count)")
+        releases.prefix(5).forEach { print("      \($0.artist) — \($0.title) [\($0.typeLabel)] \($0.releaseDate.map { "\($0)" } ?? "sans date")") }
+    }
+}
+
+await step("Sorties d'un artiste (Deezer)") {
+    let since = Date().addingTimeInterval(-3 * 365 * 86_400)
+    let releases = try await ReleasesService.artistReleases(name: "Stromae", since: since)
+    print("  \(releases.count) sortie(s) depuis 3 ans")
+    releases.prefix(5).forEach { print("      \($0.artist) — \($0.title) [\($0.typeLabel)] \($0.releaseDate.map { "\($0)" } ?? "-")") }
+}
+
 print("\nTerminé.")

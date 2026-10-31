@@ -175,6 +175,17 @@ struct InnerTubeClient {
         return items.compactMap(Self.parsePanelItem).filter { seen.insert($0.id).inserted }
     }
 
+    /// Titres et artistes similaires (onglet « À découvrir » d'un titre).
+    func related(for videoID: String) async throws -> [Shelf] {
+        let next = try await post("next", body: ["videoId": videoID, "isAudioOnly": true])
+        let browseID = JSONWalk.collect("tabRenderer", in: next).lazy.compactMap { tab in
+            ((tab["endpoint"] as? JSONObject)?["browseEndpoint"] as? JSONObject)?["browseId"] as? String
+        }.first { $0.hasPrefix("MPTRt") }
+        guard let browseID else { return [] }
+        let page = try await post("browse", body: ["browseId": browseID])
+        return Parser.shelves(in: page)
+    }
+
     func lyrics(for videoID: String) async throws -> Lyrics? {
         let next = try await post("next", body: ["videoId": videoID, "isAudioOnly": true])
         let browseID = JSONWalk.collect("tabRenderer", in: next).lazy.compactMap { tab in
@@ -285,8 +296,8 @@ struct InnerTubeClient {
         var client: [String: Any] = [
             "clientName": Self.clientName,
             "clientVersion": Self.clientVersion,
-            "hl": "fr",
-            "gl": "FR",
+            "hl": PlaybackSettings.language,
+            "gl": PlaybackSettings.region,
         ]
         if let visitor { client["visitorData"] = visitor }
         payload["context"] = [
