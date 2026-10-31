@@ -39,7 +39,25 @@ struct InnerTubeClient {
     func search(_ query: String, scope: SearchScope) async throws -> [Shelf] {
         if scope == .all {
             let json = try await post("search", body: ["query": query])
-            return Parser.shelves(in: json)
+            var shelves: [Shelf] = []
+            var flat: [MusicItem] = []
+            for shelf in Parser.shelves(in: json) {
+                if shelf.id.hasPrefix("flat") { flat += shelf.items } else { shelves.append(shelf) }
+            }
+            // Résultats à plat regroupés par type.
+            let groups: [(SearchScope, (MusicItem) -> Bool)] = [
+                (.songs, { $0.track != nil }),
+                (.artists, { $0.collection?.kind == .artist }),
+                (.albums, { $0.collection?.kind == .album }),
+                (.playlists, { $0.collection?.kind == .playlist }),
+            ]
+            for (scope, belongs) in groups {
+                let items = Parser.unique(flat.filter(belongs))
+                if !items.isEmpty {
+                    shelves.append(Shelf(id: "group-\(scope.rawValue)", title: scope.rawValue, items: items, layout: .list))
+                }
+            }
+            return shelves
         }
         var shelves: [Shelf] = []
         for params in scope.params {
@@ -77,8 +95,8 @@ struct InnerTubeClient {
     }
 
     /// Suite d'une page à sections (accueil).
-    func browseContinuation(_ token: String) async throws -> BrowsePage {
-        let json = try await continuation(token)
+    func browseContinuation(_ token: String, browseID: String = "FEmusic_home") async throws -> BrowsePage {
+        let json = try await continuation(token, browseID: browseID)
         return BrowsePage(shelves: Parser.shelves(in: json), continuation: Parser.sectionContinuation(in: json))
     }
 
@@ -209,22 +227,32 @@ struct InnerTubeClient {
 
     // MARK: - Transport
 
-    enum ContinuationStyle: CaseIterable { case body, query, both }
+    enum ContinuationStyle: CaseIterable { case query, body }
 
-    /// Style de requête de continuation (voir le diagnostic).
-    nonisolated(unsafe) static var continuationStyle: ContinuationStyle = .both
-
-    func continuation(_ token: String, style: ContinuationStyle? = nil) async throws -> JSONObject {
-        let query = [
-            URLQueryItem(name: "ctoken", value: token),
-            URLQueryItem(name: "continuation", value: token),
-            URLQueryItem(name: "type", value: "next"),
-        ]
-        switch style ?? Self.continuationStyle {
-        case .body: return try await post("browse", body: ["continuation": token])
-        case .query: return try await post("browse", body: [:], query: query)
-        case .both: return try await post("browse", body: ["continuation": token], query: query)
+    /// Suite d'une page. Les jetons arrivent parfois déjà encodés (« %3D ») :
+    /// on les décode avant de les renvoyer.
+    func continuation(_ token: String, browseID: String? = nil, style: ContinuationStyle? = nil) async throws -> JSONObject {
+        let decoded = token.removingPercentEncoding ?? token
+        var body: [String: Any] = [:]
+        if let browseID { body["browseId"] = browseID }
+        let styles = style.map { [$0] } ?? ContinuationStyle.allCases
+        var last: JSONObject = [:]
+        for current in styles {
+            switch current {
+            case .query:
+                last = try await post("browse", body: body, query: [
+                    URLQueryItem(name: "ctoken", value: decoded),
+                    URLQueryItem(name: "continuation", value: decoded),
+                    URLQueryItem(name: "type", value: "next"),
+                ])
+            case .body:
+                var withToken = body
+                withToken["continuation"] = decoded
+                last = try await post("browse", body: withToken)
+            }
+            if last["continuationContents"] != nil || last["onResponseReceivedActions"] != nil { return last }
         }
+        return last
     }
 
     private func post(_ endpoint: String, body: [String: Any], query: [URLQueryItem] = []) async throws -> JSONObject {

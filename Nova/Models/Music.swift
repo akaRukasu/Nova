@@ -50,6 +50,11 @@ enum MusicItem: Identifiable, Hashable {
         if case .track(let track) = self { return track }
         return nil
     }
+
+    var collection: MusicCollection? {
+        if case .collection(let collection) = self { return collection }
+        return nil
+    }
 }
 
 /// Lien « Tout afficher » d'une étagère.

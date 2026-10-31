@@ -136,7 +136,7 @@ await step("Accueil") {
     }
     if let token = page.continuation {
         for style in InnerTubeClient.ContinuationStyle.allCases {
-            let json = try await client.continuation(token, style: style)
+            let json = try await client.continuation(token, browseID: "FEmusic_home", style: style)
             print("  style \(style) : \(InnerTubeParser.shelves(in: json).count) étagère(s) — " + rendererSummary(json).prefix(200))
         }
         let next = try await client.browseContinuation(token)
@@ -204,6 +204,57 @@ if let song {
             print("  " + lyrics.text.prefix(120).replacingOccurrences(of: "\n", with: " / "))
         } else {
             print("  aucune parole")
+        }
+    }
+}
+
+// MARK: - Import depuis les autres plateformes
+
+let links = [
+    "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M",
+    "https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc",
+    "https://www.deezer.com/fr/album/302127",
+    "https://www.deezer.com/fr/playlist/1109890291",
+    "https://music.apple.com/fr/album/discovery/697194953",
+    "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
+    "https://music.youtube.com/playlist?list=RDCLAK5uy_kf6c8Ga41e1bLKYCaulkiZ1NIVYJnr3Jk",
+]
+var toMatch: [ImportedTrack] = []
+for link in links {
+    await step("Import du lien \(link)") {
+        let playlists = try await ImportSources.fromLink(link, client: client)
+        for playlist in playlists {
+            print("  « \(playlist.name) » (\(playlist.source)) : \(playlist.count) titre(s)")
+            playlist.tracks.prefix(3).forEach { print("      \($0.label) | album=\($0.album ?? "-") durée=\($0.duration.map { $0.clockString } ?? "-")") }
+            playlist.youTubeTracks?.prefix(2).forEach { print("      " + describe(.track($0))) }
+            if toMatch.count < 8 { toMatch += playlist.tracks.prefix(4) }
+        }
+    }
+}
+
+await step("Lecture d'un CSV (Exportify / TuneMyMusic)") {
+    let csv = """
+    "Track Name","Artist Name(s)","Album Name","Duration (ms)","Playlist name"
+    "Get Lucky (feat. Pharrell Williams and Nile Rodgers)","Daft Punk;Pharrell Williams;Nile Rodgers","Random Access Memories","369626","Mes favoris"
+    "Alors on danse","Stromae","Cheese","206000","Mes favoris"
+    "Nightcall","Kavinsky","OutRun","258000","Chill"
+    """
+    let playlists = try ImportSources.fromFile(Data(csv.utf8), fileName: "export.csv")
+    for playlist in playlists {
+        print("  « \(playlist.name) » : \(playlist.tracks.map(\.label).joined(separator: " | "))")
+        toMatch += playlist.tracks
+    }
+    let text = "Daft Punk - One More Time\nStromae – Papaoutai\n"
+    let lines = try ImportSources.fromFile(Data(text.utf8), fileName: "liste.txt")
+    print("  TXT : " + lines.flatMap(\.tracks).map(\.label).joined(separator: " | "))
+}
+
+await step("Correspondance avec YouTube Music") {
+    for track in toMatch {
+        if let found = await TrackMatcher.match(track, client: client) {
+            print("  ✓ \(track.label)  →  \(found.artist) — \(found.title) (\(found.id))")
+        } else {
+            print("  ✗ \(track.label)")
         }
     }
 }

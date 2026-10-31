@@ -68,6 +68,16 @@ enum InnerTubeParser {
         "Single", "Album", "EP", "Playlist", "Artiste", "Artist", "Podcast", "Profil", "Profile",
     ]
 
+    /// Résultats ignorés : podcasts, épisodes, profils.
+    private static let skippedLabels: Set<String> = ["Podcast", "Épisode", "Episode", "Profil", "Profile"]
+
+    /// « 98 M lectures », « 2,4 k vues »… : statistiques, pas des noms.
+    static func isStatistic(_ text: String) -> Bool {
+        text.range(of: #"(lecture|vue|view|play|auditeur|abonné|subscriber|listener|titre|track|song|écoute)s?(/mois)?$"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
+            && text.rangeOfCharacter(from: .decimalDigits) != nil
+    }
+
     struct Meta {
         var artist: String?
         var artistID: String?
@@ -105,7 +115,7 @@ enum InnerTubeParser {
                 meta.albumID = link.browseID
             } else if meta.duration == nil, text.contains(":"), let duration = TimeInterval(clockString: text) {
                 meta.duration = duration
-            } else {
+            } else if !isStatistic(text) {
                 meta.other.append(text)
             }
         }
@@ -157,6 +167,7 @@ enum InnerTubeParser {
             runs((column["musicResponsiveListItemFixedColumnRenderer"] as? JSONObject)?["text"])
         }
         let artwork = thumbnail(renderer["thumbnail"])
+        if let label = columnRuns.dropFirst().first?.first?.text, skippedLabels.contains(label) { return nil }
 
         if let browse = (renderer["navigationEndpoint"] as? JSONObject)?["browseEndpoint"] as? JSONObject,
            let id = browse["browseId"] as? String {
@@ -171,7 +182,15 @@ enum InnerTubeParser {
         let videoID = ((renderer["playlistItemData"] as? JSONObject)?["videoId"] as? String)
             ?? columnRuns.first?.compactMap(\.videoID).first
             ?? (JSONWalk.first("watchEndpoint", in: renderer["overlay"] ?? JSONObject()) as? JSONObject)?["videoId"] as? String
-        guard let videoID else { return nil }
+        guard let videoID else {
+            // Playlist sans lien direct : on prend son identifiant dans le menu « Lecture aléatoire ».
+            if let watch = JSONWalk.first("watchPlaylistEndpoint", in: renderer) as? JSONObject,
+               let playlistID = watch["playlistId"] as? String, !playlistID.hasPrefix("RDAM") {
+                return .collection(MusicCollection(id: "VL" + playlistID, kind: .playlist, title: title,
+                                                   subtitle: detail.map(\.text).joined(), artworkURL: artwork))
+            }
+            return nil
+        }
 
         let info = meta(fixed.isEmpty ? detail : detail + [separator()] + fixed)
         return .track(Track(id: videoID, title: title, artist: info.artist ?? "", album: info.album,
@@ -221,7 +240,7 @@ enum InnerTubeParser {
     static func shelves(in object: Any) -> [Shelf] {
         var found: [Shelf] = []
         collectShelves(object, into: &found)
-        return found.filter { !$0.items.isEmpty }
+        return found.filter { !$0.items.isEmpty || $0.id.hasPrefix("flat") }
     }
 
     private static func collectShelves(_ object: Any, into found: inout [Shelf]) {
@@ -255,8 +274,21 @@ enum InnerTubeParser {
         if let card = dict["musicCardShelfRenderer"] as? JSONObject {
             found.append(topResultShelf(card, id: found.count))
         }
+        // Recherche « Tout » (2026) : une section par résultat, sans étagère.
+        var skipped = shelfKeys
+        if let section = dict["itemSectionRenderer"] as? JSONObject,
+           let contents = section["contents"] as? [JSONObject],
+           contents.contains(where: { $0["musicResponsiveListItemRenderer"] != nil }) {
+            let items = contents.compactMap(item(fromRenderer:))
+            if let last = found.last, last.id.hasPrefix("flat") {
+                found[found.count - 1].items += items
+            } else {
+                found.append(Shelf(id: "flat\(found.count)", title: "", items: items, layout: .list))
+            }
+            skipped.insert("itemSectionRenderer")
+        }
 
-        for key in dict.keys.sorted() where !shelfKeys.contains(key) {
+        for key in dict.keys.sorted() where !skipped.contains(key) {
             collectShelves(dict[key]!, into: &found)
         }
     }
@@ -278,7 +310,16 @@ enum InnerTubeParser {
                            subtitleRuns: runs(card["subtitle"]), artwork: thumbnail(card["thumbnail"])) {
             items.append(main)
         }
-        items += ((card["contents"] as? [JSONObject]) ?? []).compactMap(item(fromRenderer:))
+        var extra = ((card["contents"] as? [JSONObject]) ?? []).compactMap(item(fromRenderer:))
+        if case .collection(let artist)? = items.first, artist.kind == .artist {
+            extra = extra.map { item in
+                guard case .track(var track) = item, track.artist.isEmpty else { return item }
+                track.artist = artist.title
+                track.artistID = artist.id
+                return .track(track)
+            }
+        }
+        items += extra
         let header = (card["header"] as? JSONObject)?["musicCardShelfHeaderBasicRenderer"] as? JSONObject
         let title = text(header?["title"])
         return Shelf(id: "\(id)", title: title.isEmpty ? "Meilleur résultat" : title,
