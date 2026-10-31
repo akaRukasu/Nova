@@ -2,22 +2,36 @@
 
 Lecteur musical iOS personnel qui lit le catalogue YouTube Music, avec une interface Liquid Glass (iOS 26 et plus).
 
-## Étape 1 — Lecteur de base
+## Fonctionnalités
 
-- Recherche de titres YouTube Music
-- Lecture en arrière-plan, écran verrouillé et centre de contrôle
+**Écouter**
+- Recherche complète : titres, vidéos, albums, artistes, playlists, avec suggestions et recherches récentes
+- Accueil YouTube Music (sélection rapide, mix, nouveautés, classements…)
+- Pages artiste (titres populaires, albums, singles, artistes similaires), album et playlist
+- Lecture en arrière-plan, écran verrouillé, centre de contrôle et AirPlay
 - File d'attente réordonnable, complétée automatiquement par la radio du titre
+- Lecture aléatoire, répétition (tout ou un titre), minuteur de veille
+- Paroles du titre en cours
+- Reprise de la file et de la position au lancement
+
+**Bibliothèque**
+- Titres likés, playlists perso (créer, renommer, réordonner), albums, playlists et artistes enregistrés
+- Historique d'écoute
+- Téléchargements hors ligne (titre, album ou playlist entière)
 - Cache des titres écoutés (1,5 Go max) et préchargement du titre suivant
-- Lecteur plein écran avec la miniature du clip en 16:9 et bouton AirPlay
-- Historique dans Accueil et Bibliothèque
+
+**Compte YouTube**
+- Connexion avec ton compte Google (bouton profil en haut de l'Accueil ou de la Bibliothèque)
+- Accueil personnalisé, et dans la Bibliothèque : titres likés, playlists, albums, artistes et historique du compte
+- Les « J'aime » donnés dans Nova sont envoyés à ton compte
 
 ## Compiler
 
-Pas besoin de Mac : chaque push sur `main` lance GitHub Actions (`.github/workflows/build.yml`), qui :
+Pas besoin de Mac : chaque push lance GitHub Actions (`.github/workflows/build.yml`), qui :
 
 1. génère le projet Xcode avec XcodeGen (`project.yml`) ;
 2. compile l'app sans signature ;
-3. publie `Nova.ipa` dans la release **latest** du dépôt.
+3. publie `Nova.ipa` dans la release **latest** du dépôt (seulement depuis `main` ; sur les autres branches, l'IPA est dans les artefacts du build).
 
 ## Installer sur l'iPhone
 

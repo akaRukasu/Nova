@@ -45,8 +45,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build 2>&1 | tee build.log | grep -E "error:|warning: unable|\*\* BUILD" || true
-          test -d build/Build/Products/Release-iphoneos/Nova.app
+            build > build.log 2>&1 || status=$?
+          grep -E "error:|warning: unable|\*\* BUILD" build.log || true
+          if [ "${status:-0}" -ne 0 ]; then
+            echo "::error::La compilation a échoué (code $status)"
+            exit 1
+          fi
+          test -x build/Build/Products/Release-iphoneos/Nova.app/Nova
 
       - name: Package the IPA
         run: |

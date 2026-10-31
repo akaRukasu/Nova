@@ -112,7 +112,7 @@ struct InnerTubeClient {
             }
             return songs?.tracks ?? []
         }
-        let content = try await collection(collection.id)
+        let content = try await self.collection(collection.id)
         var tracks = content.tracks
         var token = content.continuation
         var pages = 0
