@@ -180,7 +180,7 @@ struct NowPlayingView: View {
         VStack(spacing: 6) {
             Slider(
                 value: Binding(
-                    get: { scrubPosition ?? player.currentTime },
+                    get: { min(scrubPosition ?? player.currentTime, max(player.duration, 1)) },
                     set: { scrubPosition = $0 }
                 ),
                 in: 0...max(player.duration, 1),
