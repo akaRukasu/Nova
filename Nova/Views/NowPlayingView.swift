@@ -10,38 +10,36 @@ struct NowPlayingView: View {
     @State private var showLyrics = false
 
     var body: some View {
-        ZStack {
-            background
-            VStack(spacing: 0) {
-                Capsule()
-                    .fill(.white.opacity(0.35))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(.white.opacity(0.35))
+                .frame(width: 40, height: 5)
+                .padding(.top, 10)
 
-                Spacer(minLength: 20)
+            Spacer(minLength: 20)
 
-                RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
-                    .scaleEffect(player.isPlaying ? 1 : 0.92)
-                    .animation(.spring(response: 0.45, dampingFraction: 0.75), value: player.isPlaying)
+            artwork
+                .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+                .scaleEffect(player.isPlaying ? 1 : 0.92)
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: player.isPlaying)
 
-                Spacer(minLength: 28)
+            Spacer(minLength: 28)
 
-                titleBlock
-                progress.padding(.top, 22)
-                controls.padding(.top, 18)
-                modes.padding(.top, 14)
+            titleBlock
+            progress.padding(.top, 22)
+            controls.padding(.top, 18)
+            modes.padding(.top, 14)
 
-                Spacer(minLength: 24)
+            Spacer(minLength: 24)
 
-                bottomBar
-                    .padding(.bottom, 8)
-            }
-            .padding(.horizontal, 26)
-            .foregroundStyle(.white)
+            bottomBar
+                .padding(.bottom, 8)
         }
+        .padding(.horizontal, 26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(.white)
+        // En arrière-plan : n'influence jamais la taille de la page.
+        .background { background }
         .sheet(isPresented: $showQueue) {
             QueueView()
                 .presentationDetents([.medium, .large])
@@ -62,10 +60,24 @@ struct NowPlayingView: View {
         .presentationDragIndicator(.hidden)
     }
 
+    /// Pochette carrée pour un titre, miniature 16:9 pour un clip.
+    @ViewBuilder private var artwork: some View {
+        if let track = player.current, track.hasSquareArtwork {
+            RemoteImage(urls: track.squareArtworkURLs)
+                .aspectRatio(1, contentMode: .fit)
+                .frame(maxWidth: 340)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        } else {
+            RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+    }
+
     private var background: some View {
         ZStack {
             Color.black
-            RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
+            RemoteImage(urls: player.current?.squareArtworkURLs ?? [])
                 .scaleEffect(1.6)
                 .blur(radius: 70)
                 .opacity(0.85)

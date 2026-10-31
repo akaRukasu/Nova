@@ -22,6 +22,11 @@ struct Track: Identifiable, Codable, Hashable {
         URL(string: "https://music.youtube.com/watch?v=\(id)")!
     }
 
+    /// Vrai titre musical avec pochette carrée (les clips n'ont qu'une miniature 16:9).
+    var hasSquareArtwork: Bool {
+        artworkURL?.host?.contains("googleusercontent") == true
+    }
+
     /// Miniatures 16:9 de la vidéo, de la meilleure à la plus petite, puis la pochette.
     var videoThumbnailURLs: [URL] {
         let names = ["maxresdefault.jpg", "hq720.jpg", "sddefault.jpg"]

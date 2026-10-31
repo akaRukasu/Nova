@@ -35,22 +35,23 @@ struct RemoteImage: View {
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .transition(.opacity)
-            } else {
-                Rectangle()
-                    .fill(.quaternary)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
+        // Le rectangle prend exactement la place proposée ; l'image le remplit sans jamais
+        // l'agrandir, puis elle est rognée. Sans ça, une image « fill » élargit tout l'écran.
+        Rectangle()
+            .fill(.quaternary)
+            .overlay {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
             }
-        }
+            .clipped()
         .task(id: urls) {
             if let hit = ImageLoader.cached(urls) { image = hit; return }
             image = nil
