@@ -7,6 +7,9 @@ import UIKit
 @MainActor
 @Observable
 final class PlayerModel {
+    /// Instance unique, partagée entre l'app et CarPlay.
+    static let shared = PlayerModel()
+
     // MARK: État visible
 
     private(set) var queue: [Track] = []
@@ -323,7 +326,8 @@ final class PlayerModel {
             player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
         }
         try? AVAudioSession.sharedInstance().setActive(true)
-        player.play()
+        // Démarre dès les premières secondes reçues, sans attendre un gros tampon.
+        player.playImmediately(atRate: 1)
         isPlaying = true
         isLoading = false
         failureCount = 0

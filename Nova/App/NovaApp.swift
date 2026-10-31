@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct NovaApp: App {
-    @State private var player = PlayerModel()
+    @State private var player = PlayerModel.shared
     @State private var router = Router()
     @State private var importer = ImportManager()
 
@@ -21,6 +21,6 @@ struct NovaApp: App {
 }
 
 extension Color {
-    /// Violet Nova.
-    static let novaAccent = Color(red: 0.56, green: 0.40, blue: 1.0)
+    /// Rouge Nova.
+    static let novaAccent = Color(red: 0.98, green: 0.18, blue: 0.33)
 }

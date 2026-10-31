@@ -4,6 +4,14 @@ Lecteur musical iOS personnel qui lit le catalogue YouTube Music, avec une inter
 
 ## Fonctionnalités
 
+**Interface inspirée d'Apple Music** : onglets Accueil, Nouveautés, Bibliothèque et Recherche, tuiles de catégories à parcourir, Bibliothèque par Playlists / Artistes / Albums / Titres likés avec « Ajouts récents », paroles et volume dans le lecteur, mini-lecteur au-dessus des onglets.
+
+**Rapidité** : les pages déjà vues (accueil, albums, playlists, artistes, paroles) s'affichent instantanément depuis le cache puis se mettent à jour ; les pochettes sont gardées sur disque (300 Mo) ; un titre déjà résolu se relance sans nouvelle extraction.
+
+**CarPlay**
+- L'écran « En cours » de CarPlay et les commandes au volant fonctionnent avec Nova sans réglage.
+- L'interface CarPlay complète (Accueil, Bibliothèque, Récents) est prête dans l'app, mais CarPlay n'affiche une app que si sa signature contient l'autorisation `com.apple.developer.carplay-audio`, qu'Apple accorde sur demande à un compte développeur payant. Avec un identifiant Apple gratuit (Sideloadly), cette autorisation est retirée à la signature. Le fichier `Nova/Nova.entitlements` la contient pour le jour où tu signes avec un compte qui l'a obtenue.
+
 **Écouter**
 - Recherche complète : titres, vidéos, albums, artistes, playlists, avec suggestions et recherches récentes
 - Accueil YouTube Music (sélection rapide, mix, nouveautés, classements…)

@@ -18,10 +18,13 @@ struct LibraryView: View {
                 ImportJobsSection()
             }
             Section {
-                link(.liked, "Titres likés", "heart.fill", .pink, count: library.liked.count)
-                link(.downloads, "Téléchargements", "arrow.down.circle.fill", .novaAccent,
+                link(.libraryPlaylists, "Playlists", "music.note.list", count: library.playlists.count + savedCount(.playlist))
+                link(.libraryArtists, "Artistes", "music.mic", count: savedCount(.artist))
+                link(.libraryAlbums, "Albums", "square.stack", count: savedCount(.album))
+                link(.liked, "Titres likés", "heart", count: library.liked.count)
+                link(.downloads, "Téléchargés", "arrow.down.circle",
                      count: downloads.tracks.count, busy: !downloads.pending.isEmpty)
-                link(.history, "Historique", "clock.fill", .orange, count: library.recents.count)
+                link(.history, "Historique", "clock", count: library.recents.count)
                 Button {
                     showImport = true
                 } label: {
@@ -29,73 +32,58 @@ struct LibraryView: View {
                         Text("Importer depuis une autre plateforme")
                             .foregroundStyle(Color.primary)
                     } icon: {
-                        Image(systemName: "square.and.arrow.down.on.square.fill")
+                        Image(systemName: "square.and.arrow.down.on.square")
                             .foregroundStyle(Color.novaAccent)
                     }
+                }
+            }
+            .font(.title3)
+
+            if !recentlyAdded.isEmpty {
+                Section {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+                              alignment: .leading, spacing: 18) {
+                        ForEach(recentlyAdded, id: \.self) { entry in
+                            NavigationLink(value: entry.route) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    RemoteImage(urls: entry.artwork)
+                                        .aspectRatio(1, contentMode: .fit)
+                                        .clipShape(entry.round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous)))
+                                    Text(entry.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(Color.primary)
+                                        .lineLimit(1)
+                                    Text(entry.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    Text("Ajouts récents")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(Color.primary)
+                        .textCase(nil)
                 }
             }
 
             if account.isSignedIn {
                 Section("Mon compte YouTube") {
                     link(.collection(MusicCollection(id: "VLLM", kind: .playlist, title: "Titres likés sur YouTube")),
-                         "Titres likés sur YouTube", "hand.thumbsup.fill", .red)
-                    link(.account(title: "Mes playlists", browseID: "FEmusic_liked_playlists"),
-                         "Playlists", "music.note.list", .red)
-                    link(.account(title: "Mes albums", browseID: "FEmusic_liked_albums"),
-                         "Albums", "square.stack.fill", .red)
-                    link(.account(title: "Mes artistes", browseID: "FEmusic_library_corpus_track_artists"),
-                         "Artistes", "music.mic", .red)
+                         "Titres likés sur YouTube", "hand.thumbsup")
+                    link(.account(title: "Mes playlists YouTube", browseID: "FEmusic_liked_playlists"),
+                         "Playlists", "music.note.list")
+                    link(.account(title: "Mes albums YouTube", browseID: "FEmusic_liked_albums"),
+                         "Albums", "square.stack")
+                    link(.account(title: "Mes artistes YouTube", browseID: "FEmusic_library_corpus_track_artists"),
+                         "Artistes", "music.mic")
                     link(.account(title: "Historique YouTube", browseID: "FEmusic_history"),
-                         "Historique YouTube", "clock.arrow.circlepath", .red)
-                }
-            }
-
-            Section {
-                Button {
-                    router.newPlaylistTracks = []
-                } label: {
-                    Label("Nouvelle playlist", systemImage: "plus")
-                }
-                ForEach(library.playlists) { playlist in
-                    NavigationLink(value: Route.userPlaylist(playlist.id)) {
-                        HStack(spacing: 12) {
-                            ArtworkThumb(track: playlist.tracks.first)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(playlist.name)
-                                    .font(.body.weight(.medium))
-                                    .lineLimit(1)
-                                Text(playlist.tracks.count == 1 ? "1 titre" : "\(playlist.tracks.count) titres")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                .onDelete { library.deletePlaylists(at: $0) }
-            } header: {
-                Text("Mes playlists")
-            }
-
-            if !library.saved.isEmpty {
-                Section("Enregistrés") {
-                    ForEach(library.saved) { collection in
-                        NavigationLink(value: Route.collection(collection)) {
-                            HStack(spacing: 12) {
-                                ArtworkThumb(urls: collection.artworkURLs, circle: collection.kind == .artist)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(collection.title)
-                                        .font(.body.weight(.medium))
-                                        .lineLimit(1)
-                                    Text(savedSubtitle(collection))
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                        }
-                        .contextMenu { CollectionMenu(collection: collection) }
-                    }
-                    .onDelete { library.removeSaved(at: $0) }
+                         "Historique", "clock.arrow.circlepath")
                 }
             }
 
@@ -143,7 +131,7 @@ struct LibraryView: View {
         }
     }
 
-    private func link(_ route: Route, _ title: String, _ icon: String, _ color: Color,
+    private func link(_ route: Route, _ title: String, _ icon: String, _ color: Color = .novaAccent,
                       count: Int? = nil, busy: Bool = false) -> some View {
         NavigationLink(value: route) {
             HStack {
@@ -161,6 +149,33 @@ struct LibraryView: View {
                 }
             }
         }
+    }
+
+    private func savedCount(_ kind: CollectionKind) -> Int {
+        library.saved.filter { $0.kind == kind }.count
+    }
+
+    /// Entrée de la grille « Ajouts récents ».
+    struct RecentEntry: Hashable {
+        let route: Route
+        let title: String
+        let subtitle: String
+        let artwork: [URL]
+        let round: Bool
+    }
+
+    private var recentlyAdded: [RecentEntry] {
+        let playlists = library.playlists.prefix(4).map { playlist in
+            RecentEntry(route: .userPlaylist(playlist.id), title: playlist.name,
+                        subtitle: playlist.tracks.count == 1 ? "1 titre" : "\(playlist.tracks.count) titres",
+                        artwork: playlist.tracks.first?.squareArtworkURLs ?? [], round: false)
+        }
+        let saved = library.saved.prefix(6).map { collection in
+            RecentEntry(route: .collection(collection), title: collection.title,
+                        subtitle: savedSubtitle(collection), artwork: collection.artworkURLs,
+                        round: collection.kind == .artist)
+        }
+        return Array((playlists + saved).prefix(6))
     }
 
     private func savedSubtitle(_ collection: MusicCollection) -> String {
@@ -346,5 +361,123 @@ struct UserPlaylistView: View {
                     dismiss()
                 }
             }
+    }
+}
+
+/// Bibliothèque › Playlists : playlists Nova et playlists enregistrées.
+struct LibraryPlaylistsView: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(AccountStore.self) private var account
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        List {
+            Button {
+                router.newPlaylistTracks = []
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "plus")
+                        .font(.title2)
+                        .foregroundStyle(Color.novaAccent)
+                        .frame(width: 52, height: 52)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text("Nouvelle playlist…")
+                        .foregroundStyle(Color.novaAccent)
+                }
+            }
+            if account.isSignedIn {
+                NavigationLink(value: Route.account(title: "Mes playlists YouTube", browseID: "FEmusic_liked_playlists")) {
+                    Label("Playlists de mon compte YouTube", systemImage: "person.crop.circle")
+                }
+            }
+            ForEach(library.playlists) { playlist in
+                NavigationLink(value: Route.userPlaylist(playlist.id)) {
+                    HStack(spacing: 12) {
+                        ArtworkThumb(track: playlist.tracks.first)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(playlist.name)
+                                .lineLimit(1)
+                            Text(playlist.tracks.count == 1 ? "1 titre" : "\(playlist.tracks.count) titres")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .onDelete { library.deletePlaylists(at: $0) }
+            ForEach(library.saved.filter { $0.kind == .playlist }) { collection in
+                NavigationLink(value: Route.collection(collection)) {
+                    CollectionRow(collection: collection)
+                }
+                .contextMenu { CollectionMenu(collection: collection) }
+            }
+        }
+        .listStyle(.plain)
+        .navigationTitle("Playlists")
+    }
+}
+
+/// Bibliothèque › Artistes ou Albums enregistrés.
+struct LibraryCollectionsView: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(AccountStore.self) private var account
+    let kind: CollectionKind
+
+    private var items: [MusicCollection] { library.saved.filter { $0.kind == kind } }
+
+    var body: some View {
+        ScrollView {
+            if account.isSignedIn {
+                NavigationLink(value: Route.account(
+                    title: kind == .artist ? "Mes artistes YouTube" : "Mes albums YouTube",
+                    browseID: kind == .artist ? "FEmusic_library_corpus_track_artists" : "FEmusic_liked_albums")) {
+                    Label(kind == .artist ? "Artistes de mon compte YouTube" : "Albums de mon compte YouTube",
+                          systemImage: "person.crop.circle")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                }
+            }
+            if kind == .artist {
+                LazyVStack(spacing: 10) {
+                    ForEach(items) { collection in
+                        ItemRow(item: .collection(collection)) { _ in }
+                    }
+                }
+                .padding(.horizontal, 16)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 20) {
+                    ForEach(items) { collection in
+                        NavigationLink(value: Route.collection(collection)) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                RemoteImage(urls: collection.artworkURLs)
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Text(collection.title)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(Color.primary)
+                                    .lineLimit(1)
+                                Text(collection.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu { CollectionMenu(collection: collection) }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .overlay {
+            if items.isEmpty && !account.isSignedIn {
+                ContentUnavailableView(kind == .artist ? "Aucun artiste" : "Aucun album",
+                                       systemImage: kind == .artist ? "music.mic" : "square.stack",
+                                       description: Text(kind == .artist
+                                                         ? "Suis un artiste depuis sa page pour le retrouver ici."
+                                                         : "Ajoute un album à ta bibliothèque avec le bouton signet."))
+            }
+        }
+        .navigationTitle(kind == .artist ? "Artistes" : "Albums")
     }
 }

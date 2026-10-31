@@ -35,6 +35,8 @@ func describe(_ item: MusicItem) -> String {
         return "♪ \(t.title) — artiste=\"\(t.artist)\" artistID=\(t.artistID ?? "-") album=\(t.album ?? "-") albumID=\(t.albumID ?? "-") durée=\(t.duration.map { $0.clockString } ?? "-") art=\(t.artworkURL != nil)"
     case .collection(let c):
         return "▣ [\(c.kind)] \(c.title) — \"\(c.subtitle)\" id=\(c.id) art=\(c.artworkURL != nil)"
+    case .category(let g):
+        return "◆ \(g.title) couleur=\(String(g.color, radix: 16)) → \(g.link.browseID) \(g.link.params ?? "")"
     }
 }
 
@@ -86,6 +88,8 @@ for scope in SearchScope.allCases where scope != .all {
                 if c.kind == .artist, artist == nil { artist = c }
                 if c.kind == .album, album == nil { album = c }
                 if c.kind == .playlist, playlist == nil { playlist = c }
+            case .category:
+                break
             }
         }
     }
@@ -109,6 +113,27 @@ await step("Accueil") {
         let next = try await client.browseContinuation(token)
         print("  -- page suivante")
         show(next.shelves, items: 1)
+    }
+}
+
+await step("Nouveautés (FEmusic_explore)") {
+    let page = try await client.browse(BrowseLink(browseID: "FEmusic_explore"))
+    show(page.shelves, items: 2)
+}
+
+var category: BrowseCategory?
+await step("Ambiances et genres (FEmusic_moods_and_genres)") {
+    let page = try await client.browse(BrowseLink(browseID: "FEmusic_moods_and_genres"))
+    show(page.shelves, items: 3)
+    for item in page.shelves.flatMap(\.items) {
+        if case .category(let found) = item { category = found; break }
+    }
+}
+
+if let category {
+    await step("Catégorie \(category.title)") {
+        let page = try await client.browse(category.link)
+        show(page.shelves, items: 2)
     }
 }
 

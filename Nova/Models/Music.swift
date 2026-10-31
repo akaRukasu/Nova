@@ -34,15 +34,25 @@ struct MusicCollection: Identifiable, Codable, Hashable {
     }
 }
 
-/// Élément affiché dans une étagère : un titre ou une page à ouvrir.
-enum MusicItem: Identifiable, Hashable {
+/// Catégorie de « Parcourir » (ambiance, genre, classement…), avec sa couleur.
+struct BrowseCategory: Hashable, Codable {
+    var title: String
+    /// Couleur ARGB fournie par YouTube Music.
+    var color: UInt32
+    var link: BrowseLink
+}
+
+/// Élément affiché dans une étagère : un titre, une page à ouvrir ou une catégorie.
+enum MusicItem: Identifiable, Hashable, Codable {
     case track(Track)
     case collection(MusicCollection)
+    case category(BrowseCategory)
 
     var id: String {
         switch self {
         case .track(let track): return "t:" + track.id
         case .collection(let collection): return "c:" + collection.id
+        case .category(let category): return "g:" + category.link.browseID + (category.link.params ?? "") + category.title
         }
     }
 
@@ -58,14 +68,14 @@ enum MusicItem: Identifiable, Hashable {
 }
 
 /// Lien « Tout afficher » d'une étagère.
-struct BrowseLink: Hashable {
+struct BrowseLink: Hashable, Codable {
     let browseID: String
     var params: String?
 }
 
 /// Une rangée de contenu (« Titres », « Albums », « Sélection rapide »…).
-struct Shelf: Identifiable, Hashable {
-    enum Layout: Hashable {
+struct Shelf: Identifiable, Hashable, Codable {
+    enum Layout: Hashable, Codable {
         /// Liste verticale de titres.
         case list
         /// Grille horizontale de lignes (sélection rapide).
@@ -82,10 +92,15 @@ struct Shelf: Identifiable, Hashable {
     var continuation: String? = nil
 
     var tracks: [Track] { items.compactMap(\.track) }
+
+    /// Étagère de tuiles « Parcourir ».
+    var isCategories: Bool {
+        !items.isEmpty && items.allSatisfy { if case .category = $0 { return true } else { return false } }
+    }
 }
 
 /// En-tête d'une page artiste, album ou playlist.
-struct PageHeader: Hashable {
+struct PageHeader: Hashable, Codable {
     var title = ""
     var subtitle = ""
     var artist: String?
@@ -96,21 +111,21 @@ struct PageHeader: Hashable {
 }
 
 /// Page YouTube Music générique (accueil, artiste, « Tout afficher »).
-struct BrowsePage {
+struct BrowsePage: Codable {
     var header = PageHeader()
     var shelves: [Shelf] = []
     var continuation: String?
 }
 
 /// Contenu d'un album ou d'une playlist.
-struct CollectionContent {
+struct CollectionContent: Codable {
     var header: PageHeader
     var tracks: [Track]
     var continuation: String?
     var related: [Shelf]
 }
 
-struct Lyrics: Hashable {
+struct Lyrics: Hashable, Codable {
     var text: String
     var source: String?
 }

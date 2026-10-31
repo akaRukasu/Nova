@@ -13,18 +13,25 @@ struct ShelfView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !shelf.title.isEmpty {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(shelf.title)
-                        .font(.title2.weight(.bold))
-                        .lineLimit(2)
-                    Spacer()
-                    if let more = shelf.more {
-                        Button("Tout afficher") {
-                            router.open(Router.route(for: more, title: shelf.title))
+                Button {
+                    if let more = shelf.more { router.open(Router.route(for: more, title: shelf.title)) }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(shelf.title)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Color.primary)
+                            .lineLimit(1)
+                        if shelf.more != nil {
+                            Image(systemName: "chevron.right")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.secondary)
                         }
-                        .font(.subheadline.weight(.semibold))
+                        Spacer(minLength: 0)
                     }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(shelf.more == nil)
                 .padding(.horizontal, 16)
             }
 
@@ -90,6 +97,7 @@ struct BrowseView: View {
     @Environment(AccountStore.self) private var account
     let title: String
     let link: BrowseLink
+    var largeTitle = false
     @State private var page: BrowsePage?
     @State private var errorText: String?
     private let client = InnerTubeClient()
@@ -99,7 +107,7 @@ struct BrowseView: View {
             if let page {
                 LazyVStack(alignment: .leading, spacing: 28) {
                     ForEach(page.shelves) { shelf in
-                        if shelf.layout == .cards {
+                        if shelf.layout == .cards && (page.shelves.count == 1 || shelf.isCategories) {
                             CardGrid(shelf: shelf, showTitle: page.shelves.count > 1)
                         } else {
                             ShelfView(shelf: shelf, listLimit: .max)
@@ -127,14 +135,24 @@ struct BrowseView: View {
             }
         }
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(largeTitle ? .large : .inline)
+        .toolbar {
+            if largeTitle {
+                ToolbarItem(placement: .topBarTrailing) { AccountButton() }
+            }
+        }
         .task(id: account.revision) { await load() }
         .refreshable { await load() }
     }
 
     private func load() async {
         do {
-            page = try await client.browse(link)
+            let client = self.client
+            let link = self.link
+            // Les pages du compte changent souvent : rafraîchies à chaque ouverture.
+            let freshFor: TimeInterval = link.browseID.hasPrefix("FEmusic_") ? 0 : 1800
+            try await loadCached("browse-\(link.browseID)-\(link.params ?? "")-\(account.isSignedIn)",
+                                 freshFor: freshFor, fetch: { try await client.browse(link) }) { page = $0 }
             errorText = nil
         } catch {
             if page == nil { errorText = error.localizedDescription }
@@ -155,6 +173,20 @@ struct CardGrid: View {
                     .font(.title2.weight(.bold))
                     .padding(.horizontal, 16)
             }
+            if shelf.isCategories {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(shelf.items) { item in
+                        if case .category(let category) = item {
+                            NavigationLink(value: Route.more(title: category.title, link: category.link)) {
+                                CategoryTile(category: category)
+                                    .frame(height: 96)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 14, alignment: .top)], spacing: 20) {
                 ForEach(shelf.items) { item in
                     ItemCard(item: item, width: 160) { track in
@@ -164,6 +196,7 @@ struct CardGrid: View {
                 }
             }
             .padding(.horizontal, 16)
+            }
         }
     }
 }

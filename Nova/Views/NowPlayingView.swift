@@ -1,3 +1,4 @@
+import MediaPlayer
 import SwiftUI
 
 /// Lecteur plein écran : miniature du clip en 16:9, fond flou, commandes en verre.
@@ -16,21 +17,39 @@ struct NowPlayingView: View {
                 .frame(width: 40, height: 5)
                 .padding(.top, 10)
 
-            Spacer(minLength: 20)
+            if showLyrics {
+                // Mode paroles, comme dans Apple Music : petite pochette en haut, paroles au centre.
+                HStack(spacing: 12) {
+                    RemoteImage(urls: player.current?.squareArtworkURLs ?? [])
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    titleBlock
+                }
+                .padding(.top, 18)
+                LyricsView()
+                    .frame(maxHeight: .infinity)
+                    .mask(LinearGradient(colors: [.clear, .black, .black, .clear],
+                                         startPoint: .top, endPoint: .bottom))
+            } else {
+                Spacer(minLength: 20)
 
-            artwork
-                .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
-                .scaleEffect(player.isPlaying ? 1 : 0.92)
-                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: player.isPlaying)
+                artwork
+                    .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+                    .scaleEffect(player.isPlaying ? 1 : 0.92)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.75), value: player.isPlaying)
 
-            Spacer(minLength: 28)
+                Spacer(minLength: 28)
 
-            titleBlock
+                titleBlock
+            }
             progress.padding(.top, 22)
             controls.padding(.top, 18)
-            modes.padding(.top, 14)
+            modes.padding(.top, 10)
+            VolumeSlider()
+                .frame(height: 34)
+                .padding(.top, 6)
 
-            Spacer(minLength: 24)
+            Spacer(minLength: 16)
 
             bottomBar
                 .padding(.bottom, 8)
@@ -42,10 +61,6 @@ struct NowPlayingView: View {
         .background { background }
         .sheet(isPresented: $showQueue) {
             QueueView()
-                .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $showLyrics) {
-            LyricsView()
                 .presentationDetents([.medium, .large])
         }
         .newPlaylistAlert(isActive: true)
@@ -236,8 +251,8 @@ struct NowPlayingView: View {
             RoutePicker()
                 .frame(width: 30, height: 30)
             Spacer()
-            Button { showLyrics = true } label: {
-                Image(systemName: "quote.bubble")
+            Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { showLyrics.toggle() } } label: {
+                Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
                     .font(.title3.weight(.semibold))
             }
             .buttonStyle(.plain)
@@ -307,55 +322,82 @@ struct QueueView: View {
     }
 }
 
-/// Paroles du titre en cours.
+/// Paroles du titre en cours, affichées dans le lecteur.
 struct LyricsView: View {
     @Environment(PlayerModel.self) private var player
-    @Environment(\.dismiss) private var dismiss
     @State private var lyrics: Lyrics?
     @State private var isLoading = true
     private let client = InnerTubeClient()
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let lyrics {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(lyrics.text)
-                            .font(.title3.weight(.semibold))
-                            .lineSpacing(6)
-                            .textSelection(.enabled)
-                        if let source = lyrics.source {
-                            Text(source)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+        ScrollView(showsIndicators: false) {
+            if let lyrics {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(lyrics.text)
+                        .font(.system(size: 28, weight: .bold))
+                        .lineSpacing(10)
+                        .foregroundStyle(.white)
+                        .textSelection(.enabled)
+                    if let source = lyrics.source {
+                        Text(source)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.6))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
                 }
-            }
-            .overlay {
-                if isLoading {
-                    ProgressView()
-                } else if lyrics == nil {
-                    ContentUnavailableView("Pas de paroles", systemImage: "quote.bubble",
-                                           description: Text("YouTube Music n'a pas de paroles pour ce titre."))
-                }
-            }
-            .navigationTitle(player.current?.title ?? "Paroles")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("OK") { dismiss() }
-                }
-            }
-            .task(id: player.current?.id) {
-                guard let id = player.current?.id else { isLoading = false; return }
-                isLoading = true
-                lyrics = nil
-                lyrics = try? await client.lyrics(for: id)
-                isLoading = false
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 40)
             }
         }
+        .overlay {
+            if isLoading {
+                ProgressView().tint(.white)
+            } else if lyrics == nil {
+                VStack(spacing: 8) {
+                    Image(systemName: "quote.bubble")
+                        .font(.largeTitle)
+                    Text("Pas de paroles pour ce titre")
+                        .font(.headline)
+                }
+                .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .task(id: player.current?.id) {
+            guard let id = player.current?.id else { isLoading = false; return }
+            isLoading = true
+            lyrics = nil
+            // Les paroles déjà vues restent en cache.
+            if let cached = await PageCache.shared.value(Lyrics.self, for: "lyrics-\(id)") {
+                lyrics = cached.value
+            } else if let found = try? await client.lyrics(for: id) {
+                lyrics = found
+                await PageCache.shared.store(found, for: "lyrics-\(id)")
+            }
+            isLoading = false
+        }
     }
+}
+
+/// Réglage du volume du système, avec les icônes de haut-parleur.
+struct VolumeSlider: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.6))
+            SystemVolumeView()
+            Image(systemName: "speaker.wave.3.fill")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.6))
+        }
+    }
+}
+
+private struct SystemVolumeView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView {
+        let view = MPVolumeView(frame: .zero)
+        view.tintColor = .white
+        return view
+    }
+
+    func updateUIView(_ view: MPVolumeView, context: Context) {}
 }

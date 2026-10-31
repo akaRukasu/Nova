@@ -169,10 +169,20 @@ struct CollectionView: View {
     private func load() async {
         errorText = nil
         do {
-            let loaded = try await client.collection(collection.id)
-            content = loaded
-            tracks = loaded.tracks
-            await loadRemaining(from: loaded.continuation, header: loaded.header)
+            let client = self.client
+            let id = collection.id
+            try await loadCached("collection-\(id)", freshFor: 1800,
+                                 fetch: { try await client.collection(id) }) { loaded in
+                content = loaded
+                tracks = loaded.tracks
+            }
+            guard let loaded = content, let token = loaded.continuation else { return }
+            await loadRemaining(from: token, header: loaded.header)
+            // Playlist complète en cache : la prochaine ouverture est instantanée.
+            var complete = loaded
+            complete.tracks = tracks
+            complete.continuation = nil
+            await PageCache.shared.store(complete, for: "collection-\(id)")
         } catch {
             if (error as? URLError)?.code == .cancelled || error is CancellationError { return }
             errorText = error.localizedDescription

@@ -151,7 +151,40 @@ struct ItemRow: View {
             }
             .buttonStyle(.plain)
             .contextMenu { CollectionMenu(collection: collection) }
+        case .category(let category):
+            NavigationLink(value: Route.more(title: category.title, link: category.link)) {
+                CategoryTile(category: category)
+                    .frame(height: 64)
+            }
+            .buttonStyle(.plain)
         }
+    }
+}
+
+/// Tuile colorée d'une catégorie (« Parcourir »).
+struct CategoryTile: View {
+    let category: BrowseCategory
+
+    private var color: Color {
+        let value = category.color
+        return Color(red: Double((value >> 16) & 0xFF) / 255,
+                     green: Double((value >> 8) & 0xFF) / 255,
+                     blue: Double(value & 0xFF) / 255)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(color.gradient)
+            Text(category.title)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                .lineLimit(2)
+                .padding(12)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
     }
 }
 
@@ -176,6 +209,12 @@ struct ItemCard: View {
             }
             .buttonStyle(.plain)
             .contextMenu { CollectionMenu(collection: collection) }
+        case .category(let category):
+            NavigationLink(value: Route.more(title: category.title, link: category.link)) {
+                CategoryTile(category: category)
+                    .frame(width: width * 1.3, height: 90)
+            }
+            .buttonStyle(.plain)
         }
     }
 

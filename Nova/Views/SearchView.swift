@@ -10,6 +10,7 @@ struct SearchView: View {
     @State private var shelves: [Shelf] = []
     @State private var isSearching = false
     @State private var errorText: String?
+    @State private var categories: [Shelf] = []
     @FocusState private var fieldFocused: Bool
     private let client = InnerTubeClient()
 
@@ -67,6 +68,25 @@ struct SearchView: View {
     }
 
     @ViewBuilder private var history: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            recentSearches
+            // « Parcourir » : ambiances et genres de YouTube Music.
+            ForEach(categories) { shelf in
+                CardGrid(shelf: shelf)
+            }
+        }
+        .padding(.bottom, 24)
+        .task {
+            guard categories.isEmpty else { return }
+            let client = self.client
+            try? await loadCached("moods", freshFor: 86_400,
+                                  fetch: { try await client.browse(BrowseLink(browseID: "FEmusic_moods_and_genres")) }) { page in
+                categories = page.shelves.filter(\.isCategories)
+            }
+        }
+    }
+
+    @ViewBuilder private var recentSearches: some View {
         if library.searches.isEmpty {
             EmptyView()
         } else {
@@ -79,7 +99,7 @@ struct SearchView: View {
                         .font(.subheadline)
                 }
                 .padding(.bottom, 8)
-                ForEach(library.searches, id: \.self) { search in
+                ForEach(library.searches.prefix(6), id: \.self) { search in
                     Button {
                         submit(search)
                     } label: {
@@ -106,7 +126,7 @@ struct SearchView: View {
 
     @ViewBuilder private var overlay: some View {
         if submitted.isEmpty {
-            if library.searches.isEmpty {
+            if library.searches.isEmpty && categories.isEmpty {
                 ContentUnavailableView("Que veux-tu écouter ?", systemImage: "magnifyingglass",
                                        description: Text("Cherche un titre, un artiste, un album ou une playlist."))
             }

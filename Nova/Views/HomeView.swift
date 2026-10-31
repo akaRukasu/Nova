@@ -51,7 +51,7 @@ struct HomeView: View {
                 AccountButton()
             }
         }
-        .refreshable { await reload() }
+        .refreshable { await reload(force: true) }
         .task(id: account.revision) {
             if loadedRevision != account.revision { await reload() }
         }
@@ -103,13 +103,17 @@ struct HomeView: View {
         }
     }
 
-    private func reload() async {
+    private func reload(force: Bool = false) async {
         isLoading = true
         defer { isLoading = false }
         do {
-            let page = try await client.home()
-            shelves = page.shelves
-            continuation = page.continuation
+            // L'accueil précédent s'affiche tout de suite, puis il est rafraîchi.
+            let client = self.client
+            try await loadCached("home-\(account.isSignedIn)", freshFor: force ? 0 : 300,
+                                 fetch: { try await client.home() }) { page in
+                shelves = page.shelves
+                continuation = page.continuation
+            }
             errorText = nil
             loadedRevision = account.revision
         } catch {

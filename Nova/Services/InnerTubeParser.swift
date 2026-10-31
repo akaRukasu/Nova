@@ -146,7 +146,17 @@ enum InnerTubeParser {
     static func item(fromRenderer wrapper: JSONObject) -> MusicItem? {
         if let renderer = wrapper["musicResponsiveListItemRenderer"] as? JSONObject { return responsiveItem(renderer) }
         if let renderer = wrapper["musicTwoRowItemRenderer"] as? JSONObject { return twoRowItem(renderer) }
+        if let renderer = wrapper["musicNavigationButtonRenderer"] as? JSONObject { return categoryItem(renderer) }
         return nil
+    }
+
+    /// Tuile de catégorie (« Chill », « Rap », « Classements »…).
+    static func categoryItem(_ renderer: JSONObject) -> MusicItem? {
+        let title = text(renderer["buttonText"]).trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, let link = link(renderer["clickCommand"]) else { return nil }
+        let raw = ((renderer["solid"] as? JSONObject)?["leftStripeColor"] as? NSNumber)?.int64Value
+        let color = raw.map { UInt32(truncatingIfNeeded: $0) } ?? 0xFF8E8E93
+        return .category(BrowseCategory(title: title, color: color, link: link))
     }
 
     /// Ligne de liste (résultats de recherche, titres d'un album ou d'une playlist…).

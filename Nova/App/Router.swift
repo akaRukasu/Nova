@@ -2,7 +2,7 @@ import Observation
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, library, search
+    case home, explore, library, search
 }
 
 /// Pages qu'on peut ouvrir dans un onglet.
@@ -14,6 +14,9 @@ enum Route: Hashable {
     case downloads
     case history
     case account(title: String, browseID: String)
+    case libraryPlaylists
+    case libraryArtists
+    case libraryAlbums
 }
 
 /// Navigation de l'app : onglet actif, pile de pages par onglet, lecteur plein écran.
@@ -22,6 +25,7 @@ enum Route: Hashable {
 final class Router {
     var tab: AppTab = .home
     var homePath: [Route] = []
+    var explorePath: [Route] = []
     var libraryPath: [Route] = []
     var searchPath: [Route] = []
     var showPlayer = false
@@ -33,6 +37,7 @@ final class Router {
         showPlayer = false
         switch tab {
         case .home: homePath.append(route)
+        case .explore: explorePath.append(route)
         case .library: libraryPath.append(route)
         case .search: searchPath.append(route)
         }
@@ -74,6 +79,12 @@ struct RouteView: View {
             HistoryView()
         case .account(let title, let browseID):
             BrowseView(title: title, link: BrowseLink(browseID: browseID))
+        case .libraryPlaylists:
+            LibraryPlaylistsView()
+        case .libraryArtists:
+            LibraryCollectionsView(kind: .artist)
+        case .libraryAlbums:
+            LibraryCollectionsView(kind: .album)
         }
     }
 }
