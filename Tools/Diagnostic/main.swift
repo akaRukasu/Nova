@@ -275,4 +275,22 @@ await step("Sorties d'un artiste (Deezer)") {
     releases.prefix(5).forEach { print("      \($0.artist) — \($0.title) [\($0.typeLabel)] \($0.releaseDate.map { "\($0)" } ?? "-")") }
 }
 
+await step("Variantes Deezer pour les sorties par genre") {
+    for address in ["https://api.deezer.com/editorial/0/releases",
+                    "https://api.deezer.com/editorial/116/releases",
+                    "https://api.deezer.com/editorial/116/charts",
+                    "https://api.deezer.com/chart/116/albums?limit=50",
+                    "https://api.deezer.com/genre/116/artists",
+                    "https://api.deezer.com/editorial"] {
+        let (data, response) = try await URLSession.shared.data(from: URL(string: address)!)
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let list = (json["data"] as? [[String: Any]]) ?? ((json["albums"] as? [String: Any])?["data"] as? [[String: Any]]) ?? []
+        let first = list.first.map { item -> String in
+            let title = item["title"] as? String ?? item["name"] as? String ?? "?"
+            return "\(title) date=\(item["release_date"] ?? "-") type=\(item["record_type"] ?? "-")"
+        } ?? "-"
+        print("  \(address) → HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0), \(list.count) élément(s), clés=\(json.keys.sorted()), premier : \(first)")
+    }
+}
+
 print("\nTerminé.")

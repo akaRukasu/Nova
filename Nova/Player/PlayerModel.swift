@@ -305,7 +305,13 @@ final class PlayerModel {
         if let local = await AudioCache.shared.localURL(for: track.id) { return local }
         let stream = try await StreamResolver.audioStream(for: track.id)
         if stream.isM4A {
-            Task.detached(priority: .utility) { await AudioCache.shared.store(remote: stream.url, id: track.id) }
+            // Le fichier complet est mis en cache une fois la lecture lancée,
+            // pour ne pas ralentir le démarrage en se disputant la connexion.
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(for: .seconds(12))
+                guard NetworkMonitor.shared.allowsCaching else { return }
+                await AudioCache.shared.store(remote: stream.url, id: track.id)
+            }
         }
         return stream.url
     }
@@ -331,7 +337,7 @@ final class PlayerModel {
         isPlaying = true
         isLoading = false
         failureCount = 0
-        library.addRecent(track)
+        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
         updateNowPlaying()
         prefetchNext()
     }
@@ -357,19 +363,29 @@ final class PlayerModel {
             player.play()
             return
         }
+        // Fin de la file sans radio automatique : on s'arrête.
+        if !hasNext, repeatMode == .off, !PlaybackSettings.autoplayRadio {
+            pause()
+            seek(to: 0)
+            return
+        }
         next()
     }
 
     /// Prépare le titre suivant dans le cache pour un enchaînement instantané.
+    /// Prépare les titres suivants : flux résolus tout de suite (démarrage instantané),
+    /// fichier du prochain titre mis en cache après le démarrage du titre en cours.
     private func prefetchNext() {
-        guard hasNext else { return }
-        let next = queue[index + 1]
-        guard downloads.localURL(for: next.id) == nil else { return }
-        Task.detached(priority: .background) {
-            guard await !AudioCache.shared.contains(next.id),
-                  let stream = try? await StreamResolver.audioStream(for: next.id),
-                  stream.isM4A else { return }
-            await AudioCache.shared.store(remote: stream.url, id: next.id)
+        let upcoming = queue.dropFirst(index + 1).prefix(2).filter { downloads.localURL(for: $0.id) == nil }
+        for (offset, next) in upcoming.enumerated() {
+            Task.detached(priority: .background) {
+                guard await !AudioCache.shared.contains(next.id),
+                      let stream = try? await StreamResolver.audioStream(for: next.id) else { return }
+                guard offset == 0, stream.isM4A else { return }
+                try? await Task.sleep(for: .seconds(20))
+                guard NetworkMonitor.shared.allowsCaching else { return }
+                await AudioCache.shared.store(remote: stream.url, id: next.id)
+            }
         }
     }
 

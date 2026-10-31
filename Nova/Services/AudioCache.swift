@@ -5,7 +5,7 @@ actor AudioCache {
     static let shared = AudioCache()
 
     private let directory: URL
-    private let maxBytes: Int64 = 1_500_000_000 // 1,5 Go
+    private var maxBytes: Int64 { PlaybackSettings.cacheLimitBytes }
     private var inFlight: Set<String> = []
 
     init() {

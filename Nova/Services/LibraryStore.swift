@@ -10,6 +10,10 @@ final class LibraryStore {
     private(set) var playlists: [UserPlaylist] = []
     private(set) var saved: [MusicCollection] = []
     private(set) var searches: [String] = []
+    private(set) var smartPlaylists: [SmartPlaylist] = []
+    private(set) var stats: [String: TrackStats] = [:]
+    /// Tous les morceaux de la bibliothèque (likés, playlists, historique), sans doublons.
+    private(set) var songs: [Track] = []
     private var likedIDs: Set<String> = []
     private var savedIDs: Set<String> = []
 
@@ -19,6 +23,8 @@ final class LibraryStore {
         var playlists: [UserPlaylist]?
         var saved: [MusicCollection]?
         var searches: [String]?
+        var smartPlaylists: [SmartPlaylist]?
+        var stats: [String: TrackStats]?
     }
 
     @ObservationIgnored private let directory: URL = FileManager.default
@@ -34,6 +40,8 @@ final class LibraryStore {
             playlists = snapshot.playlists ?? []
             saved = snapshot.saved ?? []
             searches = snapshot.searches ?? []
+            smartPlaylists = snapshot.smartPlaylists ?? []
+            stats = snapshot.stats ?? [:]
         } else if let data = try? Data(contentsOf: directory.appendingPathComponent("recents.json")),
                   let old = try? JSONDecoder().decode([Track].self, from: data) {
             // Historique de l'étape 1.
@@ -41,6 +49,84 @@ final class LibraryStore {
         }
         likedIDs = Set(liked.map(\.id))
         savedIDs = Set(saved.map(\.id))
+        rebuildSongs()
+    }
+
+    // MARK: Morceaux
+
+    /// Regroupe les titres likés et ceux des playlists, sans doublons
+    /// (même identifiant, ou même titre et même artiste).
+    private func rebuildSongs() {
+        var seenIDs = Set<String>()
+        var seenKeys = Set<String>()
+        var result: [Track] = []
+        func include(_ track: Track) {
+            let key = LibraryStore.dedupeKey(track)
+            guard seenIDs.insert(track.id).inserted, seenKeys.insert(key).inserted else { return }
+            result.append(track)
+        }
+        liked.forEach(include)
+        playlists.forEach { $0.tracks.forEach(include) }
+        songs = result.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    static func dedupeKey(_ track: Track) -> String {
+        func clean(_ value: String) -> String {
+            value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .replacingOccurrences(of: #"\s*[\(\[].*?[\)\]]"#, with: "", options: .regularExpression)
+                .filter { $0.isLetter || $0.isNumber }
+        }
+        let artist = track.artist.components(separatedBy: CharacterSet(charactersIn: ",&")).first ?? track.artist
+        return clean(track.title) + "|" + clean(artist.replacingOccurrences(of: " et ", with: ","))
+    }
+
+    /// Enregistre une écoute (statistiques et, si activé, historique).
+    func recordPlay(_ track: Track, addToHistory: Bool) {
+        var info = stats[track.id] ?? TrackStats()
+        info.playCount += 1
+        info.lastPlayed = Date()
+        stats[track.id] = info
+        if addToHistory {
+            addRecent(track)
+        } else {
+            save()
+        }
+    }
+
+    private func markAdded(_ tracks: [Track]) {
+        let now = Date()
+        for track in tracks where stats[track.id]?.added == nil {
+            var info = stats[track.id] ?? TrackStats()
+            info.added = now
+            stats[track.id] = info
+        }
+    }
+
+    // MARK: Playlists intelligentes
+
+    func smartPlaylist(_ id: UUID) -> SmartPlaylist? {
+        smartPlaylists.first { $0.id == id }
+    }
+
+    func saveSmartPlaylist(_ playlist: SmartPlaylist) {
+        if let index = smartPlaylists.firstIndex(where: { $0.id == playlist.id }) {
+            smartPlaylists[index] = playlist
+        } else {
+            smartPlaylists.insert(playlist, at: 0)
+        }
+        save()
+    }
+
+    func deleteSmartPlaylist(_ id: UUID) {
+        smartPlaylists.removeAll { $0.id == id }
+        save()
+    }
+
+    /// Titres d'une playlist intelligente : bibliothèque + historique + téléchargements.
+    func tracks(for playlist: SmartPlaylist, downloads: [Track]) -> [Track] {
+        var seen = Set<String>()
+        let pool = (songs + recents + downloads).filter { seen.insert($0.id).inserted }
+        return playlist.evaluate(pool: pool, stats: stats, liked: likedIDs, downloaded: Set(downloads.map(\.id)))
     }
 
     // MARK: Historique
@@ -77,6 +163,7 @@ final class LibraryStore {
         }
         liked.insert(track, at: 0)
         likedIDs.insert(track.id)
+        markAdded([track])
         save()
         return true
     }
@@ -85,6 +172,7 @@ final class LibraryStore {
     func addLiked(_ tracks: [Track]) {
         let fresh = tracks.filter { likedIDs.insert($0.id).inserted }
         liked.insert(contentsOf: fresh, at: 0)
+        markAdded(fresh)
         save()
     }
 
@@ -104,6 +192,7 @@ final class LibraryStore {
     func createPlaylist(name: String, tracks: [Track] = []) -> UUID {
         let playlist = UserPlaylist(name: name, tracks: tracks)
         playlists.insert(playlist, at: 0)
+        markAdded(tracks)
         save()
         return playlist.id
     }
@@ -123,6 +212,7 @@ final class LibraryStore {
     }
 
     func add(_ tracks: [Track], to id: UUID) {
+        markAdded(tracks)
         edit(id) { playlist in
             let known = Set(playlist.tracks.map(\.id))
             playlist.tracks += tracks.filter { !known.contains($0.id) }
@@ -183,7 +273,9 @@ final class LibraryStore {
     // MARK: Disque
 
     private func save() {
-        let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches)
+        rebuildSongs()
+        let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
+                                smartPlaylists: smartPlaylists, stats: stats)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONEncoder().encode(snapshot).write(to: fileURL, options: .atomic)

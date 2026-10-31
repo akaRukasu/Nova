@@ -21,6 +21,7 @@ struct LibraryView: View {
                 link(.libraryPlaylists, "Playlists", "music.note.list", count: library.playlists.count + savedCount(.playlist))
                 link(.libraryArtists, "Artistes", "music.mic", count: savedCount(.artist))
                 link(.libraryAlbums, "Albums", "square.stack", count: savedCount(.album))
+                link(.songs, "Morceaux", "music.note", count: library.songs.count)
                 link(.liked, "Titres likés", "heart", count: library.liked.count)
                 link(.downloads, "Téléchargés", "arrow.down.circle",
                      count: downloads.tracks.count, busy: !downloads.pending.isEmpty)
@@ -369,6 +370,7 @@ struct LibraryPlaylistsView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AccountStore.self) private var account
     @Environment(Router.self) private var router
+    @State private var showSmartEditor = false
 
     var body: some View {
         List {
@@ -385,9 +387,40 @@ struct LibraryPlaylistsView: View {
                         .foregroundStyle(Color.novaAccent)
                 }
             }
+            Button {
+                showSmartEditor = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "gearshape")
+                        .font(.title2)
+                        .foregroundStyle(Color.novaAccent)
+                        .frame(width: 52, height: 52)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text("Nouvelle playlist intelligente…")
+                        .foregroundStyle(Color.novaAccent)
+                }
+            }
             if account.isSignedIn {
                 NavigationLink(value: Route.account(title: "Mes playlists YouTube", browseID: "FEmusic_liked_playlists")) {
                     Label("Playlists de mon compte YouTube", systemImage: "person.crop.circle")
+                }
+            }
+            ForEach(library.smartPlaylists) { smart in
+                NavigationLink(value: Route.smartPlaylist(smart.id)) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .frame(width: 52, height: 52)
+                            .background(Color.novaAccent.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(smart.name)
+                                .lineLimit(1)
+                            Text("Playlist intelligente")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             ForEach(library.playlists) { playlist in
@@ -414,6 +447,9 @@ struct LibraryPlaylistsView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Playlists")
+        .sheet(isPresented: $showSmartEditor) {
+            SmartPlaylistEditor(playlist: SmartPlaylist(name: "Playlist intelligente"))
+        }
     }
 }
 

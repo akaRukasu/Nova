@@ -17,6 +17,12 @@ enum Route: Hashable {
     case libraryPlaylists
     case libraryArtists
     case libraryAlbums
+    case songs
+    case smartPlaylist(UUID)
+    case discover
+    case releases
+    case concerts(artist: String?)
+    case settings
 }
 
 /// Navigation de l'app : onglet actif, pile de pages par onglet, lecteur plein écran.
@@ -85,6 +91,18 @@ struct RouteView: View {
             LibraryCollectionsView(kind: .artist)
         case .libraryAlbums:
             LibraryCollectionsView(kind: .album)
+        case .songs:
+            SongsView()
+        case .smartPlaylist(let id):
+            SmartPlaylistView(id: id)
+        case .discover:
+            DiscoverView()
+        case .releases:
+            ReleasesView()
+        case .concerts(let artist):
+            ConcertsView(initialArtist: artist)
+        case .settings:
+            SettingsView()
         }
     }
 }

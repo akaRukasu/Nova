@@ -22,7 +22,11 @@ enum StreamResolver {
     private static func resolve(_ videoID: String) async throws -> Resolved {
         let streams = try await YouTube(videoID: videoID, methods: [.local, .remote]).streams
         let audio = streams.filterAudioOnly()
-        if let m4a = audio.filter({ $0.fileExtension == .m4a }).highestAudioBitrateStream() {
+        let m4aStreams = audio.filter({ $0.fileExtension == .m4a })
+        let chosen = PlaybackSettings.preferHighQuality
+            ? m4aStreams.highestAudioBitrateStream()
+            : m4aStreams.lowestAudioBitrateStream()
+        if let m4a = chosen {
             return Resolved(url: m4a.url, isM4A: true)
         }
         if let playable = audio.filter({ $0.isNativelyPlayable }).highestAudioBitrateStream() {
