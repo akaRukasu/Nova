@@ -107,11 +107,11 @@ struct ConcertsView: View {
             }
         }
         .overlay {
-            if isLoading {
+            if isLoading && concerts.isEmpty {
                 ProgressView("Recherche des concerts…")
                     .padding(24)
                     .glassEffect(in: RoundedRectangle(cornerRadius: 20))
-            } else if let errorText {
+            } else if let errorText, concerts.isEmpty {
                 ContentUnavailableView("Recherche impossible", systemImage: "exclamationmark.triangle",
                                        description: Text(errorText))
             }
@@ -120,7 +120,9 @@ struct ConcertsView: View {
         .onAppear {
             if artist.isEmpty, let initialArtist { artist = initialArtist }
             if city.isEmpty { city = savedCity }
-            if initialArtist != nil, !apiKey.isEmpty, concerts.isEmpty { Task { await search() } }
+            guard !apiKey.isEmpty, concerts.isEmpty, !isLoading else { return }
+            // À l'ouverture : l'artiste demandé, sinon les concerts de tous tes artistes.
+            Task { if initialArtist != nil { await search() } else { await searchMyArtists() } }
         }
     }
 
@@ -211,18 +213,29 @@ struct ConcertsView: View {
         errorText = nil
         defer { isLoading = false }
         origin = await resolveOrigin()
-        var all: [Concert] = []
+        concerts = []
+        var seen = Set<String>()
         for name in myArtists {
-            let found = (try? await ConcertsService.search(
-                artist: name, latitude: origin?.coordinate.latitude, longitude: origin?.coordinate.longitude,
-                radiusKm: radius, countryCode: nil)) ?? []
-            all += found
+            do {
+                let found = try await ConcertsService.search(
+                    artist: name, latitude: origin?.coordinate.latitude, longitude: origin?.coordinate.longitude,
+                    radiusKm: radius, countryCode: nil)
+                // Résultats affichés au fur et à mesure.
+                concerts = (concerts + found.filter { seen.insert($0.id).inserted }).sorted { $0.date < $1.date }
+            } catch let error as ConcertsError {
+                errorText = error.localizedDescription
+                return
+            } catch {
+                continue
+            }
             // L'API gratuite limite le nombre de requêtes par seconde.
             try? await Task.sleep(for: .milliseconds(250))
         }
-        var seen = Set<String>()
-        concerts = all.filter { seen.insert($0.id).inserted }.sorted { $0.date < $1.date }
-        if concerts.isEmpty { errorText = "Aucun concert annoncé pour tes artistes dans cette zone." }
+        if concerts.isEmpty {
+            errorText = useMyLocation || !city.isEmpty
+                ? "Aucun concert annoncé pour tes artistes dans cette zone. Essaie un rayon plus grand."
+                : "Aucun concert annoncé pour tes artistes."
+        }
     }
 }
 

@@ -23,6 +23,7 @@ enum Route: Hashable {
     case releases
     case concerts(artist: String?)
     case settings
+    case mix(MixKind)
 }
 
 /// Navigation de l'app : onglet actif, pile de pages par onglet, lecteur plein écran.
@@ -105,6 +106,8 @@ struct RouteView: View {
             ConcertsView(initialArtist: artist)
         case .settings:
             SettingsView()
+        case .mix(let kind):
+            MixView(kind: kind)
         }
     }
 }

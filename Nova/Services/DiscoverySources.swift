@@ -163,9 +163,15 @@ struct Concert: Identifiable, Codable, Hashable {
 
 enum ConcertsError: LocalizedError {
     case missingKey
+    case invalidKey
 
     var errorDescription: String? {
-        "Ajoute ta clé Ticketmaster dans Réglages › Concerts pour chercher des concerts."
+        switch self {
+        case .missingKey:
+            return "Ajoute ta clé Ticketmaster dans Réglages › Concerts pour chercher des concerts."
+        case .invalidKey:
+            return "Ticketmaster refuse la clé. Vérifie que tu as copié la « Consumer Key » (et non le « Consumer Secret ») dans Réglages › Concerts."
+        }
     }
 }
 
@@ -186,29 +192,94 @@ enum ConcertsService {
     /// Concerts à venir d'un artiste, et/ou autour d'une position.
     static func search(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
                        countryCode: String?) async throws -> [Concert] {
-        guard let key = apiKey else { throw ConcertsError.missingKey }
-        var components = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/events.json")!
         var query = [
-            URLQueryItem(name: "apikey", value: key),
             URLQueryItem(name: "classificationName", value: "music"),
             URLQueryItem(name: "sort", value: "date,asc"),
             URLQueryItem(name: "size", value: "100"),
+            // Sans « * », l'API ne renvoie que les événements en anglais (presque rien en France).
+            URLQueryItem(name: "locale", value: "*"),
         ]
-        if let artist, !artist.isEmpty { query.append(URLQueryItem(name: "keyword", value: artist)) }
+        if let artist, !artist.isEmpty {
+            // On identifie l'artiste dans le catalogue pour éviter les homonymes et les correspondances floues.
+            if let attractionID = try await attraction(named: artist) {
+                query.append(URLQueryItem(name: "attractionId", value: attractionID))
+            } else {
+                query.append(URLQueryItem(name: "keyword", value: artist))
+            }
+        }
         if let latitude, let longitude {
-            query.append(URLQueryItem(name: "latlong", value: "\(latitude),\(longitude)"))
+            query.append(URLQueryItem(name: "geoPoint", value: geohash(latitude: latitude, longitude: longitude)))
             query.append(URLQueryItem(name: "radius", value: "\(radiusKm)"))
             query.append(URLQueryItem(name: "unit", value: "km"))
         } else if let countryCode, artist?.isEmpty ?? true {
             query.append(URLQueryItem(name: "countryCode", value: countryCode))
         }
-        components.queryItems = query
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw ImportError.http(status, "Ticketmaster") }
-        let json = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        let json = try await get("events.json", query: query)
         let events = ((json["_embedded"] as? [String: Any])?["events"] as? [[String: Any]]) ?? []
         return events.compactMap(concert(from:))
+    }
+
+    /// Identifiant Ticketmaster de l'artiste dont le nom correspond le mieux.
+    private static func attraction(named name: String) async throws -> String? {
+        let json = try await get("attractions.json", query: [
+            URLQueryItem(name: "keyword", value: name),
+            URLQueryItem(name: "classificationName", value: "music"),
+            URLQueryItem(name: "locale", value: "*"),
+            URLQueryItem(name: "size", value: "10"),
+        ])
+        let attractions = ((json["_embedded"] as? [String: Any])?["attractions"] as? [[String: Any]]) ?? []
+        let wanted = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        let exact = attractions.first {
+            (($0["name"] as? String) ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) == wanted
+        }
+        return (exact ?? attractions.first)?["id"] as? String
+    }
+
+    private static func get(_ path: String, query: [URLQueryItem]) async throws -> [String: Any] {
+        guard let key = apiKey else { throw ConcertsError.missingKey }
+        var components = URLComponents(string: "https://app.ticketmaster.com/discovery/v2/\(path)")!
+        components.queryItems = [URLQueryItem(name: "apikey", value: key)] + query
+        var attempt = 0
+        while true {
+            let (data, response) = try await URLSession.shared.data(from: components.url!)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            switch status {
+            case 200:
+                return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            case 401, 403:
+                throw ConcertsError.invalidKey
+            case 429 where attempt < 3:
+                // Limite de 5 requêtes par seconde de la clé gratuite.
+                attempt += 1
+                try await Task.sleep(for: .milliseconds(600 * attempt))
+            default:
+                throw ImportError.http(status, "Ticketmaster")
+            }
+        }
+    }
+
+    /// Geohash (précision 9) attendu par le paramètre `geoPoint`.
+    static func geohash(latitude: Double, longitude: Double, precision: Int = 9) -> String {
+        let base32 = Array("0123456789bcdefghjkmnpqrstuvwxyz")
+        var latRange = (-90.0, 90.0), lonRange = (-180.0, 180.0)
+        var hash = "", bit = 0, value = 0, even = true
+        while hash.count < precision {
+            if even {
+                let mid = (lonRange.0 + lonRange.1) / 2
+                if longitude >= mid { value = value << 1 | 1; lonRange.0 = mid } else { value <<= 1; lonRange.1 = mid }
+            } else {
+                let mid = (latRange.0 + latRange.1) / 2
+                if latitude >= mid { value = value << 1 | 1; latRange.0 = mid } else { value <<= 1; latRange.1 = mid }
+            }
+            even.toggle()
+            bit += 1
+            if bit == 5 {
+                hash.append(base32[value])
+                bit = 0
+                value = 0
+            }
+        }
+        return hash
     }
 
     private static func concert(from event: [String: Any]) -> Concert? {

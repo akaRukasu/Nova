@@ -276,4 +276,8 @@ await step("Sorties d'un artiste (Deezer)") {
     releases.prefix(5).forEach { print("      \($0.artist) — \($0.title) [\($0.typeLabel)] \($0.releaseDate.map { "\($0)" } ?? "-")") }
 }
 
+await step("Geohash (concerts autour d'un lieu)") {
+    print("  Paris → \(ConcertsService.geohash(latitude: 48.8566, longitude: 2.3522)) (attendu : u09tvw0f…)")
+}
+
 print("\nTerminé.")

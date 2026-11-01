@@ -34,10 +34,8 @@ struct DiscoverView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 30) {
+                MixesRow()
                 shortcuts
-                if let mixSeed = seeds.first {
-                    mixCard(seed: mixSeed)
-                }
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 20) {
                         Text("Parce que tu as écouté « \(section.seed.title) »")

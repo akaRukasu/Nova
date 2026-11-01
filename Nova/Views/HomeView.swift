@@ -16,6 +16,7 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 30) {
                 resumeCard
+                MixesRow()
                 if !library.recents.isEmpty {
                     ShelfView(shelf: Shelf(id: "recents", title: "Écoutés récemment",
                                            items: library.recents.prefix(20).map(MusicItem.track),
