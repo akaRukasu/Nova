@@ -83,9 +83,12 @@ struct TrackRow: View {
 /// Ligne de titre complète : appui pour lire, bouton « … » et menu contextuel.
 struct TrackRowButton: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryStore.self) private var library
     let track: Track
     var number: Int?
     var onRemove: (() -> Void)?
+    /// Bouton « + » pour ajouter le titre à la bibliothèque (résultats de recherche).
+    var showsAddButton = false
     let action: () -> Void
 
     var body: some View {
@@ -94,6 +97,12 @@ struct TrackRowButton: View {
                 TrackRow(track: track, isCurrent: player.current?.id == track.id, number: number)
             }
             .buttonStyle(.plain)
+
+            if showsAddButton {
+                AddToLibraryButton(isAdded: library.isInLibrary(track.id)) {
+                    if library.isInLibrary(track.id) { library.removeFromLibrary(track) } else { library.addToLibrary(track) }
+                }
+            }
 
             Menu {
                 TrackMenu(track: track, onRemove: onRemove)
@@ -138,18 +147,27 @@ struct CollectionRow: View {
 
 /// Élément d'une liste : titre jouable ou lien vers une page.
 struct ItemRow: View {
+    @Environment(LibraryStore.self) private var library
     let item: MusicItem
+    var showsAddButton = false
     let onPlay: (Track) -> Void
 
     var body: some View {
         switch item {
         case .track(let track):
-            TrackRowButton(track: track) { onPlay(track) }
+            TrackRowButton(track: track, showsAddButton: showsAddButton) { onPlay(track) }
         case .collection(let collection):
-            NavigationLink(value: Route.collection(collection)) {
-                CollectionRow(collection: collection)
+            HStack(spacing: 4) {
+                NavigationLink(value: Route.collection(collection)) {
+                    CollectionRow(collection: collection)
+                }
+                .buttonStyle(.plain)
+                if showsAddButton {
+                    AddToLibraryButton(isAdded: library.isSaved(collection.id)) {
+                        library.toggleSaved(collection)
+                    }
+                }
             }
-            .buttonStyle(.plain)
             .contextMenu { CollectionMenu(collection: collection) }
         case .category(let category):
             NavigationLink(value: Route.more(title: category.title, link: category.link)) {
@@ -158,6 +176,26 @@ struct ItemRow: View {
             }
             .buttonStyle(.plain)
         }
+    }
+}
+
+/// « + » / « ✓ » : ajouter à la bibliothèque ou retirer.
+struct AddToLibraryButton: View {
+    let isAdded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isAdded ? "checkmark.circle.fill" : "plus.circle")
+                .font(.title3)
+                .foregroundStyle(Color.novaAccent)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 36, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.success, trigger: isAdded)
+        .accessibilityLabel(isAdded ? "Retirer de la bibliothèque" : "Ajouter à la bibliothèque")
     }
 }
 
@@ -265,6 +303,11 @@ struct TrackMenu: View {
             let liked = library.isLiked(track.id)
             Button(liked ? "Je n'aime plus" : "J'aime", systemImage: liked ? "heart.slash" : "heart") {
                 player.toggleLike(track)
+            }
+            if library.isInLibrary(track.id) {
+                Button("Retirer de la bibliothèque", systemImage: "minus.circle") { library.removeFromLibrary(track) }
+            } else {
+                Button("Ajouter à la bibliothèque", systemImage: "plus.circle") { library.addToLibrary(track) }
             }
             AddToPlaylistMenu(tracks: [track])
             switch downloads.state(of: track.id) {

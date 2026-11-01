@@ -1,115 +1,76 @@
 import SwiftUI
 
+/// Rubriques de la bibliothèque, masquables et réordonnables (bouton « Modifier »).
+enum LibrarySection: String, CaseIterable, Identifiable {
+    case playlists, artists, albums, songs, liked, downloads, history, youtube, importer
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .playlists: return "Playlists"
+        case .artists: return "Artistes"
+        case .albums: return "Albums"
+        case .songs: return "Morceaux"
+        case .liked: return "Titres likés"
+        case .downloads: return "Téléchargés"
+        case .history: return "Historique"
+        case .youtube: return "Mon compte YouTube"
+        case .importer: return "Importer"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .playlists: return "music.note.list"
+        case .artists: return "music.mic"
+        case .albums: return "square.stack"
+        case .songs: return "music.note"
+        case .liked: return "heart"
+        case .downloads: return "arrow.down.circle"
+        case .history: return "clock"
+        case .youtube: return "person.crop.circle"
+        case .importer: return "square.and.arrow.down.on.square"
+        }
+    }
+
+    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads]
+}
+
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(DownloadStore.self) private var downloads
     @Environment(AccountStore.self) private var account
-    @Environment(Router.self) private var router
     @Environment(ImportManager.self) private var importer
+    @Environment(PlayerModel.self) private var player
+    @AppStorage("librarySections") private var sectionsRaw = LibrarySection.defaultOrder.map(\.rawValue).joined(separator: ",")
+    @State private var editing = false
     @State private var showImport = false
-    @State private var cacheSize: Int64 = 0
-    @State private var downloadsSize: Int64 = 0
-    @State private var confirmClearCache = false
-    @State private var confirmClearDownloads = false
+
+    private var enabled: [LibrarySection] {
+        sectionsRaw.split(separator: ",").compactMap { LibrarySection(rawValue: String($0)) }
+    }
+
+    /// Toutes les rubriques : celles affichées d'abord, dans leur ordre, puis les masquées.
+    private var allSections: [LibrarySection] {
+        enabled + LibrarySection.allCases.filter { !enabled.contains($0) }
+    }
 
     var body: some View {
-        List {
-            if !importer.jobs.isEmpty {
-                ImportJobsSection()
-            }
-            Section {
-                link(.libraryPlaylists, "Playlists", "music.note.list", count: library.playlists.count + savedCount(.playlist))
-                link(.libraryArtists, "Artistes", "music.mic", count: savedCount(.artist))
-                link(.libraryAlbums, "Albums", "square.stack", count: savedCount(.album))
-                link(.songs, "Morceaux", "music.note", count: library.songs.count)
-                link(.liked, "Titres likés", "heart", count: library.liked.count)
-                link(.downloads, "Téléchargés", "arrow.down.circle",
-                     count: downloads.tracks.count, busy: !downloads.pending.isEmpty)
-                link(.history, "Historique", "clock", count: library.recents.count)
-                Button {
-                    showImport = true
-                } label: {
-                    Label {
-                        Text("Importer depuis une autre plateforme")
-                            .foregroundStyle(Color.primary)
-                    } icon: {
-                        Image(systemName: "square.and.arrow.down.on.square")
-                            .foregroundStyle(Color.novaAccent)
-                    }
-                }
-            }
-            .font(.title3)
-
-            if !recentlyAdded.isEmpty {
-                Section {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
-                              alignment: .leading, spacing: 18) {
-                        ForEach(recentlyAdded, id: \.self) { entry in
-                            NavigationLink(value: entry.route) {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    RemoteImage(urls: entry.artwork)
-                                        .aspectRatio(1, contentMode: .fit)
-                                        .clipShape(entry.round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous)))
-                                    Text(entry.title)
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(Color.primary)
-                                        .lineLimit(1)
-                                    Text(entry.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 6)
-                    .listRowSeparator(.hidden)
-                } header: {
-                    Text("Ajouts récents")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(Color.primary)
-                        .textCase(nil)
-                }
-            }
-
-            if account.isSignedIn {
-                Section("Mon compte YouTube") {
-                    link(.collection(MusicCollection(id: "VLLM", kind: .playlist, title: "Titres likés sur YouTube")),
-                         "Titres likés sur YouTube", "hand.thumbsup")
-                    link(.account(title: "Mes playlists YouTube", browseID: "FEmusic_liked_playlists"),
-                         "Playlists", "music.note.list")
-                    link(.account(title: "Mes albums YouTube", browseID: "FEmusic_liked_albums"),
-                         "Albums", "square.stack")
-                    link(.account(title: "Mes artistes YouTube", browseID: "FEmusic_library_corpus_track_artists"),
-                         "Artistes", "music.mic")
-                    link(.account(title: "Historique YouTube", browseID: "FEmusic_history"),
-                         "Historique", "clock.arrow.circlepath")
-                }
-            }
-
-            Section {
-                LabeledContent("Téléchargements", value: ByteCountFormatter.string(fromByteCount: downloadsSize, countStyle: .file))
-                LabeledContent("Cache d'écoute", value: ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
-                Button("Vider le cache", role: .destructive) { confirmClearCache = true }
-                if !downloads.tracks.isEmpty {
-                    Button("Supprimer tous les téléchargements", role: .destructive) { confirmClearDownloads = true }
-                }
-            } header: {
-                Text("Stockage")
-            } footer: {
-                Text("Les titres écoutés restent en cache (1,5 Go maximum) pour se relancer instantanément. Les titres téléchargés restent disponibles hors ligne jusqu'à ce que tu les supprimes.")
+        Group {
+            if editing {
+                editor
+            } else {
+                content
             }
         }
         .navigationTitle("Bibliothèque")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    showImport = true
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
+                Button(editing ? "OK" : "Modifier") {
+                    withAnimation { editing.toggle() }
                 }
-                .accessibilityLabel("Importer")
+                .fontWeight(editing ? .semibold : .regular)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: Route.settings) {
@@ -122,79 +83,219 @@ struct LibraryView: View {
         .sheet(isPresented: $showImport) {
             ImportView()
         }
-        .task(id: downloads.tracks.count) { await refreshSizes() }
-        .confirmationDialog("Vider le cache d'écoute ?", isPresented: $confirmClearCache, titleVisibility: .visible) {
-            Button("Vider", role: .destructive) {
-                Task {
-                    await AudioCache.shared.clear()
-                    await refreshSizes()
+    }
+
+    // MARK: Affichage
+
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if importer.isRunning {
+                    Button { showImport = true } label: {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Import en cours…")
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                        }
+                        .padding(16)
+                    }
+                    .buttonStyle(.plain)
                 }
+
+                ForEach(enabled) { section in
+                    row(section)
+                    Divider().padding(.leading, 58)
+                }
+
+                recentGrid
+                    .padding(.top, 28)
+            }
+            .padding(.bottom, 24)
+        }
+    }
+
+    @ViewBuilder private func row(_ section: LibrarySection) -> some View {
+        let label = HStack(spacing: 16) {
+            Image(systemName: section.icon)
+                .font(.title3)
+                .foregroundStyle(Color.novaAccent)
+                .frame(width: 28)
+            Text(section.title)
+                .font(.title3)
+                .foregroundStyle(Color.primary)
+            Spacer()
+            if let count = count(for: section), count > 0 {
+                Text("\(count)")
+                    .foregroundStyle(.secondary)
+            }
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .contentShape(Rectangle())
+
+        if section == .importer {
+            Button { showImport = true } label: { label }
+                .buttonStyle(.plain)
+        } else if let route = route(for: section) {
+            NavigationLink(value: route) { label }
+                .buttonStyle(.plain)
+        }
+    }
+
+    private func route(for section: LibrarySection) -> Route? {
+        switch section {
+        case .playlists: return .libraryPlaylists
+        case .artists: return .libraryArtists
+        case .albums: return .libraryAlbums
+        case .songs: return .songs
+        case .liked: return .liked
+        case .downloads: return .downloads
+        case .history: return .history
+        case .youtube:
+            return account.isSignedIn
+                ? .account(title: "Mon compte YouTube", browseID: "FEmusic_liked_playlists")
+                : .settings
+        case .importer: return nil
+        }
+    }
+
+    private func count(for section: LibrarySection) -> Int? {
+        switch section {
+        case .playlists: return library.playlists.count + library.smartPlaylists.count + library.saved.filter { $0.kind == .playlist }.count
+        case .artists: return library.saved.filter { $0.kind == .artist }.count
+        case .albums: return library.saved.filter { $0.kind == .album }.count
+        case .songs: return library.songs.count
+        case .liked: return library.liked.count
+        case .downloads: return downloads.tracks.count
+        case .history: return library.recents.count
+        case .youtube, .importer: return nil
+        }
+    }
+
+    // MARK: Ajouts récents
+
+    @ViewBuilder private var recentGrid: some View {
+        let additions = library.recentAdditions()
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Ajouts récents")
+                .font(.title2.weight(.bold))
+                .padding(.horizontal, 16)
+            if additions.isEmpty {
+                Text("Ajoute des titres, des albums ou des playlists avec le bouton + dans la recherche : ils apparaîtront ici.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+                          alignment: .leading, spacing: 22) {
+                    ForEach(additions) { addition in
+                        tile(addition)
+                    }
+                }
+                .padding(.horizontal, 16)
             }
         }
-        .confirmationDialog("Supprimer tous les téléchargements ?", isPresented: $confirmClearDownloads, titleVisibility: .visible) {
-            Button("Supprimer", role: .destructive) {
-                downloads.removeAll()
+    }
+
+    @ViewBuilder private func tile(_ addition: LibraryStore.RecentAddition) -> some View {
+        switch addition {
+        case .track(let track):
+            Button { player.startRadio(from: track) } label: {
+                tileLabel(urls: track.squareArtworkURLs, title: track.title, subtitle: track.artist, round: false)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { TrackMenu(track: track) }
+        case .collection(let collection):
+            NavigationLink(value: Route.collection(collection)) {
+                tileLabel(urls: collection.artworkURLs, title: collection.title,
+                          subtitle: collection.subtitle.isEmpty ? collection.kind.label : collection.subtitle,
+                          round: collection.kind == .artist)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { CollectionMenu(collection: collection) }
+        case .playlist(let playlist):
+            NavigationLink(value: Route.userPlaylist(playlist.id)) {
+                tileLabel(urls: playlist.tracks.first?.squareArtworkURLs ?? [], title: playlist.name,
+                          subtitle: playlist.tracks.count == 1 ? "1 titre" : "\(playlist.tracks.count) titres",
+                          round: false)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func tileLabel(urls: [URL], title: String, subtitle: String, round: Bool) -> some View {
+        VStack(alignment: round ? .center : .leading, spacing: 6) {
+            RemoteImage(urls: urls)
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous)))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: round ? .center : .leading)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: Modification
+
+    private var editor: some View {
+        List {
+            Section {
+                ForEach(allSections) { section in
+                    let shown = enabled.contains(section)
+                    Button {
+                        toggle(section)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: shown ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(shown ? Color.novaAccent : .secondary)
+                            Image(systemName: section.icon)
+                                .foregroundStyle(Color.novaAccent)
+                                .frame(width: 26)
+                            Text(section.title)
+                                .foregroundStyle(Color.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onMove(perform: move)
+            } footer: {
+                Text("Coche les rubriques à afficher et fais-les glisser pour les réordonner.")
             }
         }
+        .environment(\.editMode, .constant(.active))
     }
 
-    private func link(_ route: Route, _ title: String, _ icon: String, _ color: Color = .novaAccent,
-                      count: Int? = nil, busy: Bool = false) -> some View {
-        NavigationLink(value: route) {
-            HStack {
-                Label {
-                    Text(title)
-                } icon: {
-                    Image(systemName: icon)
-                        .foregroundStyle(color)
-                }
-                Spacer()
-                if busy { ProgressView() }
-                if let count, count > 0 {
-                    Text("\(count)")
-                        .foregroundStyle(.secondary)
-                }
-            }
+    private func save(_ sections: [LibrarySection]) {
+        sectionsRaw = sections.map(\.rawValue).joined(separator: ",")
+    }
+
+    private func toggle(_ section: LibrarySection) {
+        if enabled.contains(section) {
+            save(enabled.filter { $0 != section })
+        } else {
+            // On l'insère à sa place dans l'ordre complet.
+            let order = allSections
+            save(order.filter { enabled.contains($0) || $0 == section })
         }
     }
 
-    private func savedCount(_ kind: CollectionKind) -> Int {
-        library.saved.filter { $0.kind == kind }.count
-    }
-
-    /// Entrée de la grille « Ajouts récents ».
-    struct RecentEntry: Hashable {
-        let route: Route
-        let title: String
-        let subtitle: String
-        let artwork: [URL]
-        let round: Bool
-    }
-
-    private var recentlyAdded: [RecentEntry] {
-        let playlists = library.playlists.prefix(4).map { playlist in
-            RecentEntry(route: .userPlaylist(playlist.id), title: playlist.name,
-                        subtitle: playlist.tracks.count == 1 ? "1 titre" : "\(playlist.tracks.count) titres",
-                        artwork: playlist.tracks.first?.squareArtworkURLs ?? [], round: false)
-        }
-        let saved = library.saved.prefix(6).map { collection in
-            RecentEntry(route: .collection(collection), title: collection.title,
-                        subtitle: savedSubtitle(collection), artwork: collection.artworkURLs,
-                        round: collection.kind == .artist)
-        }
-        return Array((playlists + saved).prefix(6))
-    }
-
-    private func savedSubtitle(_ collection: MusicCollection) -> String {
-        let label = collection.kind.label
-        let subtitle = collection.subtitle
-        if subtitle.isEmpty || subtitle == label { return label }
-        return subtitle.hasPrefix(label) ? subtitle : "\(label) • \(subtitle)"
-    }
-
-    private func refreshSizes() async {
-        cacheSize = await AudioCache.shared.sizeInBytes()
-        downloadsSize = downloads.sizeInBytes()
+    private func move(from source: IndexSet, to destination: Int) {
+        var order = allSections
+        order.move(fromOffsets: source, toOffset: destination)
+        let shown = Set(enabled)
+        save(order.filter { shown.contains($0) })
     }
 }
 

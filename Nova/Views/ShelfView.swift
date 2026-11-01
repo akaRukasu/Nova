@@ -7,6 +7,8 @@ struct ShelfView: View {
     let shelf: Shelf
     /// Nombre maximal de lignes affichées pour une liste.
     var listLimit = 6
+    /// Bouton « + » sur les lignes (résultats de recherche).
+    var showsAddButton = false
     /// Lecture d'un titre ; par défaut, lit l'étagère à partir de ce titre.
     var onPlay: ((Track, [Track]) -> Void)?
 
@@ -39,7 +41,7 @@ struct ShelfView: View {
             case .list:
                 VStack(spacing: 6) {
                     ForEach(shelf.items.prefix(listLimit)) { item in
-                        ItemRow(item: item, onPlay: play)
+                        ItemRow(item: item, showsAddButton: showsAddButton, onPlay: play)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -47,7 +49,7 @@ struct ShelfView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHGrid(rows: Array(repeating: GridItem(.fixed(58), spacing: 6), count: min(4, max(shelf.items.count, 1))), spacing: 16) {
                         ForEach(shelf.items) { item in
-                            ItemRow(item: item, onPlay: play)
+                            ItemRow(item: item, showsAddButton: showsAddButton, onPlay: play)
                                 .frame(width: 310)
                         }
                     }
@@ -83,11 +85,12 @@ struct ShelfView: View {
 /// Liste d'étagères avec chargement, erreur et page suivante.
 struct ShelvesContent: View {
     let shelves: [Shelf]
+    var showsAddButton = false
     var onPlay: ((Track, [Track]) -> Void)?
 
     var body: some View {
         ForEach(shelves) { shelf in
-            ShelfView(shelf: shelf, onPlay: onPlay)
+            ShelfView(shelf: shelf, showsAddButton: showsAddButton, onPlay: onPlay)
         }
     }
 }

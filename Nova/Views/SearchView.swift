@@ -25,7 +25,7 @@ struct SearchView: View {
                 history
             } else if scope == .all {
                 LazyVStack(alignment: .leading, spacing: 28) {
-                    ShelvesContent(shelves: shelves) { track, _ in
+                    ShelvesContent(shelves: shelves, showsAddButton: true) { track, _ in
                         player.startRadio(from: track)
                     }
                 }
@@ -33,7 +33,7 @@ struct SearchView: View {
             } else {
                 LazyVStack(spacing: 6) {
                     ForEach(shelves.flatMap(\.items)) { item in
-                        ItemRow(item: item) { track in player.startRadio(from: track) }
+                        ItemRow(item: item, showsAddButton: true) { track in player.startRadio(from: track) }
                     }
                 }
                 .padding(.horizontal, 16)

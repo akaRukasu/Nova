@@ -14,6 +14,11 @@ final class LibraryStore {
     private(set) var stats: [String: TrackStats] = [:]
     /// Tous les morceaux de la bibliothèque (likés, playlists, historique), sans doublons.
     private(set) var songs: [Track] = []
+    /// Titres ajoutés à la bibliothèque (bouton « + »), du plus récent au plus ancien.
+    private(set) var addedTracks: [Track] = []
+    /// Date d'ajout des albums, playlists et artistes enregistrés.
+    private(set) var savedDates: [String: Date] = [:]
+    private var addedIDs: Set<String> = []
     private var likedIDs: Set<String> = []
     private var savedIDs: Set<String> = []
 
@@ -25,6 +30,8 @@ final class LibraryStore {
         var searches: [String]?
         var smartPlaylists: [SmartPlaylist]?
         var stats: [String: TrackStats]?
+        var addedTracks: [Track]?
+        var savedDates: [String: Date]?
     }
 
     @ObservationIgnored private let directory: URL = FileManager.default
@@ -42,6 +49,8 @@ final class LibraryStore {
             searches = snapshot.searches ?? []
             smartPlaylists = snapshot.smartPlaylists ?? []
             stats = snapshot.stats ?? [:]
+            addedTracks = snapshot.addedTracks ?? []
+            savedDates = snapshot.savedDates ?? [:]
         } else if let data = try? Data(contentsOf: directory.appendingPathComponent("recents.json")),
                   let old = try? JSONDecoder().decode([Track].self, from: data) {
             // Historique de l'étape 1.
@@ -49,7 +58,60 @@ final class LibraryStore {
         }
         likedIDs = Set(liked.map(\.id))
         savedIDs = Set(saved.map(\.id))
+        addedIDs = Set(addedTracks.map(\.id))
         rebuildSongs()
+    }
+
+    // MARK: Ajouter à la bibliothèque
+
+    /// Le titre est dans la bibliothèque (ajouté, liké ou dans une playlist).
+    func isInLibrary(_ id: String) -> Bool {
+        addedIDs.contains(id) || likedIDs.contains(id)
+    }
+
+    func addToLibrary(_ track: Track) {
+        guard addedIDs.insert(track.id).inserted else { return }
+        addedTracks.insert(track, at: 0)
+        markAdded([track], force: true)
+        save()
+    }
+
+    func removeFromLibrary(_ track: Track) {
+        guard addedIDs.remove(track.id) != nil else { return }
+        addedTracks.removeAll { $0.id == track.id }
+        save()
+    }
+
+    /// Élément de la grille « Ajouts récents ».
+    enum RecentAddition: Hashable, Identifiable {
+        case track(Track)
+        case collection(MusicCollection)
+        case playlist(UserPlaylist)
+
+        var id: String {
+            switch self {
+            case .track(let track): return "t:" + track.id
+            case .collection(let collection): return "c:" + collection.id
+            case .playlist(let playlist): return "p:" + playlist.id.uuidString
+            }
+        }
+    }
+
+    /// Titres, albums, artistes et playlists ajoutés, du plus récent au plus ancien.
+    func recentAdditions(limit: Int = 60) -> [RecentAddition] {
+        var entries: [(Date, RecentAddition)] = []
+        for track in addedTracks.prefix(limit) {
+            entries.append((stats[track.id]?.added ?? .distantPast, .track(track)))
+        }
+        for (position, collection) in saved.prefix(limit).enumerated() {
+            // Ajouts antérieurs à la date d'ajout : on garde l'ordre de la liste.
+            let date = savedDates[collection.id] ?? Date.distantPast.addingTimeInterval(Double(limit - position))
+            entries.append((date, .collection(collection)))
+        }
+        for playlist in playlists.prefix(limit) {
+            entries.append((playlist.createdAt, .playlist(playlist)))
+        }
+        return entries.sorted { $0.0 > $1.0 }.prefix(limit).map(\.1)
     }
 
     // MARK: Morceaux
@@ -65,6 +127,7 @@ final class LibraryStore {
             guard seenIDs.insert(track.id).inserted, seenKeys.insert(key).inserted else { return }
             result.append(track)
         }
+        addedTracks.forEach(include)
         liked.forEach(include)
         playlists.forEach { $0.tracks.forEach(include) }
         songs = result.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -93,9 +156,9 @@ final class LibraryStore {
         }
     }
 
-    private func markAdded(_ tracks: [Track]) {
+    private func markAdded(_ tracks: [Track], force: Bool = false) {
         let now = Date()
-        for track in tracks where stats[track.id]?.added == nil {
+        for track in tracks where force || stats[track.id]?.added == nil {
             var info = stats[track.id] ?? TrackStats()
             info.added = now
             stats[track.id] = info
@@ -244,6 +307,7 @@ final class LibraryStore {
         } else {
             saved.insert(collection, at: 0)
             savedIDs.insert(collection.id)
+            savedDates[collection.id] = Date()
         }
         save()
     }
@@ -275,7 +339,8 @@ final class LibraryStore {
     private func save() {
         rebuildSongs()
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
-                                smartPlaylists: smartPlaylists, stats: stats)
+                                smartPlaylists: smartPlaylists, stats: stats,
+                                addedTracks: addedTracks, savedDates: savedDates)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONEncoder().encode(snapshot).write(to: fileURL, options: .atomic)
