@@ -74,13 +74,21 @@ jobs:
           name: Nova-ipa
           path: Nova.ipa
 
-      - name: Publish as the "latest" release
-        if: github.ref == 'refs/heads/main'
+      - name: Publish the IPA as a release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest Nova.ipa \
-            --title "Nova — build ${{ github.run_number }}" \
-            --notes "Commit ${{ github.sha }}. IPA non signée : installe-la avec Sideloadly ou SideStore." \
+          # main → release « latest » ; autre branche → pré-version « preview-<branche> ».
+          # L'IPA est publiée telle quelle (pas de zip) : téléchargement direct depuis l'iPhone.
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            TAG="latest"
+          else
+            TAG="preview-$BRANCH"
+          fi
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" Nova.ipa \
+            --target "$GITHUB_SHA" \
+            --title "Nova — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
+            --notes "Commit $GITHUB_SHA. IPA non signée : installe-la avec Sideloadly ou SideStore." \
             --prerelease
