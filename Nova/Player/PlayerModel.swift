@@ -51,6 +51,13 @@ final class PlayerModel {
     @ObservationIgnored private var unshuffledQueue: [Track]?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
     @ObservationIgnored private var lastSessionSave = Date.distantPast
+    /// Vraie durée du titre en cours (métadonnées ou paramètre « dur » du flux).
+    /// AVPlayer annonce souvent le double pour les flux audio de YouTube : on ne s'y fie pas.
+    @ObservationIgnored private var expectedDuration: TimeInterval?
+    /// Durées lues dans les adresses de flux, réutilisées pour les fichiers en cache.
+    @ObservationIgnored private var knownDurations: [String: TimeInterval] = [:]
+    /// Évite de passer deux fois au titre suivant (fin détectée + notification).
+    @ObservationIgnored private var endHandled = false
 
     init() {
         configureAudioSession()
@@ -68,7 +75,8 @@ final class PlayerModel {
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
             Task { @MainActor in
-                guard let self, item === self.player.currentItem else { return }
+                guard let self, item === self.player.currentItem, !self.endHandled else { return }
+                self.endHandled = true
                 self.trackDidEnd()
             }
         }
@@ -262,6 +270,8 @@ final class PlayerModel {
     }
 
     func seek(to seconds: TimeInterval) {
+        // Revenir avant la fin réarme la détection de fin de titre.
+        if seconds < (expectedDuration ?? .infinity) - 1 { endHandled = false }
         guard player.currentItem != nil else {
             currentTime = max(0, seconds)
             return
@@ -284,7 +294,9 @@ final class PlayerModel {
         isLoading = true
         isPlaying = false
         currentTime = startTime
-        duration = track.duration ?? 0
+        duration = track.duration ?? knownDurations[track.id] ?? 0
+        expectedDuration = track.duration ?? knownDurations[track.id]
+        endHandled = false
         artwork = nil
         updateNowPlaying()
         saveSession(force: true)
@@ -321,6 +333,15 @@ final class PlayerModel {
     }
 
     private func start(url: URL, track: Track, at startTime: TimeInterval) {
+        // Le flux de YouTube indique la durée exacte dans son adresse (« dur=… »).
+        if let dur = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(TimeInterval.init), dur > 0 {
+            knownDurations[track.id] = dur
+            if track.duration == nil {
+                expectedDuration = dur
+                duration = dur
+            }
+        }
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 30
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
@@ -363,6 +384,7 @@ final class PlayerModel {
 
     private func trackDidEnd() {
         if repeatMode == .one {
+            endHandled = false
             seek(to: 0)
             player.play()
             return
@@ -411,11 +433,21 @@ final class PlayerModel {
         let seconds = time.seconds
         if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
         if isPlaying, Date().timeIntervalSince(lastSessionSave) > 15 { saveSession() }
-        if let itemDuration = player.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0 {
-            if abs(itemDuration - duration) > 0.5 {
-                duration = itemDuration
+        if let expected = expectedDuration, expected > 0 {
+            // Durée connue : on garde la vraie, même si AVPlayer annonce le double.
+            if abs(duration - expected) > 0.5 {
+                duration = expected
                 updateNowPlaying()
             }
+            // AVPlayer peut attendre la « seconde moitié » qui n'existe pas : on passe au suivant nous-mêmes.
+            if isPlaying, !endHandled, currentTime >= expected - 0.4 {
+                endHandled = true
+                trackDidEnd()
+            }
+        } else if let itemDuration = player.currentItem?.duration.seconds, itemDuration.isFinite, itemDuration > 0,
+                  abs(itemDuration - duration) > 0.5 {
+            duration = itemDuration
+            updateNowPlaying()
         }
     }
 
