@@ -255,7 +255,7 @@ struct ImportJobsSection: View {
         Section {
             ForEach(importer.jobs) { job in
                 NavigationLink {
-                    MissingTracksView(job: job)
+                    MissingTracksView(jobID: job.id)
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
@@ -271,22 +271,36 @@ struct ImportJobsSection: View {
                             Text(error)
                                 .font(.caption)
                                 .foregroundStyle(.red)
+                        } else if job.isCancelled {
+                            Text("Annulé — \(job.matched) titres trouvés")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else if job.isFinished {
                             Text(job.missing.isEmpty
                                  ? "\(job.matched) titres importés"
                                  : "\(job.matched) titres importés, \(job.missing.count) introuvables")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(job.missing.isEmpty ? Color.secondary : Color.orange)
                         } else {
                             ProgressView(value: job.progress)
-                            Text(job.total > 0 ? "\(job.processed) / \(job.total) — \(job.matched) trouvés" : "Chargement des titres…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HStack {
+                                Text(job.total > 0 ? "\(job.processed) / \(job.total) — \(job.matched) trouvés" : "Chargement des titres…")
+                                Spacer()
+                                if let remaining = job.remaining {
+                                    Text("encore ~\(Self.format(remaining))")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 2)
                 }
-                .disabled(job.missing.isEmpty)
+                .swipeActions {
+                    if !job.isFinished {
+                        Button("Annuler", role: .destructive) { importer.cancel(job.id) }
+                    }
+                }
             }
         } header: {
             HStack {
@@ -298,30 +312,147 @@ struct ImportJobsSection: View {
                         .textCase(nil)
                 }
             }
+        } footer: {
+            if importer.isRunning {
+                Text("Garde Nova ouverte pendant l'import : iOS ne laisse que quelques instants en arrière-plan. Les titres déjà trouvés sont mémorisés, relancer un import reprend vite.")
+            }
+        }
+    }
+
+    static func format(_ seconds: TimeInterval) -> String {
+        let minutes = Int(seconds / 60)
+        return minutes >= 1 ? "\(minutes) min" : "\(Int(seconds)) s"
+    }
+}
+
+/// Détail d'un import : avancement, titres introuvables à relancer ou à corriger à la main.
+struct MissingTracksView: View {
+    @Environment(ImportManager.self) private var importer
+    @Environment(LibraryStore.self) private var library
+    let jobID: UUID
+    @State private var fixing: ImportedTrack?
+
+    var body: some View {
+        let job = importer.job(jobID)
+        List {
+            if let job {
+                Section {
+                    LabeledContent("Trouvés", value: "\(job.matched)")
+                    LabeledContent("Introuvables", value: "\(job.missing.count)")
+                    if !job.isFinished {
+                        ProgressView(value: job.progress)
+                        Button("Annuler l'import", role: .destructive) { importer.cancel(jobID) }
+                    } else if !job.missing.isEmpty {
+                        Button("Relancer la recherche des introuvables", systemImage: "arrow.clockwise") {
+                            importer.retryMissing(jobID, library: library)
+                        }
+                    }
+                }
+                if !job.missing.isEmpty {
+                    Section {
+                        ForEach(Array(job.missing.enumerated()), id: \.offset) { _, track in
+                            Button {
+                                fixing = track
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(track.title)
+                                            .foregroundStyle(Color.primary)
+                                        Text(track.artist)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text("Choisir")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Color.novaAccent)
+                                }
+                            }
+                            .disabled(!job.isFinished)
+                        }
+                    } header: {
+                        Text("Introuvables")
+                    } footer: {
+                        Text("Touche un titre pour choisir toi-même le bon morceau sur YouTube Music.")
+                    }
+                }
+            }
+        }
+        .navigationTitle(job?.name ?? "Import")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $fixing) { missing in
+            ManualMatchView(missing: missing) { track in
+                importer.resolve(missing, with: track, inJob: jobID, library: library)
+            }
         }
     }
 }
 
-struct MissingTracksView: View {
-    let job: ImportManager.Job
+/// Recherche manuelle pour un titre introuvable.
+struct ManualMatchView: View {
+    @Environment(\.dismiss) private var dismiss
+    let missing: ImportedTrack
+    let onPick: (Track) -> Void
+    @State private var query = ""
+    @State private var results: [Track] = []
+    @State private var isSearching = false
+    private let client = InnerTubeClient()
 
     var body: some View {
-        List {
-            Section {
-                ForEach(Array(job.missing.enumerated()), id: \.offset) { _, track in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(track.title)
-                        Text(track.artist)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+        NavigationStack {
+            List {
+                Section {
+                    Text(missing.label)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(results) { track in
+                    Button {
+                        onPick(track)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            ArtworkThumb(track: track, size: 44)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.title).foregroundStyle(Color.primary).lineLimit(1)
+                                Text(track.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            if let duration = track.duration {
+                                Text(duration.clockString).font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
-            } footer: {
-                Text("Ces titres n'ont pas été trouvés sur YouTube Music. Tu peux les chercher à la main dans l'onglet Recherche.")
+            }
+            .overlay {
+                if isSearching && results.isEmpty { ProgressView() }
+                else if !isSearching && results.isEmpty { ContentUnavailableView.search(text: query) }
+            }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+            .onSubmit(of: .search) { Task { await search() } }
+            .navigationTitle("Choisir le titre")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Annuler") { dismiss() } }
+            }
+            .task {
+                if query.isEmpty { query = [missing.title, missing.artist].filter { !$0.isEmpty }.joined(separator: " ") }
+                await search()
             }
         }
-        .navigationTitle("Introuvables")
-        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func search() async {
+        isSearching = true
+        defer { isSearching = false }
+        var found: [Track] = []
+        for scope in [SearchScope.songs, .videos] {
+            let shelves = (try? await client.search(query, scope: scope)) ?? []
+            found += shelves.flatMap(\.tracks).prefix(scope == .songs ? 15 : 8)
+        }
+        var seen = Set<String>()
+        results = found.filter { seen.insert($0.id).inserted }
     }
 }
 

@@ -1,7 +1,8 @@
 import Foundation
 
 /// Titre venant d'une autre plateforme, à retrouver sur YouTube Music.
-struct ImportedTrack: Codable, Hashable {
+struct ImportedTrack: Codable, Hashable, Identifiable {
+    var id: String { "\(title)|\(artist)|\(album ?? "")" }
     var title: String
     var artist: String
     var album: String?
@@ -524,49 +525,101 @@ enum ImportSources {
 
 /// Retrouve sur YouTube Music les titres venant d'ailleurs.
 enum TrackMatcher {
+    /// Recherche en plusieurs essais, du plus précis au plus large, avec mémoire des titres déjà trouvés.
     static func match(_ track: ImportedTrack, client: InnerTubeClient) async -> Track? {
-        let query = [track.title, track.artist].filter { !$0.isEmpty }.joined(separator: " ")
-        guard let shelves = try? await client.search(query, scope: .songs) else { return nil }
-        let candidates = shelves.flatMap(\.tracks)
-        guard !candidates.isEmpty else { return nil }
+        if let known = await MatchCache.shared.track(for: track) { return known }
 
+        let artist = mainArtist(track.artist)
+        let cleanTitle = stripExtras(track.title)
+        var attempts: [(String, SearchScope)] = [
+            ([track.title, track.artist].filter { !$0.isEmpty }.joined(separator: " "), .songs),
+            ([cleanTitle, artist].filter { !$0.isEmpty }.joined(separator: " "), .songs),
+            ([cleanTitle, artist].filter { !$0.isEmpty }.joined(separator: " "), .videos),
+        ]
+        var seen = Set<String>()
+        attempts = attempts.filter { seen.insert("\($0.0.lowercased())|\($0.1)").inserted }
+
+        var best: (track: Track, score: Double)?
+        for (query, scope) in attempts {
+            if Task.isCancelled { return nil }
+            guard let shelves = try? await client.search(query, scope: scope) else { continue }
+            let penalty = scope == .videos ? 0.6 : 0
+            if let found = bestCandidate(shelves.flatMap(\.tracks), for: track, penalty: penalty),
+               best == nil || found.score > best!.score {
+                best = found
+            }
+            // Correspondance sûre : inutile de chercher plus loin.
+            if let best, best.score >= 4.5 { break }
+        }
+        guard let best, best.score >= 2 else { return nil }
+        await MatchCache.shared.store(best.track, for: track)
+        return best.track
+    }
+
+    /// Meilleur candidat : titre, artiste, durée et album, en écartant les versions non voulues.
+    private static func bestCandidate(_ candidates: [Track], for track: ImportedTrack,
+                                      penalty: Double) -> (track: Track, score: Double)? {
         let wantedTitle = normalize(stripExtras(track.title))
+        let wantedFull = normalize(track.title)
         let wantedArtists = Set(normalize(track.artist).split(separator: " ").map(String.init))
+        let wantedAlbum = track.album.map { normalize($0) } ?? ""
+        let unwanted = ["live", "remix", "cover", "karaoke", "instrumental", "acoustic", "acoustique",
+                        "sped", "slowed", "nightcore", "8d", "reverb", "extended", "edit"]
 
         var best: (Track, Double)?
-        for (rank, candidate) in candidates.prefix(8).enumerated() {
+        for (rank, candidate) in candidates.prefix(10).enumerated() {
             let title = normalize(stripExtras(candidate.title))
-            var score = 0.0
-            if title == wantedTitle { score += 3 }
-            else if title.contains(wantedTitle) || wantedTitle.contains(title) { score += 2 }
+            var titleScore = 0.0
+            if title == wantedTitle { titleScore = 3 }
+            else if !wantedTitle.isEmpty && (title.contains(wantedTitle) || wantedTitle.contains(title)) { titleScore = 2 }
             else {
                 let a = Set(title.split(separator: " ")), b = Set(wantedTitle.split(separator: " "))
-                let overlap = Double(a.intersection(b).count) / Double(max(b.count, 1))
-                score += overlap * 1.5
+                titleScore = Double(a.intersection(b).count) / Double(max(b.count, 1)) * 1.5
             }
+            // Sans titre ressemblant, l'artiste seul ne suffit pas.
+            guard titleScore >= 1 else { continue }
+
+            var score = titleScore
             let artists = Set(normalize(candidate.artist).split(separator: " ").map(String.init))
             if !wantedArtists.isEmpty {
-                let overlap = Double(artists.intersection(wantedArtists).count) / Double(wantedArtists.count)
-                score += overlap * 2
+                score += Double(artists.intersection(wantedArtists).count) / Double(wantedArtists.count) * 2
             }
             if let a = track.duration, let b = candidate.duration {
                 let gap = abs(a - b)
-                score += gap < 4 ? 1 : (gap < 15 ? 0.4 : -0.5)
+                score += gap < 4 ? 1.2 : (gap < 12 ? 0.5 : (gap < 30 ? -0.3 : -1))
             }
-            score -= Double(rank) * 0.1
+            if !wantedAlbum.isEmpty, let album = candidate.album, normalize(album) == wantedAlbum { score += 0.5 }
+            let candidateFull = normalize(candidate.title)
+            for word in unwanted where candidateFull.split(separator: " ").contains(Substring(word))
+                && !wantedFull.split(separator: " ").contains(Substring(word)) {
+                score -= 1.5
+            }
+            score -= Double(rank) * 0.1 + penalty
             if best == nil || score > best!.1 { best = (candidate, score) }
         }
-        guard let best, best.1 >= 1.5 else { return nil }
-        return best.0
+        return best.map { (track: $0.0, score: $0.1) }
     }
 
-    private static func stripExtras(_ value: String) -> String {
+    /// Premier artiste d'un crédit (« A, B & C feat. D » → « A »).
+    static func mainArtist(_ value: String) -> String {
+        let separators = [",", "&", " feat", " ft.", " x ", " et ", " and ", ";", "/"]
+        var result = value
+        for separator in separators {
+            if let range = result.range(of: separator, options: .caseInsensitive) {
+                result = String(result[..<range.lowerBound])
+            }
+        }
+        return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    static func stripExtras(_ value: String) -> String {
         var text = value
-        for pattern in [#"\s*[\(\[][^\)\]]*(feat|ft\.|with|avec|remaster|version|edit|mix|live|radio)[^\)\]]*[\)\]]"#,
-                        #"\s+-\s+.*(remaster|version|edit|mix|live|radio).*$"#] {
+        for pattern in [#"\s*[\(\[][^\)\]]*(feat|ft\.|with|avec|remaster|version|edit|mix|live|radio|explicit|bonus|deluxe)[^\)\]]*[\)\]]"#,
+                        #"\s+-\s+.*(remaster|version|edit|mix|live|radio|explicit).*$"#,
+                        #"\s+(feat|ft)\.?\s.*$"#] {
             text = text.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
         }
-        return text
+        return text.trimmingCharacters(in: .whitespaces)
     }
 
     static func normalize(_ value: String) -> String {
@@ -576,5 +629,50 @@ enum TrackMatcher {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty && !["feat", "ft", "the", "et", "and", "with", "avec"].contains($0) }
             .joined(separator: " ")
+    }
+}
+
+/// Correspondances déjà trouvées (titre + artiste → titre YouTube Music), gardées sur l'iPhone :
+/// relancer un import ne refait pas les recherches.
+actor MatchCache {
+    static let shared = MatchCache()
+
+    private var matches: [String: Track] = [:]
+    private var loaded = false
+    private var unsaved = 0
+    private let fileURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Nova", isDirectory: true)
+        .appendingPathComponent("matches.json")
+
+    private func key(_ track: ImportedTrack) -> String {
+        TrackMatcher.normalize(TrackMatcher.stripExtras(track.title)) + "|" + TrackMatcher.normalize(TrackMatcher.mainArtist(track.artist))
+    }
+
+    private func loadIfNeeded() {
+        guard !loaded else { return }
+        loaded = true
+        if let data = try? Data(contentsOf: fileURL),
+           let saved = try? JSONDecoder().decode([String: Track].self, from: data) {
+            matches = saved
+        }
+    }
+
+    func track(for imported: ImportedTrack) -> Track? {
+        loadIfNeeded()
+        return matches[key(imported)]
+    }
+
+    func store(_ track: Track, for imported: ImportedTrack) {
+        loadIfNeeded()
+        matches[key(imported)] = track
+        unsaved += 1
+        if unsaved >= 25 { flush() }
+    }
+
+    func flush() {
+        guard unsaved > 0 else { return }
+        unsaved = 0
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(matches).write(to: fileURL, options: .atomic)
     }
 }
