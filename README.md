@@ -1,8 +1,8 @@
 # NovaCord
 
-Client Discord léger pour Windows, avec des plugins intégrés façon Vencord.
+Client Discord léger pour Windows, avec Vencord embarqué, raccourcis Windows personnalisables et soundboard dans le microphone.
 
-Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), NovaCord affiche Discord dans **WebView2**, le moteur d'Edge déjà installé sur Windows 10 et 11. Le programme fait quelques Mo, et le vocal, la vidéo, le partage d'écran et la soundboard fonctionnent comme sur Discord.
+Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), NovaCord affiche Discord dans **WebView2**, le moteur d'Edge déjà installé sur Windows 10 et 11. Le programme fait quelques Mo, et utilise le client web de Discord pour le vocal, la vidéo et le partage d'écran.
 
 ## Ce qui allège Discord
 
@@ -11,6 +11,18 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 - **Services d'Edge coupés** : traduction, shopping, collections, saisie automatique, enregistrement des mots de passe, SmartScreen, mises à jour de composants, requêtes de fond.
 - **Mode éco** (plugin) : animations, transitions et flous désactivés.
 - **Anti-pistage** (plugin) : la télémétrie de Discord n'est plus envoyée.
+
+## Streams, raccourcis et soundboard (0.2)
+
+Ouvre **Paramètres NovaCord** depuis l'icône près de l'horloge (ou `Ctrl + Alt + N` tant que tu n'as pas changé ce raccourci).
+
+- **Qualité des streams** : Vencord est maintenant réellement embarqué, avec `FakeNitro`, `WebScreenShare`, `WebScreenShareFixes` et `WebKeybinds` activés par défaut. Au lancement d'un partage, le sélecteur Vencord propose la résolution et les images/seconde (1080p / 60 par défaut). Cela configure ton émission : les performances dépendent de la source, du matériel et du réseau. Cela n'améliore pas la qualité du stream émis par quelqu'un d'autre.
+- **Créer tes raccourcis** : section *Raccourcis personnalisés* → *Ajouter un raccourci* → choisir une action → *Enregistrer les touches* → saisir ta combinaison → *Enregistrer les raccourcis*. Ils sont enregistrés dans Windows et restent actifs en arrière-plan. Les conflits et doublons sont signalés ; si l'enregistrement échoue, les anciens raccourcis sont restaurés. Actions : micro, casque, mode streamer, mode vocal, paramètres, jouer un son, arrêter les sons. Le changement de mode vocal ne crée pas un raccourci « maintenir pour parler ».
+- **Soundboard** : active *Soundboard dans le micro*, puis reconnecte le vocal. Ouvre la soundboard de Discord une fois pour charger les sons auxquels ton compte a accès, puis clique sur *Actualiser les sons Discord* dans NovaCord. Tu peux aussi importer tes fichiers audio (8 Mo maximum) : ils restent stockés localement. Rouvre le panneau après un import pour pouvoir attribuer un raccourci au son.
+
+Les sons sont mélangés à ta piste micro : les autres peuvent les entendre sans utiliser l'API soundboard native. Ils n'ont pas ses animations ni son réglage de volume séparé chez les auditeurs. Le micro doit être ouvert ; en appuyer-pour-parler, il faut aussi maintenir ta touche de parole. La suppression du bruit peut atténuer les sons. Désactiver la soundboard arrête ses sons et laisse la voix fonctionner ; reconnecter le vocal retire aussi le mixeur.
+
+Ces fonctions doivent être validées dans un appel réel sous Windows. Les tests automatisés ne remplacent pas un essai avec un autre auditeur.
 
 ## Plugins
 
@@ -28,7 +40,7 @@ Ouvre le panneau avec **Ctrl + Alt + N**, ou clic droit sur l'icône de la zone 
 
 Également : thèmes (AMOLED, Minuit, Nord) et **CSS personnalisé** appliqué en direct.
 
-Les plugins agissent sur le réseau et sur le CSS, sans modifier le code interne de Discord (contrairement à Vencord). Les mises à jour de Discord les cassent donc rarement. Seul *Masquer les pubs Nitro* dépend de l'interface et peut demander un ajustement de temps en temps.
+Les plugins NovaCord ci-dessus agissent sur le réseau et le CSS. Vencord ajoute les patches internes nécessaires aux fonctions avancées. Une mise à jour de Discord peut nécessiter de mettre à jour la version Vencord embarquée ; le panneau permet de vérifier son chargement et d'ouvrir ses réglages.
 
 ## Autres comportements
 
@@ -49,7 +61,17 @@ Windows SmartScreen affichera « Windows a protégé votre ordinateur », car l'
 
 ## Développer
 
-Prérequis sur Windows : [Rust](https://rustup.rs) et Node.js.
+Prérequis sur Windows : [Rust](https://rustup.rs), Node.js 24 et pnpm.
+Prépare d'abord la version Vencord épinglée :
+
+```sh
+git clone https://github.com/Vendicated/Vencord .vencord
+git -C .vencord checkout 8d64c8be7e68616f8f116a6fff9480051aa2a0c5
+pnpm --dir .vencord install --frozen-lockfile
+node scripts/prepare-vencord.mjs .vencord
+node --test tests/*.test.cjs
+cargo test --manifest-path src-tauri/Cargo.toml
+```
 
 ```sh
 npx @tauri-apps/cli@2 dev     # lance en mode développement
@@ -59,9 +81,11 @@ npx @tauri-apps/cli@2 build   # produit l'installateur dans src-tauri/target/rel
 - `src-tauri/src/main.rs` : fenêtre, zone de notification, réglages WebView2, gestion de la mémoire.
 - `mod/novacord.js` : plugins, thèmes et panneau de réglages, injectés dans Discord avant ses propres scripts.
 
-## Ce que NovaCord ne fait pas
+## Code Vencord embarqué
 
-NovaCord ne simule pas Nitro : les fonctions payantes (stream au-delà de 720p 30 i/s, sons de soundboard d'autres serveurs, emojis animés partout…) restent réservées aux abonnés. La soundboard du serveur où tu es et les sons par défaut sont gratuits et fonctionnent normalement.
+Vencord est compilé à partir du commit `8d64c8be7e68616f8f116a6fff9480051aa2a0c5` de [Vendicated/Vencord](https://github.com/Vendicated/Vencord), sous GPL-3.0-or-later. Aucun script distant n'est téléchargé à l'exécution. La release inclut sa licence et une archive du code source utilisé, avec l'adaptateur NovaCord.
+
+La compilation des branches `codex/novacord-*` produit un artefact de test et ne remplace pas la release `novacord-latest`.
 
 ## Avertissement
 

@@ -1,13 +1,12 @@
 /*
  * NovaCord : couche de mods injectée dans Discord avant ses propres scripts.
  *
- * Volontairement indépendante du code interne de Discord (pas de patch webpack
- * comme Vencord) : elle agit sur le réseau et sur le CSS. Les mises à jour
- * de Discord la cassent donc rarement.
+ * Les fonctions Discord sont fournies par Vencord ; ce panneau gère aussi
+ * les raccourcis Windows et la soundboard dans le flux du microphone.
  */
 (() => {
   "use strict";
-  if (window.NovaCord) return;
+  if (window.NovaCord || window.top !== window) return;
   if (!/(^|\.)discord(app)?\.com$/.test(location.hostname)) return;
 
   // Discord retire window.localStorage au démarrage : on le garde de côté.
@@ -15,6 +14,59 @@
   const KEY = "novacord:settings";
   const SEEN_KEY = "novacord:welcome";
   const HOTKEY_LABEL = "Ctrl + Alt + N";
+  const invoke = (command, args) => {
+    if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error("La liaison Windows n'est pas disponible."));
+    return window.__TAURI__.core.invoke(command, args);
+  };
+  let voiceActions = {};
+  window.Vencord?.Webpack.waitFor(["dispatch", "subscribe"], (dispatcher) => {
+    dispatcher.subscribe("KEYBINDS_REGISTER_GLOBAL_KEYBIND_ACTIONS", ({ keybinds }) => { voiceActions = keybinds; });
+  });
+  let recording = null;
+  let recordingTimer;
+
+  function notifyError(error) {
+    const message = String(error?.message || error);
+    if (!document.body) return console.error(message);
+    const { h, root } = makeHost();
+    root.append(el("div", { class: "toast", role: "alert" }, message));
+    setTimeout(() => h.remove(), 7000);
+  }
+
+  async function runShortcut(action) {
+    try {
+      if (action === "panel") return openPanel();
+      if (action === "stopSounds") return window.NovaCordAudio.stopAll();
+      if (action.startsWith("sound:")) return await window.NovaCordAudio.play(action.slice(6));
+      if (!voiceActions[action]?.onTrigger) throw new Error("L'action vocale n'est pas encore prête. Connecte-toi à Discord.");
+      voiceActions[action].onTrigger();
+    } catch (error) { notifyError(error); }
+  }
+
+  async function stopRecording() {
+    clearTimeout(recordingTimer);
+    recording = null;
+    await invoke("set_shortcut_recording", { active: false }).catch(notifyError);
+  }
+
+  function captureShortcut(accelerator) {
+    if (!recording) return;
+    const { binding, button } = recording;
+    binding.accelerator = accelerator;
+    button.textContent = accelerator;
+    stopRecording();
+  }
+
+  async function beginRecording(binding, button) {
+    await stopRecording();
+    try {
+      await invoke("set_shortcut_recording", { active: true });
+      recording = { binding, button };
+      button.textContent = "Appuie sur les touches… (Échap pour annuler)";
+      button.focus();
+      recordingTimer = setTimeout(() => { button.textContent = binding.accelerator || "Enregistrer les touches"; stopRecording(); }, 30000);
+    } catch (error) { notifyError(error); }
+  }
 
   /* ------------------------------------------------------------------ */
   /* Plugins                                                             */
@@ -335,8 +387,6 @@
       for (const type of ["readystatechange", "load", "loadend"]) {
         const ev = new Event(type);
         xhr.dispatchEvent(ev);
-        const handler = xhr["on" + type];
-        if (typeof handler === "function") handler.call(xhr, ev);
       }
     }, 0);
   }
@@ -431,6 +481,13 @@
     textarea { min-height: 140px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; resize: vertical; }
     select:focus, textarea:focus { outline: 2px solid #00a8fc; }
     .hint { color: #949ba4; font-size: 12px; margin-top: 6px; }
+    .shortcuts .row { flex-wrap: wrap; align-items: center; }
+    .shortcuts select { width: 100%; }
+    .shortcuts .key { flex: 1; text-align: left; }
+    .status { white-space: pre-line; color: #b5bac1; margin: 8px 0; }
+    .sound-list { max-height: 220px; overflow-y: auto; }
+    .sound-list .row { align-items: center; }
+    .sound-list .text { overflow-wrap: anywhere; }
     footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; background: #232428; }
     button.btn { border: 0; border-radius: 4px; padding: 8px 16px; font: inherit; font-weight: 500; cursor: pointer; }
     .primary { background: #5865f2; color: #fff; }
@@ -470,6 +527,7 @@
   }
 
   function closePanel() {
+    if (recording) stopRecording();
     if (host) host.remove();
     host = null;
   }
@@ -479,6 +537,20 @@
     if (!document.body) return;
     const { h, root } = makeHost();
     host = h;
+
+    const shortcutEditor = el("div", { class: "shortcuts" });
+    const soundboard = el("div");
+    buildSoundboard(soundboard).catch(notifyError);
+    buildShortcutEditor(shortcutEditor).catch(notifyError);
+    const vencord = el("div", { class: "hint" }, window.Vencord
+      ? "Vencord chargé. Le menu de qualité apparaît au démarrage d'un partage d'écran (1080p / 60 i/s par défaut)."
+      : "Vencord n'a pas démarré : les fonctions de stream avancées sont indisponibles.");
+    const vencordButton = el("button", { class: "btn secondary", onclick: () => {
+      try {
+        window.Vencord.Webpack.Common.SettingsRouter.openUserSettings("vencord_plugins");
+        closePanel();
+      } catch (error) { notifyError(error); }
+    } }, "Ouvrir les plugins Vencord");
 
     const pluginRows = PLUGINS.map((p) => {
       const input = el("input", { type: "checkbox", "aria-label": p.name });
@@ -540,6 +612,13 @@
       el(
         "div",
         { class: "body" },
+        el("h2", {}, "Streams et Vencord"),
+        vencord,
+        vencordButton,
+        el("h2", {}, "Raccourcis personnalisés"),
+        shortcutEditor,
+        el("h2", {}, "Soundboard dans le micro"),
+        soundboard,
         el("h2", {}, "Plugins"),
         ...pluginRows,
         el("h2", {}, "Thème"),
@@ -563,6 +642,109 @@
     root.append(backdrop);
     const first = root.querySelector("input");
     if (first) first.focus();
+  }
+
+  async function buildShortcutEditor(container) {
+    const snapshot = await invoke("get_shortcuts");
+    let bindings = snapshot.bindings.map((b) => ({ ...b }));
+    const sounds = await window.NovaCordAudio.list().catch(() => []);
+    const actions = [
+      ["panel", "Ouvrir les paramètres NovaCord"],
+      ["TOGGLE_MUTE", "Activer / couper le micro"],
+      ["TOGGLE_DEAFEN", "Activer / couper le casque"],
+      ["TOGGLE_STREAMER_MODE", "Activer / couper le mode streamer"],
+      ["TOGGLE_VOICE_MODE", "Changer le mode de détection vocale"],
+      ["stopSounds", "Arrêter les sons"],
+      ...sounds.map((sound) => ["sound:" + sound.id, "Jouer : " + sound.name]),
+    ];
+    const rows = el("div");
+    const status = el("div", { class: "status", role: "status" }, snapshot.errors.join("\n"));
+    function render() {
+      rows.replaceChildren();
+      for (const binding of bindings) {
+        const select = el("select", { "aria-label": "Action du raccourci" });
+        const options = actions.some(([id]) => id === binding.action) ? actions : [...actions, [binding.action, "Son supprimé — choisis une autre action"]];
+        for (const [id, label] of options) {
+          const option = el("option", { value: id }, label);
+          option.selected = id === binding.action;
+          select.append(option);
+        }
+        select.onchange = () => { binding.action = select.value; };
+        const key = el("button", { class: "btn secondary key" }, binding.accelerator || "Enregistrer les touches");
+        key.onclick = () => beginRecording(binding, key);
+        rows.append(el("div", { class: "row" }, select, key, el("button", { class: "btn secondary", onclick: () => {
+          if (recording) stopRecording();
+          bindings = bindings.filter((b) => b !== binding);
+          render();
+        } }, "Supprimer")));
+      }
+    }
+    render();
+    container.append(
+      el("div", { class: "hint" }, "Choisis l'action, clique sur les touches, puis enregistre. Fonctionne aussi en arrière-plan. Les conflits avec un autre logiciel sont signalés."),
+      rows,
+      el("button", { class: "btn secondary", onclick: () => { bindings.push({ action: "TOGGLE_MUTE", accelerator: "" }); render(); } }, "Ajouter un raccourci"),
+      el("button", { class: "btn primary", onclick: async () => {
+        try {
+          await stopRecording();
+          await invoke("set_shortcuts", { bindings });
+          status.textContent = "Raccourcis enregistrés et actifs dans Windows.";
+        } catch (error) { status.textContent = String(error.message || error); }
+      } }, "Enregistrer les raccourcis"),
+      status,
+    );
+  }
+
+  async function buildSoundboard(container) {
+    const audio = window.NovaCordAudio;
+    if (!audio) { container.textContent = "Le mixeur audio n'a pas démarré."; return; }
+    const status = el("div", { class: "status", role: "status" });
+    const toggle = el("button", { class: "btn secondary", onclick: async () => {
+      try {
+        await audio.setEnabled(!audio.status().enabled);
+        updateStatus();
+      } catch (error) { status.textContent = String(error.message || error); }
+    } });
+    function updateStatus() {
+      const state = audio.status();
+      toggle.textContent = state.enabled ? "Désactiver la soundboard" : "Activer la soundboard";
+      status.textContent = state.error || (state.active ? "Mixeur prêt sur ton micro." : state.enabled ? "Reconnecte le vocal pour brancher le mixeur sur ton micro." : "Active la soundboard avant de rejoindre le vocal.");
+    }
+    const list = el("div", { class: "sound-list" });
+    async function refresh() {
+      const sounds = await audio.list();
+      list.replaceChildren();
+      for (const sound of sounds) {
+        const row = el("div", { class: "row" }, el("div", { class: "text" }, sound.name), el("button", {
+          class: "btn secondary", onclick: () => audio.play(sound.id).catch(notifyError),
+        }, "Jouer"));
+        if (sound.local) row.append(el("button", { class: "btn secondary", onclick: async () => {
+          try { await audio.remove(sound.id); await refresh(); } catch (error) { notifyError(error); }
+        } }, "Supprimer"));
+        list.append(row);
+      }
+      if (!sounds.length) list.textContent = "Importe un fichier audio, ou ouvre la soundboard Discord pour charger les sons de tes serveurs.";
+    }
+    const file = el("input", { type: "file", accept: "audio/*", "aria-label": "Importer un son" });
+    file.onchange = async () => {
+      try {
+        if (!file.files[0]) return;
+        await audio.import(file.files[0]);
+        file.value = "";
+        await refresh();
+        status.textContent = "Son importé. Rouvre ce panneau pour lui attribuer un raccourci.";
+      } catch (error) { status.textContent = String(error.message || error); }
+    };
+    const volume = el("input", { type: "range", min: "0", max: "100", value: "70", "aria-label": "Volume des sons" });
+    volume.oninput = () => audio.setVolume(Number(volume.value) / 100);
+    container.append(
+      el("div", { class: "hint" }, "Les autres entendent les sons dans ta voix, sans effet soundboard natif. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. La suppression du bruit peut atténuer les sons."),
+      toggle, status, file, el("div", {}, "Volume des sons", volume),
+      el("button", { class: "btn secondary", onclick: () => refresh().catch(notifyError) }, "Actualiser les sons Discord"),
+      el("button", { class: "btn secondary", onclick: audio.stopAll }, "Arrêter les sons"), list,
+    );
+    updateStatus();
+    await refresh();
   }
 
   function welcome() {
@@ -590,10 +772,21 @@
   window.addEventListener(
     "keydown",
     (e) => {
-      if (e.ctrlKey && e.altKey && !e.shiftKey && e.code === "KeyN") {
+      if (recording) {
         e.preventDefault();
-        e.stopPropagation();
-        openPanel();
+        e.stopImmediatePropagation();
+        if (e.key === "Escape") {
+          recording.button.textContent = recording.binding.accelerator || "Enregistrer les touches";
+          stopRecording();
+        } else if (!e.repeat && !["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+          const parts = [];
+          if (e.ctrlKey) parts.push("Ctrl");
+          if (e.altKey) parts.push("Alt");
+          if (e.shiftKey) parts.push("Shift");
+          if (e.metaKey) parts.push("Super");
+          parts.push(e.code);
+          captureShortcut(parts.join("+"));
+        }
       } else if (e.key === "Escape" && host) {
         e.stopPropagation();
         closePanel();
@@ -609,7 +802,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, version: "0.1.0" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.2.0" }),
     configurable: false,
     writable: false,
   });
