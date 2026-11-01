@@ -39,6 +39,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSAppleMusicUsageDescription: Nova lit tes playlists Apple Music pour les importer.
         NSLocationWhenInUseUsageDescription: Nova utilise ta position pour trouver les concerts près de chez toi.
+        NSLocalNetworkUsageDescription: Nova trouve les Jams de tes amis à proximité pour écouter ensemble.
+        NSBonjourServices: [_nova-jam._tcp, _nova-jam._udp]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.akarukasu.nova

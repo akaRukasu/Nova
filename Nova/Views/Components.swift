@@ -328,6 +328,14 @@ struct TrackMenu: View {
     var onRemove: (() -> Void)?
 
     var body: some View {
+        if JamSession.shared.role != .none {
+            Section {
+                Button("Ajouter au Jam", systemImage: "person.2.wave.2") { JamSession.shared.add(track) }
+                Button("Au Jam, juste après", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                    JamSession.shared.add(track, next: true)
+                }
+            }
+        }
         Section {
             Button("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") {
                 player.playNext(track)

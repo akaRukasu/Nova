@@ -9,6 +9,7 @@ struct NowPlayingView: View {
     @State private var scrubPosition: Double?
     @State private var showQueue = false
     @State private var showLyrics = false
+    @State private var showJam = false
     @State private var palette: [Color] = [Color(white: 0.18), Color(white: 0.05)]
 
     var body: some View {
@@ -60,6 +61,9 @@ struct NowPlayingView: View {
         .foregroundStyle(.white)
         // En arrière-plan : n'influence jamais la taille de la page.
         .background { background }
+        .sheet(isPresented: $showJam) {
+            JamView()
+        }
         .sheet(isPresented: $showQueue) {
             QueueView()
                 .presentationDetents([.medium, .large])
@@ -270,6 +274,14 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Paroles")
+            Spacer()
+            Button { showJam = true } label: {
+                Image(systemName: JamSession.shared.role == .none ? "person.2.wave.2" : "person.2.wave.2.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(JamSession.shared.role == .none ? Color.white : Color.novaAccent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Jam")
             Spacer()
             Button { showQueue = true } label: {
                 Image(systemName: "list.bullet")

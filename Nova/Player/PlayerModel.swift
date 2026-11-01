@@ -229,6 +229,26 @@ final class PlayerModel {
         saveSession()
     }
 
+    /// Jam, invité qui écoute aussi : même file, même titre, même position que l'hôte.
+    func followJam(queue newQueue: [Track], index newIndex: Int, position: TimeInterval, playing: Bool) {
+        guard newQueue.indices.contains(newIndex) else { return }
+        if current?.id != newQueue[newIndex].id {
+            unshuffledQueue = nil
+            isShuffled = false
+            queue = newQueue
+            index = newIndex
+            // Pause éventuelle : appliquée au prochain état reçu, une fois le titre chargé.
+            load(resumeAt: position)
+            return
+        }
+        queue = newQueue
+        index = newIndex
+        guard !isLoading else { return }
+        if abs(currentTime - position) > 1.5 { seek(to: position) }
+        if playing, !isPlaying { resume() }
+        if !playing, isPlaying { pause() }
+    }
+
     func togglePlay() {
         isPlaying ? pause() : resume()
     }
