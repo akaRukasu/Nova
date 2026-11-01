@@ -73,6 +73,7 @@ jobs:
             NovaCord-*.exe
             Vencord-source.zip
             mod/VENCORD-LICENSE.txt
+            mod/VENCORD-NOTICES.txt
             src-tauri/Cargo.lock
 
       - name: Publish the "novacord-latest" release
@@ -82,7 +83,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete novacord-latest --yes --cleanup-tag || true
-          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe Vencord-source.zip mod/VENCORD-LICENSE.txt \
+          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe Vencord-source.zip mod/VENCORD-LICENSE.txt mod/VENCORD-NOTICES.txt \
             --target "${{ github.sha }}" \
             --title "NovaCord — build ${{ github.run_number }}" \
             --notes "Commit ${{ github.sha }}. Installe NovaCord-Setup.exe, ou lance directement NovaCord-portable.exe." \

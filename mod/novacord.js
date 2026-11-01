@@ -45,6 +45,7 @@
 
   async function stopRecording() {
     clearTimeout(recordingTimer);
+    if (recording) recording.button.textContent = recording.binding.accelerator || "Enregistrer les touches";
     recording = null;
     await invoke("set_shortcut_recording", { active: false }).catch(notifyError);
   }
@@ -647,6 +648,11 @@
   async function buildShortcutEditor(container) {
     const snapshot = await invoke("get_shortcuts");
     let bindings = snapshot.bindings.map((b) => ({ ...b }));
+    function updatePanelHotkey() {
+      const label = container.getRootNode().querySelector("header small");
+      if (label) label.textContent = bindings.find((b) => b.action === "panel")?.accelerator || "Icône près de l'horloge";
+    }
+    updatePanelHotkey();
     const sounds = await window.NovaCordAudio.list().catch(() => []);
     const actions = [
       ["panel", "Ouvrir les paramètres NovaCord"],
@@ -688,6 +694,7 @@
         try {
           await stopRecording();
           await invoke("set_shortcuts", { bindings });
+          updatePanelHotkey();
           status.textContent = "Raccourcis enregistrés et actifs dans Windows.";
         } catch (error) { status.textContent = String(error.message || error); }
       } }, "Enregistrer les raccourcis"),

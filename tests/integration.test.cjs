@@ -21,6 +21,7 @@ test("Vencord defaults enable stream patches before startup, preserving choices"
 
 function setupMixer(enabled = true) {
   let muted = false;
+  let fetchSound = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) });
   const sources = [];
   const track = () => ({ enabled: true, stopped: false, getSettings: () => ({ deviceId: "mic" }), getConstraints: () => ({}), applyConstraints: async () => {}, addEventListener() {}, stop() { this.stopped = true; } });
   const input = track();
@@ -51,9 +52,9 @@ function setupMixer(enabled = true) {
     window, navigator, MediaStream: Stream, AudioContext: Context,
     location: { hostname: "discord.com" }, console,
     indexedDB: { open: () => ({}) },
-    fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) }),
+    fetch: (...args) => fetchSound(...args),
   });
-  return { audio: window.NovaCordAudio, navigator, sources, input, original, mute: () => { muted = true; } };
+  return { audio: window.NovaCordAudio, navigator, sources, input, original, mute: () => { muted = true; }, setFetch: (fn) => { fetchSound = fn; } };
 }
 
 test("soundboard mixes into the microphone and respects mute, stop and capture cleanup", async () => {
@@ -81,4 +82,19 @@ test("disabled soundboard leaves the original microphone untouched", async () =>
   assert.equal(env.original.getAudioTracks()[0], env.input);
   assert.equal(env.audio.status().active, false);
   await assert.rejects(env.audio.play("discord:1234"), /Active la soundboard/);
+});
+
+test("stop cancels a sound that is still downloading", async () => {
+  const env = setupMixer();
+  await env.navigator.mediaDevices.getUserMedia({ audio: true });
+  let finishDownload;
+  let started;
+  const downloadStarted = new Promise((resolve) => { started = resolve; });
+  env.setFetch(() => new Promise((resolve) => { finishDownload = resolve; started(); }));
+  const pending = env.audio.play("discord:1234");
+  await downloadStarted;
+  env.audio.stopAll();
+  finishDownload({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) });
+  await pending;
+  assert.equal(env.sources.length, 0);
 });

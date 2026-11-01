@@ -8,13 +8,17 @@
   const playing = new Set();
   let context;
   let soundGain;
+  let playbackGeneration = 0;
   let lastError = "";
   const storage = window.localStorage;
   let enabled = storage.getItem("novacord:audio-mixer") === "true";
 
   async function audioContext() {
     context ||= new AudioContext({ latencyHint: "interactive" });
-    soundGain ||= context.createGain();
+    if (!soundGain) {
+      soundGain = context.createGain();
+      soundGain.gain.value = 0.7;
+    }
     await context.resume();
     if (context.state !== "running") throw new Error("Clique d'abord sur Activer la soundboard.");
     return context;
@@ -81,6 +85,7 @@
   }
 
   function stopAll() {
+    playbackGeneration++;
     for (const source of playing) source.stop();
     playing.clear();
   }
@@ -90,6 +95,8 @@
     if (!destinations.size) throw new Error(lastError || "Reconnecte le vocal pour activer le mixeur sur ton micro.");
     const store = window.Vencord?.Webpack.Common.MediaEngineStore;
     if (store?.isSelfMute() || store?.isSelfDeaf()) throw new Error("Ton micro ou ton casque est coupé. Aucun son n'a été envoyé.");
+    stopAll();
+    const generation = playbackGeneration;
     const ctx = await audioContext();
     let data;
     if (id.startsWith("discord:")) {
@@ -104,11 +111,11 @@
       data = await sound.blob.arrayBuffer();
     }
     const buffer = await ctx.decodeAudioData(data);
+    if (generation !== playbackGeneration) return;
     // L'état du micro peut changer pendant le téléchargement.
     if (!enabled || !destinations.size || store?.isSelfMute() || store?.isSelfDeaf()) {
       throw new Error("Le vocal n'est plus prêt ou le micro est coupé.");
     }
-    stopAll();
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(soundGain);

@@ -31,4 +31,5 @@ ${js}
 window.Vencord = Vencord;
 })();`);
 writeFileSync(new URL("../mod/VENCORD-LICENSE.txt", import.meta.url), readFileSync(resolve(upstream, "LICENSE")));
+writeFileSync(new URL("../mod/VENCORD-NOTICES.txt", import.meta.url), readFileSync(resolve(upstream, "dist/browser.js.LEGAL.txt")));
 console.log("Vencord embarqué : " + revision);
