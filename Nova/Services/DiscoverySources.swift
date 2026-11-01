@@ -128,7 +128,8 @@ enum ReleasesService {
                        genre: genre)
     }
 
-    private static func get(_ address: String, attempt: Int = 0) async throws -> [String: Any] {
+    /// Requête à l'API publique de Deezer, avec nouvel essai quand le quota est atteint.
+    static func get(_ address: String, attempt: Int = 0) async throws -> [String: Any] {
         guard let url = URL(string: address) else { throw ImportError.nothingFound }
         let (data, response) = try await URLSession.shared.data(from: url)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0

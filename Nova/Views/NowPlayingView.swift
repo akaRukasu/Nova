@@ -335,7 +335,8 @@ struct QueueView: View {
     }
 }
 
-/// Paroles du titre en cours, affichées dans le lecteur.
+/// Paroles du titre en cours, affichées dans le lecteur : synchronisées comme dans Apple Music
+/// quand LRCLIB les a, sinon le texte complet.
 struct LyricsView: View {
     @Environment(PlayerModel.self) private var player
     @State private var lyrics: Lyrics?
@@ -343,22 +344,28 @@ struct LyricsView: View {
     private let client = InnerTubeClient()
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            if let lyrics {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(lyrics.text)
-                        .font(.system(size: 28, weight: .bold))
-                        .lineSpacing(10)
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
-                    if let source = lyrics.source {
-                        Text(source)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.6))
+        Group {
+            if let lyrics, let lines = lyrics.lines, !lines.isEmpty {
+                SyncedLyricsView(lines: lines, source: lyrics.source)
+            } else {
+                ScrollView(showsIndicators: false) {
+                    if let lyrics {
+                        VStack(alignment: .leading, spacing: 18) {
+                            Text(lyrics.text)
+                                .font(.system(size: 28, weight: .bold))
+                                .lineSpacing(10)
+                                .foregroundStyle(.white)
+                                .textSelection(.enabled)
+                            if let source = lyrics.source {
+                                Text(source)
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.6))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 40)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 40)
             }
         }
         .overlay {
@@ -375,17 +382,82 @@ struct LyricsView: View {
             }
         }
         .task(id: player.current?.id) {
-            guard let id = player.current?.id else { isLoading = false; return }
+            guard let track = player.current else { isLoading = false; return }
             isLoading = true
             lyrics = nil
             // Les paroles déjà vues restent en cache.
-            if let cached = await PageCache.shared.value(Lyrics.self, for: "lyrics-\(id)") {
+            let key = "lyrics-v2-\(track.id)"
+            if let cached = await PageCache.shared.value(Lyrics.self, for: key) {
                 lyrics = cached.value
-            } else if let found = try? await client.lyrics(for: id) {
-                lyrics = found
-                await PageCache.shared.store(found, for: "lyrics-\(id)")
+            } else {
+                let duration = track.duration ?? (player.duration > 0 ? player.duration : nil)
+                if let found = await LyricsService.lyrics(for: track, duration: duration, client: client) {
+                    guard player.current?.id == track.id else { return }
+                    lyrics = found
+                    await PageCache.shared.store(found, for: key)
+                }
             }
             isLoading = false
+        }
+    }
+}
+
+/// Paroles qui défilent avec la musique : la ligne chantée en blanc, les autres estompées.
+/// Toucher une ligne y amène la lecture.
+private struct SyncedLyricsView: View {
+    @Environment(PlayerModel.self) private var player
+    let lines: [LyricLine]
+    let source: String?
+
+    /// Ligne en cours (légèrement en avance, comme dans Apple Music, pour lire au bon moment).
+    private var currentIndex: Int? {
+        let time = player.currentTime + 0.3
+        return lines.lastIndex { $0.time <= time }
+    }
+
+    var body: some View {
+        let current = currentIndex
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                        let isCurrent = index == current
+                        let distance = abs(index - (current ?? -1))
+                        Button {
+                            player.seek(to: line.time)
+                            if !player.isPlaying { player.resume() }
+                        } label: {
+                            Text(line.text.isEmpty ? "• • •" : line.text)
+                                .font(.system(size: 30, weight: .bold))
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(.white.opacity(isCurrent ? 1 : 0.32))
+                                .blur(radius: isCurrent ? 0 : (distance > 2 ? 1.4 : 0.5))
+                                .scaleEffect(isCurrent ? 1 : 0.96, anchor: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(index)
+                    }
+                    if let source {
+                        Text(source)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.5))
+                            .padding(.top, 12)
+                    }
+                }
+                .padding(.vertical, 160)
+                .animation(.easeOut(duration: 0.35), value: current)
+            }
+            .onChange(of: current) { _, line in
+                guard let line else { return }
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.9)) {
+                    proxy.scrollTo(line, anchor: UnitPoint(x: 0.5, y: 0.3))
+                }
+            }
+            .onAppear {
+                if let current { proxy.scrollTo(current, anchor: UnitPoint(x: 0.5, y: 0.3)) }
+            }
         }
     }
 }

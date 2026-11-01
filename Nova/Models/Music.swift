@@ -128,6 +128,17 @@ struct CollectionContent: Codable {
 struct Lyrics: Hashable, Codable {
     var text: String
     var source: String?
+    /// Paroles synchronisées (une ligne par horodatage), quand elles existent.
+    var lines: [LyricLine]?
+
+    var isSynced: Bool { !(lines ?? []).isEmpty }
+}
+
+/// Ligne de paroles synchronisée : `time` en secondes depuis le début du titre.
+struct LyricLine: Hashable, Codable, Identifiable {
+    var time: TimeInterval
+    var text: String
+    var id: String { "\(time)-\(text)" }
 }
 
 /// Playlist créée dans Nova, stockée sur l'iPhone.

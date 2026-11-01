@@ -526,6 +526,7 @@ enum ImportSources {
 /// Retrouve sur YouTube Music les titres venant d'ailleurs.
 enum TrackMatcher {
     /// Recherche en plusieurs essais, du plus précis au plus large, avec mémoire des titres déjà trouvés.
+    /// Si rien de sûr n'est trouvé, une recherche approfondie prend le relais (voir `deepMatch`).
     static func match(_ track: ImportedTrack, client: InnerTubeClient) async -> Track? {
         if let known = await MatchCache.shared.track(for: track) { return known }
 
@@ -539,11 +540,27 @@ enum TrackMatcher {
         var seen = Set<String>()
         attempts = attempts.filter { seen.insert("\($0.0.lowercased())|\($0.1)").inserted }
 
-        var best: (track: Track, score: Double)?
-        for (query, scope) in attempts {
-            if Task.isCancelled { return nil }
+        var best = await search(attempts, for: track, client: client)
+        if best == nil || best!.score < 2 {
+            if let deeper = await deepMatch(track, client: client, alreadyTried: seen),
+               best == nil || deeper.score > best!.score {
+                best = deeper
+            }
+        }
+        guard let best, isAcceptable(best, for: track) else { return nil }
+        await MatchCache.shared.store(best.track, for: track)
+        return best.track
+    }
+
+    private typealias Scored = (track: Track, score: Double)
+
+    private static func search(_ attempts: [(String, SearchScope)], for track: ImportedTrack,
+                               client: InnerTubeClient) async -> Scored? {
+        var best: Scored?
+        for (query, scope) in attempts where !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            if Task.isCancelled { return best }
             guard let shelves = try? await client.search(query, scope: scope) else { continue }
-            let penalty = scope == .videos ? 0.6 : 0
+            let penalty = scope == .videos ? 0.6 : (scope == .all ? 0.2 : 0)
             if let found = bestCandidate(shelves.flatMap(\.tracks), for: track, penalty: penalty),
                best == nil || found.score > best!.score {
                 best = found
@@ -551,14 +568,90 @@ enum TrackMatcher {
             // Correspondance sûre : inutile de chercher plus loin.
             if let best, best.score >= 4.5 { break }
         }
-        guard let best, best.score >= 2 else { return nil }
-        await MatchCache.shared.store(best.track, for: track)
-        return best.track
+        return best
+    }
+
+    /// Correspondance retenue : bon score, ou score moyen confirmé par une durée identique.
+    private static func isAcceptable(_ result: Scored, for track: ImportedTrack) -> Bool {
+        if result.score >= 2 { return true }
+        if result.score >= 1.3, let a = track.duration, let b = result.track.duration, abs(a - b) < 3 { return true }
+        return false
+    }
+
+    /// Recherche approfondie pour les titres introuvables :
+    /// - noms corrigés par Deezer (orthographe, artiste principal, titre officiel) ;
+    /// - chacun des artistes crédités, le titre seul, l'onglet « Tout » ;
+    /// - écriture latine pour les titres en japonais, coréen, cyrillique…
+    private static func deepMatch(_ track: ImportedTrack, client: InnerTubeClient,
+                                  alreadyTried: Set<String>) async -> Scored? {
+        var seen = alreadyTried
+        var attempts: [(String, SearchScope)] = []
+        func add(_ query: String, _ scope: SearchScope) {
+            let query = query.trimmingCharacters(in: .whitespaces)
+            guard !query.isEmpty, seen.insert("\(query.lowercased())|\(scope)").inserted else { return }
+            attempts.append((query, scope))
+        }
+        let cleanTitle = stripExtras(track.title)
+        let names = artistNames(track.artist)
+
+        // Deezer connaît le nom officiel : on cherche avec, et on compare aussi avec lui.
+        var reference = track
+        if let canonical = await deezerCanonical(track) {
+            reference = ImportedTrack(title: canonical.title, artist: canonical.artist,
+                                      album: canonical.album ?? track.album, duration: track.duration ?? canonical.duration)
+            add("\(stripExtras(canonical.title)) \(mainArtist(canonical.artist))", .songs)
+        }
+        for name in names.dropFirst() { add("\(cleanTitle) \(name)", .songs) }
+        add("\(cleanTitle) \(names.joined(separator: " "))", .all)
+        add(cleanTitle, .songs)
+        let latin = (cleanTitle + " " + mainArtist(track.artist)).applyingTransform(.toLatin, reverse: false)?
+            .applyingTransform(.stripDiacritics, reverse: false)
+        if let latin, latin != cleanTitle + " " + mainArtist(track.artist) { add(latin, .songs) }
+        if let album = track.album, !album.isEmpty { add("\(cleanTitle) \(album)", .songs) }
+        add("\(cleanTitle) \(mainArtist(reference.artist))", .videos)
+
+        let fromOriginal = await search(attempts, for: track, client: client)
+        guard reference != track else { return fromOriginal }
+        // Les mêmes résultats, jugés par rapport au nom officiel donné par Deezer.
+        let fromCanonical = await search(attempts.prefix(1).map { $0 }, for: reference, client: client)
+        return [fromOriginal, fromCanonical].compactMap { $0 }.max { $0.score < $1.score }
+    }
+
+    /// Titre tel que Deezer le connaît (recherche exacte, puis libre), s'il ressemble à celui demandé.
+    private static func deezerCanonical(_ track: ImportedTrack) async -> ImportedTrack? {
+        let title = stripExtras(track.title), artist = mainArtist(track.artist)
+        let strict = "artist:\"\(artist)\" track:\"\(title)\""
+        for query in [strict, "\(title) \(artist)"] {
+            guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let json = try? await ReleasesService.get("https://api.deezer.com/search?q=\(encoded)&limit=5"),
+                  let items = json["data"] as? [[String: Any]] else { continue }
+            let wanted = Set(normalize(title).split(separator: " "))
+            for item in items {
+                guard let name = item["title"] as? String,
+                      let performer = (item["artist"] as? [String: Any])?["name"] as? String else { continue }
+                let words = Set(normalize(stripExtras(name)).split(separator: " "))
+                // Au moins la moitié des mots du titre en commun : sinon ce n'est pas le même morceau.
+                guard !wanted.isEmpty, Double(words.intersection(wanted).count) / Double(wanted.count) >= 0.5 else { continue }
+                return ImportedTrack(title: name, artist: performer,
+                                     album: (item["album"] as? [String: Any])?["title"] as? String,
+                                     duration: (item["duration"] as? Double) ?? (item["duration"] as? Int).map(Double.init))
+            }
+        }
+        return nil
+    }
+
+    /// Tous les artistes d'un crédit (« A, B & C feat. D » → A, B, C, D).
+    static func artistNames(_ value: String) -> [String] {
+        value.replacingOccurrences(of: #"(?i)\s*(,|&|;|/|\bfeat\.?|\bft\.?|\bx\b|\bet\b|\band\b)\s*"#, with: "|",
+                                   options: .regularExpression)
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// Meilleur candidat : titre, artiste, durée et album, en écartant les versions non voulues.
     private static func bestCandidate(_ candidates: [Track], for track: ImportedTrack,
-                                      penalty: Double) -> (track: Track, score: Double)? {
+                                      penalty: Double) -> Scored? {
         let wantedTitle = normalize(stripExtras(track.title))
         let wantedFull = normalize(track.title)
         let wantedArtists = Set(normalize(track.artist).split(separator: " ").map(String.init))
@@ -614,8 +707,8 @@ enum TrackMatcher {
 
     static func stripExtras(_ value: String) -> String {
         var text = value
-        for pattern in [#"\s*[\(\[][^\)\]]*(feat|ft\.|with|avec|remaster|version|edit|mix|live|radio|explicit|bonus|deluxe)[^\)\]]*[\)\]]"#,
-                        #"\s+-\s+.*(remaster|version|edit|mix|live|radio|explicit).*$"#,
+        for pattern in [#"\s*[\(\[][^\)\]]*(feat|ft\.|with|avec|remaster|version|edit|mix|live|radio|explicit|bonus|deluxe|from|soundtrack|original|mono|stereo|prod\.)[^\)\]]*[\)\]]"#,
+                        #"\s+-\s+.*(remaster|version|edit|mix|live|radio|explicit|from|soundtrack|mono|stereo|single).*$"#,
                         #"\s+(feat|ft)\.?\s.*$"#] {
             text = text.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
         }

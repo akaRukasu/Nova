@@ -251,6 +251,40 @@ await step("Correspondance avec YouTube Music") {
     }
 }
 
+await step("Correspondance difficile (recherche approfondie)") {
+    let hard = [
+        ImportedTrack(title: "Alors on dance", artist: "Stromae", album: nil, duration: 207),
+        ImportedTrack(title: "La Ritournelle - Radio Edit", artist: "Sebastien Tellier", album: nil, duration: nil),
+        ImportedTrack(title: "夜に駆ける", artist: "YOASOBI", album: nil, duration: 261),
+        ImportedTrack(title: "Bohemian Rhapsody - Remastered 2011", artist: "Queen", album: "A Night At The Opera", duration: 354),
+        ImportedTrack(title: "Djadja (feat. Maluma) - Remix", artist: "Aya Nakamura, Maluma", album: nil, duration: nil),
+        ImportedTrack(title: "Tout va bien", artist: "Orelsan, Ibeyi", album: nil, duration: nil),
+        ImportedTrack(title: "Où je vais", artist: "Amel Bent, Kendji Girac", album: nil, duration: nil),
+        ImportedTrack(title: "Ma Benz", artist: "Suprême NTM, Lord Kossity", album: nil, duration: nil),
+    ]
+    for track in hard {
+        if let found = await TrackMatcher.match(track, client: client) {
+            print("  ✓ \(track.label)  →  \(found.artist) — \(found.title) (\(found.id))")
+        } else {
+            print("  ✗ \(track.label)")
+        }
+    }
+}
+
+await step("Paroles synchronisées (LRCLIB)") {
+    for (title, artist, duration) in [("Alors on danse", "Stromae", 206.0), ("Get Lucky", "Daft Punk", 369.0),
+                                      ("BAILE INoLVIDABLE", "Bad Bunny", 367.0)] {
+        let track = Track(id: "x", title: title, artist: artist, duration: duration)
+        if let lyrics = await LyricsService.lrclib(for: track, duration: duration) {
+            let lines = lyrics.lines ?? []
+            print("  \(artist) — \(title) : \(lines.count) lignes synchronisées"
+                  + (lines.dropFirst(3).first.map { " · ex. [\(Int($0.time))s] \($0.text)" } ?? ""))
+        } else {
+            print("  \(artist) — \(title) : rien")
+        }
+    }
+}
+
 // MARK: - Découvrir et sorties
 
 await step("Titres similaires (Découvrir)") {

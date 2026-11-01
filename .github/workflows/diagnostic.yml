@@ -30,6 +30,7 @@ jobs:
             Nova/Services/PlaybackSettings.swift \
             Nova/Services/DiscoverySources.swift \
             Nova/Services/ArtworkResolver.swift \
+            Nova/Services/LyricsService.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
 
