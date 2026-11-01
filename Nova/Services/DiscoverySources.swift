@@ -47,7 +47,8 @@ enum ReleasesService {
 
     /// Sorties récentes des artistes phares d'un genre (l'API n'a pas de liste « nouveautés » par genre).
     static func releases(genre: ReleaseGenre, since: Date) async throws -> [Release] {
-        let json = try await get("https://api.deezer.com/genre/\(genre.id)/artists")
+        // Classement du genre : ses artistes sont bien ceux du genre.
+        let json = try await get("https://api.deezer.com/chart/\(genre.id)/artists?limit=50")
         let artists = ((json["data"] as? [[String: Any]]) ?? []).compactMap { item -> (Int, String)? in
             guard let id = item["id"] as? Int, let name = item["name"] as? String else { return nil }
             return (id, name)
@@ -102,6 +103,8 @@ enum ReleasesService {
                     for release in batch where seen.insert(release.id).inserted { result.append(release) }
                 }
             }
+            // Limite de l'API : 50 requêtes par 5 secondes.
+            try? await Task.sleep(for: .milliseconds(700))
         }
         return result.sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
     }
@@ -117,12 +120,18 @@ enum ReleasesService {
                        genre: genre)
     }
 
-    private static func get(_ address: String) async throws -> [String: Any] {
+    private static func get(_ address: String, attempt: Int = 0) async throws -> [String: Any] {
         guard let url = URL(string: address) else { throw ImportError.nothingFound }
         let (data, response) = try await URLSession.shared.data(from: url)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw ImportError.http(status, "Deezer") }
-        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        let json = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        // « Quota limit exceeded » : on attend un peu et on réessaie.
+        if let error = json["error"] as? [String: Any], (error["code"] as? Int) == 4, attempt < 3 {
+            try await Task.sleep(for: .milliseconds(1500))
+            return try await get(address, attempt: attempt + 1)
+        }
+        return json
     }
 }
 
