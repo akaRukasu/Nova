@@ -300,6 +300,8 @@ struct SettingsView: View {
     @Environment(AccountStore.self) private var account
     @AppStorage("audioQualityHigh") private var highQuality = true
     @AppStorage("autoplayRadio") private var autoplayRadio = true
+    @AppStorage("transitionStyle") private var transition = PlaybackSettings.Transition.automix.rawValue
+    @AppStorage("crossfadeSeconds") private var crossfadeSeconds = 6.0
     @AppStorage("recordHistory") private var recordHistory = true
     @AppStorage("cacheOnCellular") private var cacheOnCellular = true
     @AppStorage("downloadOnCellular") private var downloadOnCellular = false
@@ -341,6 +343,24 @@ struct SettingsView: View {
                 Text("Lecture")
             } footer: {
                 Text("La lecture automatique enchaîne avec des titres similaires à la fin de la file. AirPlay se choisit depuis le lecteur.")
+            }
+
+            Section {
+                Picker("Transitions", selection: $transition) {
+                    ForEach(PlaybackSettings.Transition.allCases) { style in
+                        Text(style.label).tag(style.rawValue)
+                    }
+                }
+                if transition == PlaybackSettings.Transition.crossfade.rawValue {
+                    VStack(alignment: .leading) {
+                        Text("Durée du fondu : \(Int(crossfadeSeconds)) s")
+                        Slider(value: $crossfadeSeconds, in: 1...12, step: 1)
+                    }
+                }
+            } header: {
+                Text("Transitions entre les titres")
+            } footer: {
+                Text("AutoMix enchaîne les titres comme un DJ : le suivant monte pendant que l'autre se termine, puis prend le relais. Le fondu enchaîné mélange les deux titres de façon égale pendant la durée choisie.")
             }
 
             Section("Données mobiles") {

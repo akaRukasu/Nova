@@ -42,7 +42,12 @@ final class PlayerModel {
 
     // MARK: Interne
 
-    @ObservationIgnored private let player = AVPlayer()
+    /// Lecteur du titre en cours. Pendant une transition, le titre qui se termine passe sur `fadingOut`.
+    @ObservationIgnored private var player = AVPlayer()
+    @ObservationIgnored private var fadingOut: AVPlayer?
+    @ObservationIgnored private var fadeTask: Task<Void, Never>?
+    /// Transition lancée, titre suivant en préparation : l'ancien lecteur ne pilote plus l'état.
+    @ObservationIgnored private var crossfadeStarting = false
     @ObservationIgnored private let client = InnerTubeClient()
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -64,17 +69,10 @@ final class PlayerModel {
     init() {
         configureAudioSession()
         configureRemoteCommands()
-        player.automaticallyWaitsToMinimizeStalling = true
-        // AirPlay : l'iPhone lit le titre et envoie le son à l'appareil. Sans ça, iOS confie
-        // l'adresse du flux à l'enceinte ou à l'Apple TV, qui ne peut pas l'ouvrir (adresse liée
-        // à l'iPhone, ou fichier local du cache) : « cannot play ».
-        player.allowsExternalPlayback = false
+        Self.configure(player)
         loadDurations()
         restoreSession()
-
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
-            Task { @MainActor in self?.tick(time) }
-        }
+        attachTimeObserver()
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
             Task { @MainActor in
@@ -88,6 +86,66 @@ final class PlayerModel {
             let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             Task { @MainActor in self?.handleInterruption(typeRaw: raw, optionsRaw: optionsRaw) }
         }
+    }
+
+    private static func configure(_ player: AVPlayer) {
+        player.automaticallyWaitsToMinimizeStalling = true
+        // AirPlay : l'iPhone lit le titre et envoie le son à l'appareil. Sans ça, iOS confie
+        // l'adresse du flux à l'enceinte ou à l'Apple TV, qui ne peut pas l'ouvrir (adresse liée
+        // à l'iPhone, ou fichier local du cache) : « cannot play ».
+        player.allowsExternalPlayback = false
+    }
+
+    private func attachTimeObserver() {
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
+            Task { @MainActor in self?.tick(time) }
+        }
+    }
+
+    // MARK: Transitions (AutoMix, fondu enchaîné)
+
+    /// Lance le titre suivant avant la fin de celui-ci.
+    private func beginTransition(_ duration: TimeInterval) {
+        crossfadeStarting = true
+        endHandled = true
+        index += 1
+        load(transition: duration)
+    }
+
+    /// Le nouveau lecteur devient le lecteur principal ; l'ancien s'efface en arrière-plan.
+    private func runTransition(to incoming: AVPlayer, duration: TimeInterval) {
+        finishTransition()
+        let outgoing = player
+        if let timeObserver { outgoing.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+        player = incoming
+        attachTimeObserver()
+        crossfadeStarting = false
+        fadingOut = outgoing
+        let style = PlaybackSettings.transition
+        fadeTask = Task { [weak self] in
+            let steps = max(1, Int(duration / 0.05))
+            for step in 0...steps {
+                if Task.isCancelled { return }
+                let volumes = style.volumes(at: Double(step) / Double(steps))
+                incoming.volume = Float(volumes.incoming)
+                outgoing.volume = Float(volumes.outgoing)
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            self?.finishTransition()
+        }
+    }
+
+    /// Arrête le titre qui s'efface (fin de transition, pause, saut, avance…).
+    private func finishTransition() {
+        fadeTask?.cancel()
+        fadeTask = nil
+        if let fadingOut {
+            fadingOut.pause()
+            fadingOut.replaceCurrentItem(with: nil)
+        }
+        fadingOut = nil
+        player.volume = 1
     }
 
     // MARK: Commandes
@@ -263,6 +321,7 @@ final class PlayerModel {
     }
 
     func pause() {
+        finishTransition()
         player.pause()
         isPlaying = false
         updateNowPlaying()
@@ -299,6 +358,7 @@ final class PlayerModel {
             currentTime = max(0, seconds)
             return
         }
+        finishTransition()
         let target = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
         currentTime = max(0, seconds)
         player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
@@ -308,14 +368,19 @@ final class PlayerModel {
 
     // MARK: Chargement
 
-    private func load(resumeAt startTime: TimeInterval = 0) {
+    /// `transition` : le titre précédent continue pendant le chargement, puis s'efface en fondu.
+    private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil) {
         guard let track = current else { return }
         loadTask?.cancel()
         statusObservation = nil
-        player.pause()
-        player.replaceCurrentItem(with: nil)
+        if transition == nil {
+            crossfadeStarting = false
+            finishTransition()
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+            isPlaying = false
+        }
         isLoading = true
-        isPlaying = false
         currentTime = startTime
         duration = track.duration ?? knownDurations[track.id] ?? 0
         expectedDuration = track.duration ?? knownDurations[track.id]
@@ -332,10 +397,16 @@ final class PlayerModel {
             do {
                 let url = try await self.playableURL(for: track)
                 try Task.checkCancellation()
-                self.start(url: url, track: track, at: startTime)
+                self.start(url: url, track: track, at: startTime, transition: transition)
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
+                if transition != nil {
+                    // Titre suivant illisible : on arrête l'ancien et on passe à la suite normalement.
+                    self.crossfadeStarting = false
+                    self.player.pause()
+                    self.player.replaceCurrentItem(with: nil)
+                }
                 self.handleFailure(error, track: track)
             }
         }
@@ -358,7 +429,7 @@ final class PlayerModel {
         return stream.url
     }
 
-    private func start(url: URL, track: Track, at startTime: TimeInterval) {
+    private func start(url: URL, track: Track, at startTime: TimeInterval, transition: TimeInterval? = nil) {
         // Le flux de YouTube indique la durée exacte dans son adresse (« dur=… »).
         if let dur = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(TimeInterval.init), dur > 0 {
@@ -379,13 +450,25 @@ final class PlayerModel {
                 self.handleFailure(error ?? NovaError.noPlayableStream, track: track)
             }
         }
-        player.replaceCurrentItem(with: item)
-        if startTime > 1 {
-            player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
-        }
         try? AVAudioSession.sharedInstance().setActive(true)
-        // Démarre dès les premières secondes reçues, sans attendre un gros tampon.
-        player.playImmediately(atRate: 1)
+        if let transition, player.currentItem != nil {
+            // Transition : le titre suivant démarre en silence sur un second lecteur, puis monte.
+            let incoming = AVPlayer()
+            Self.configure(incoming)
+            incoming.volume = 0
+            incoming.replaceCurrentItem(with: item)
+            incoming.playImmediately(atRate: 1)
+            runTransition(to: incoming, duration: transition)
+        } else {
+            crossfadeStarting = false
+            player.volume = 1
+            player.replaceCurrentItem(with: item)
+            if startTime > 1 {
+                player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
+            }
+            // Démarre dès les premières secondes reçues, sans attendre un gros tampon.
+            player.playImmediately(atRate: 1)
+        }
         isPlaying = true
         isLoading = false
         failureCount = 0
@@ -457,8 +540,18 @@ final class PlayerModel {
     // MARK: Temps
 
     private func tick(_ time: CMTime) {
+        // Transition en préparation : l'ancien titre joue encore, mais l'état est déjà celui du suivant.
+        guard !crossfadeStarting else { return }
         let seconds = time.seconds
         if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
+        // AutoMix / fondu : le titre suivant démarre avant la fin de celui-ci.
+        if let fade = PlaybackSettings.transitionDuration, isPlaying, !isLoading, fadingOut == nil,
+           repeatMode != .one, hasNext, JamSession.shared.role != .guest || !JamSession.shared.listenAlong,
+           let expected = expectedDuration, expected > fade * 3,
+           currentTime >= expected - fade, currentTime < expected - 0.5 {
+            beginTransition(fade)
+            return
+        }
         if isPlaying, Date().timeIntervalSince(lastSessionSave) > 15 { saveSession() }
         if let expected = expectedDuration, expected > 0 {
             // Durée connue : on garde la vraie, même si AVPlayer annonce le double.
