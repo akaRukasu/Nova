@@ -132,8 +132,9 @@ extension InnerTubeClient {
         }
 
         // Dernier essai : le même titre, du même artiste, parmi les titres de la recherche.
-        let title = Parser.text(item["title"])
-        guard !title.isEmpty, let artist = info.artist, !artist.isEmpty,
+        guard let artist = info.artist, !artist.isEmpty else { return nil }
+        let title = Self.songTitle(Parser.text(item["title"]), artist: artist)
+        guard !title.isEmpty,
               let shelves = try? await search("\(title) \(artist)", scope: .songs) else { return nil }
         let wantedTitle = Self.artworkKey(title), wantedArtist = Self.artworkKey(artist)
         let match = shelves.flatMap(\.tracks).first { candidate in
@@ -142,6 +143,25 @@ extension InnerTubeClient {
                 && Self.artworkKey(candidate.artist).contains(wantedArtist)
         }
         return match?.artworkURL
+    }
+
+    /// Titre d'un clip ramené au titre du morceau : « Artiste - Titre (Official Video) feat. X » → « Titre ».
+    private static func songTitle(_ raw: String, artist: String) -> String {
+        var title = raw.replacingOccurrences(of: #"\s*[\(\[][^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
+        title = title.replacingOccurrences(of: #"(?i)\s+(feat\.?|ft\.?|featuring|avec)\s+.*$"#, with: "",
+                                           options: .regularExpression)
+        for separator in [" - ", " – ", " — ", " | "] {
+            let parts = title.components(separatedBy: separator)
+            guard parts.count >= 2 else { continue }
+            // L'artiste est d'un côté du tiret, le titre de l'autre.
+            if artworkKey(parts[0]).contains(artworkKey(artist)) || artworkKey(artist).contains(artworkKey(parts[0])) {
+                title = parts.dropFirst().joined(separator: separator)
+            } else if artworkKey(parts.last!).contains(artworkKey(artist)) {
+                title = parts.dropLast().joined(separator: separator)
+            }
+            break
+        }
+        return title.trimmingCharacters(in: .whitespaces)
     }
 
     /// Titre ou artiste simplifié : sans accents, ni mentions entre parenthèses, ni ponctuation.
