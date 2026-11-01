@@ -110,7 +110,7 @@ struct HomeView: View {
                     }
                     .padding(16)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)

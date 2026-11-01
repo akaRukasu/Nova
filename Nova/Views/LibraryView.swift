@@ -245,7 +245,7 @@ struct LibraryView: View {
         VStack(alignment: round ? .center : .leading, spacing: 6) {
             RemoteImage(urls: urls)
                 .aspectRatio(1, contentMode: .fit)
-                .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 10, style: .continuous)))
+                .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 22, style: .continuous)))
                 .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
             Text(title)
                 .font(.subheadline.weight(.medium))
@@ -503,7 +503,7 @@ struct LibraryPlaylistsView: View {
                         .font(.title2)
                         .foregroundStyle(Color.novaAccent)
                         .frame(width: 52, height: 52)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     Text("Nouvelle playlist…")
                         .foregroundStyle(Color.novaAccent)
                 }
@@ -516,7 +516,7 @@ struct LibraryPlaylistsView: View {
                         .font(.title2)
                         .foregroundStyle(Color.novaAccent)
                         .frame(width: 52, height: 52)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     Text("Nouvelle playlist intelligente…")
                         .foregroundStyle(Color.novaAccent)
                 }
@@ -608,7 +608,7 @@ struct LibraryCollectionsView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 RemoteImage(urls: collection.artworkURLs)
                                     .aspectRatio(1, contentMode: .fit)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                                 Text(collection.title)
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(Color.primary)
