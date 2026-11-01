@@ -118,8 +118,23 @@ final class LibraryStore {
     /// Titres, albums, artistes et playlists ajoutés, du plus récent au plus ancien.
     func recentAdditions(limit: Int = 60) -> [RecentAddition] {
         var entries: [(Date, RecentAddition)] = []
-        for track in addedTracks.prefix(limit) {
-            entries.append((stats[track.id]?.added ?? .distantPast, .track(track)))
+        // Titres ajoutés ou likés : on affiche leur album ou leur single, comme Apple Music
+        // (une seule fois par album), et le titre seul quand l'album est inconnu.
+        var seenAlbums = Set<String>()
+        var seenTracks = Set<String>()
+        let tracks = (addedTracks + liked)
+            .filter { seenTracks.insert($0.id).inserted }
+            .sorted { (stats[$0.id]?.added ?? .distantPast) > (stats[$1.id]?.added ?? .distantPast) }
+        for track in tracks.prefix(limit * 3) {
+            let date = stats[track.id]?.added ?? .distantPast
+            if let albumID = track.albumID {
+                guard !savedIDs.contains(albumID), seenAlbums.insert(albumID).inserted else { continue }
+                let album = MusicCollection(id: albumID, kind: .album, title: track.album ?? track.title,
+                                            subtitle: track.artist, artworkURL: track.artworkURL)
+                entries.append((date, .collection(album)))
+            } else {
+                entries.append((date, .track(track)))
+            }
         }
         for (position, collection) in saved.prefix(limit).enumerated() {
             // Ajouts antérieurs à la date d'ajout : on garde l'ordre de la liste.
