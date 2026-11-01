@@ -23,8 +23,8 @@ targets:
       path: Nova/Info.plist
       properties:
         CFBundleDisplayName: Nova
-        CFBundleShortVersionString: "0.3.0"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "0.4.0"
+        CFBundleVersion: "4"
         LSApplicationCategoryType: public.app-category.music
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
@@ -38,6 +38,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         ITSAppUsesNonExemptEncryption: false
         NSAppleMusicUsageDescription: Nova lit tes playlists Apple Music pour les importer.
+        NSLocationWhenInUseUsageDescription: Nova utilise ta position pour trouver les concerts près de chez toi.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.akarukasu.nova

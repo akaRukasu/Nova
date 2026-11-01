@@ -62,6 +62,12 @@ struct ArtistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: Route.concerts(artist: name)) {
+                    Image(systemName: "ticket")
+                }
+                .accessibilityLabel("Concerts")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 ShareLink(item: artist.shareURL)
             }
         }

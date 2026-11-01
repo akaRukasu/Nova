@@ -56,6 +56,10 @@ final class PlayerModel {
         configureAudioSession()
         configureRemoteCommands()
         player.automaticallyWaitsToMinimizeStalling = true
+        // AirPlay : l'iPhone lit le titre et envoie le son à l'appareil. Sans ça, iOS confie
+        // l'adresse du flux à l'enceinte ou à l'Apple TV, qui ne peut pas l'ouvrir (adresse liée
+        // à l'iPhone, ou fichier local du cache) : « cannot play ».
+        player.allowsExternalPlayback = false
         restoreSession()
 
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in

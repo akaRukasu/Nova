@@ -98,6 +98,8 @@ struct BrowseView: View {
     let title: String
     let link: BrowseLink
     var largeTitle = false
+    /// Carte « Mes sorties » en tête de l'onglet Nouveautés.
+    var showsReleasesCard = false
     @State private var page: BrowsePage?
     @State private var errorText: String?
     private let client = InnerTubeClient()
@@ -106,6 +108,28 @@ struct BrowseView: View {
         ScrollView {
             if let page {
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    if showsReleasesCard {
+                        NavigationLink(value: Route.releases) {
+                            HStack(spacing: 14) {
+                                Image(systemName: "sparkles.rectangle.stack.fill")
+                                    .font(.title)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Mes sorties")
+                                        .font(.headline)
+                                    Text("Toutes les nouveautés de tes genres et de tes artistes")
+                                        .font(.subheadline)
+                                        .opacity(0.85)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                            }
+                            .foregroundStyle(.white)
+                            .padding(16)
+                            .background(Color.novaAccent.gradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 16)
+                    }
                     ForEach(page.shelves) { shelf in
                         if shelf.layout == .cards && (page.shelves.count == 1 || (shelf.isCategories && shelf.items.count <= 8)) {
                             CardGrid(shelf: shelf, showTitle: page.shelves.count > 1)

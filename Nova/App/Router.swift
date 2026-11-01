@@ -2,7 +2,7 @@ import Observation
 import SwiftUI
 
 enum AppTab: Hashable {
-    case home, explore, library, search
+    case home, discover, explore, library, search
 }
 
 /// Pages qu'on peut ouvrir dans un onglet.
@@ -32,6 +32,7 @@ final class Router {
     var tab: AppTab = .home
     var homePath: [Route] = []
     var explorePath: [Route] = []
+    var discoverPath: [Route] = []
     var libraryPath: [Route] = []
     var searchPath: [Route] = []
     var showPlayer = false
@@ -44,6 +45,7 @@ final class Router {
         switch tab {
         case .home: homePath.append(route)
         case .explore: explorePath.append(route)
+        case .discover: discoverPath.append(route)
         case .library: libraryPath.append(route)
         case .search: searchPath.append(route)
         }

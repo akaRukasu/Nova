@@ -111,6 +111,12 @@ struct LibraryView: View {
                 }
                 .accessibilityLabel("Importer")
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: Route.settings) {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Réglages")
+            }
             ToolbarItem(placement: .topBarTrailing) { AccountButton() }
         }
         .sheet(isPresented: $showImport) {

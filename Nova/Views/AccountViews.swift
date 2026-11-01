@@ -60,6 +60,7 @@ struct AccountSheet: View {
                         Text("L'accueil est personnalisé, ta bibliothèque YouTube apparaît dans l'onglet Bibliothèque et tes « J'aime » sont envoyés à ton compte.")
                     }
                     Section {
+                        NavigationLink("Réglages", value: Route.settings)
                         Button("Se déconnecter", role: .destructive) { confirmSignOut = true }
                     }
                 } else {
@@ -83,8 +84,12 @@ struct AccountSheet: View {
                     } footer: {
                         Text("La connexion se fait sur la page officielle de Google. Nova garde seulement les cookies de session, dans le trousseau de l'iPhone.")
                     }
+                    Section {
+                        NavigationLink("Réglages", value: Route.settings)
+                    }
                 }
             }
+            .withRoutes()
             .navigationTitle("Compte")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
