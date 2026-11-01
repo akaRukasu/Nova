@@ -100,7 +100,7 @@ final class ImportManager {
         if playlist.isLiked {
             library.addLiked(found)
         } else if !found.isEmpty {
-            library.createPlaylist(name: playlist.name, tracks: found)
+            library.upsertPlaylist(name: playlist.name, tracks: found)
         }
         update(jobID) { $0.isFinished = true }
     }

@@ -361,8 +361,11 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Link("Obtenir une clé gratuite", destination: URL(string: "https://developer.ticketmaster.com/products-and-docs/apis/getting-started/")!)
+                NavigationLink("Ouvrir les concerts", value: Route.concerts(artist: nil))
             } header: {
                 Text("Concerts")
+            } footer: {
+                Text("Les concerts sont aussi dans la Bibliothèque, dans Découvrir et sur chaque page artiste (icône billet).")
             }
 
             Section("À propos") {

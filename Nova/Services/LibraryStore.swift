@@ -59,7 +59,25 @@ final class LibraryStore {
         likedIDs = Set(liked.map(\.id))
         savedIDs = Set(saved.map(\.id))
         addedIDs = Set(addedTracks.map(\.id))
-        rebuildSongs()
+        if removeDuplicatePlaylists() { save() } else { rebuildSongs() }
+    }
+
+    /// Imports précédents : une seule playlist par nom (la plus récente, en tête de liste),
+    /// et aucun titre en double dans une playlist. Renvoie `true` si quelque chose a changé.
+    private func removeDuplicatePlaylists() -> Bool {
+        var seenNames = Set<String>()
+        let before = playlists
+        playlists = playlists.filter {
+            seenNames.insert($0.name.trimmingCharacters(in: .whitespaces).lowercased()).inserted
+        }
+        for index in playlists.indices {
+            var seenIDs = Set<String>()
+            var seenKeys = Set<String>()
+            playlists[index].tracks = playlists[index].tracks.filter {
+                seenIDs.insert($0.id).inserted && seenKeys.insert(LibraryStore.dedupeKey($0)).inserted
+            }
+        }
+        return playlists != before
     }
 
     // MARK: Ajouter à la bibliothèque
@@ -258,6 +276,24 @@ final class LibraryStore {
         markAdded(tracks)
         save()
         return playlist.id
+    }
+
+    /// Import : remplace la playlist du même nom si elle existe (sans doublons), sinon la crée.
+    @discardableResult
+    func upsertPlaylist(name: String, tracks: [Track]) -> UUID {
+        var seenIDs = Set<String>()
+        var seenKeys = Set<String>()
+        let unique = tracks.filter {
+            seenIDs.insert($0.id).inserted && seenKeys.insert(LibraryStore.dedupeKey($0)).inserted
+        }
+        let key = name.trimmingCharacters(in: .whitespaces)
+        if let index = playlists.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(key) == .orderedSame }) {
+            markAdded(unique)
+            playlists[index].tracks = unique
+            save()
+            return playlists[index].id
+        }
+        return createPlaylist(name: name, tracks: unique)
     }
 
     func renamePlaylist(_ id: UUID, to name: String) {

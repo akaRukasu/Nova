@@ -50,17 +50,15 @@ struct DiscoverView: View {
                         }
                     }
                 }
+                if seeds.isEmpty {
+                    ContentUnavailableView("Écoute quelques titres", systemImage: "sparkles",
+                                           description: Text("Découvrir te propose des titres, des artistes et des playlists à partir de ce que tu écoutes."))
+                }
                 if isLoading && sections.isEmpty {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
             }
             .padding(.vertical, 12)
-        }
-        .overlay {
-            if seeds.isEmpty {
-                ContentUnavailableView("Écoute quelques titres", systemImage: "sparkles",
-                                       description: Text("Découvrir te propose des titres, des artistes et des playlists à partir de ce que tu écoutes."))
-            }
         }
         .navigationTitle("Découvrir")
         .toolbar {

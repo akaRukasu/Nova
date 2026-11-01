@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Rubriques de la bibliothèque, masquables et réordonnables (bouton « Modifier »).
 enum LibrarySection: String, CaseIterable, Identifiable {
-    case playlists, artists, albums, songs, liked, downloads, history, youtube, importer
+    case playlists, artists, albums, songs, liked, downloads, history, releases, concerts, youtube, importer
 
     var id: String { rawValue }
 
@@ -15,6 +15,8 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "Titres likés"
         case .downloads: return "Téléchargés"
         case .history: return "Historique"
+        case .releases: return "Sorties"
+        case .concerts: return "Concerts"
         case .youtube: return "Mon compte YouTube"
         case .importer: return "Importer"
         }
@@ -29,12 +31,14 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "heart"
         case .downloads: return "arrow.down.circle"
         case .history: return "clock"
+        case .releases: return "sparkles.rectangle.stack"
+        case .concerts: return "ticket"
         case .youtube: return "person.crop.circle"
         case .importer: return "square.and.arrow.down.on.square"
         }
     }
 
-    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads]
+    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads, .releases, .concerts]
 }
 
 struct LibraryView: View {
@@ -46,6 +50,7 @@ struct LibraryView: View {
     @AppStorage("librarySections") private var sectionsRaw = LibrarySection.defaultOrder.map(\.rawValue).joined(separator: ",")
     @State private var editing = false
     @State private var showImport = false
+    @AppStorage("librarySectionsVersion") private var sectionsVersion = 1
 
     private var enabled: [LibrarySection] {
         sectionsRaw.split(separator: ",").compactMap { LibrarySection(rawValue: String($0)) }
@@ -82,6 +87,13 @@ struct LibraryView: View {
         }
         .sheet(isPresented: $showImport) {
             ImportView()
+        }
+        .onAppear {
+            // Nouvelles rubriques (Sorties, Concerts) ajoutées une fois aux réglages existants.
+            if sectionsVersion < 2 {
+                save(enabled + [.releases, .concerts].filter { !enabled.contains($0) })
+                sectionsVersion = 2
+            }
         }
     }
 
@@ -155,6 +167,8 @@ struct LibraryView: View {
         case .liked: return .liked
         case .downloads: return .downloads
         case .history: return .history
+        case .releases: return .releases
+        case .concerts: return .concerts(artist: nil)
         case .youtube:
             return account.isSignedIn
                 ? .account(title: "Mon compte YouTube", browseID: "FEmusic_liked_playlists")
@@ -172,7 +186,7 @@ struct LibraryView: View {
         case .liked: return library.liked.count
         case .downloads: return downloads.tracks.count
         case .history: return library.recents.count
-        case .youtube, .importer: return nil
+        case .youtube, .importer, .releases, .concerts: return nil
         }
     }
 
