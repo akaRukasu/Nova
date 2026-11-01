@@ -44,8 +44,14 @@ struct Track: Identifiable, Codable, Hashable {
     /// la vraie pochette HD est d'abord cherchée sur YouTube Music (voir `ArtworkResolver`).
     var squareArtworkURLs: [URL] {
         var urls: [URL] = []
+        if hasSquareArtwork, let artworkURL { urls.append(artworkURL) }
         if !hasSquareArtwork, let placeholder = ArtworkResolver.placeholderURL(for: id) { urls.append(placeholder) }
-        if let artworkURL { urls.append(artworkURL) }
+        // En secours, la plus grande miniature vidéo : la pochette y fait 720 px (rognée des bandes)
+        // au lieu de 270 px dans « hqdefault ».
+        for name in ["hq720.jpg", "maxresdefault.jpg", "sddefault.jpg"] {
+            if let url = URL(string: "https://i.ytimg.com/vi/\(id)/\(name)") { urls.append(url) }
+        }
+        if !hasSquareArtwork, let artworkURL { urls.append(artworkURL) }
         if let url = URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") { urls.append(url) }
         return urls
     }
