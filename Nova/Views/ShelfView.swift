@@ -68,6 +68,24 @@ struct ShelfView: View {
                     .padding(.horizontal, 16)
                 }
                 .scrollTargetBehavior(.viewAligned)
+            case .cards where shelf.isCategories:
+                // Aperçu des catégories : deux rangées de tuiles, comme Apple Music.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHGrid(rows: [GridItem(.fixed(88), spacing: 12), GridItem(.fixed(88), spacing: 12)], spacing: 12) {
+                        ForEach(shelf.items) { item in
+                            if case .category(let category) = item {
+                                NavigationLink(value: Route.more(title: category.title, link: category.link)) {
+                                    CategoryTile(category: category)
+                                        .frame(width: 180, height: 88)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, 16)
+                }
+                .scrollTargetBehavior(.viewAligned)
             case .cards:
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(alignment: .top, spacing: 14) {
@@ -145,7 +163,10 @@ struct BrowseView: View {
                         .padding(.horizontal, 16)
                     }
                     ForEach(page.shelves) { shelf in
-                        if shelf.layout == .cards && (page.shelves.count == 1 || (shelf.isCategories && shelf.items.count <= 8)) {
+                        // Humeurs et genres : grille complète de tuiles (sauf aperçu avec lien « Tout afficher »).
+                        if shelf.isCategories && (shelf.more == nil || shelf.items.count <= 8) {
+                            CardGrid(shelf: shelf, showTitle: !shelf.title.isEmpty)
+                        } else if shelf.layout == .cards && page.shelves.count == 1 {
                             CardGrid(shelf: shelf, showTitle: page.shelves.count > 1)
                         } else {
                             // Classements et grilles : liste verticale numérotée, plus lisible qu'un carrousel coupé.
