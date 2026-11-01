@@ -47,12 +47,20 @@ enum ReleasesService {
 
     /// Sorties récentes des artistes phares d'un genre (l'API n'a pas de liste « nouveautés » par genre).
     static func releases(genre: ReleaseGenre, since: Date) async throws -> [Release] {
-        // Classement du genre : ses artistes sont bien ceux du genre.
-        let json = try await get("https://api.deezer.com/chart/\(genre.id)/artists?limit=50")
-        let artists = ((json["data"] as? [[String: Any]]) ?? []).compactMap { item -> (Int, String)? in
-            guard let id = item["id"] as? Int, let name = item["name"] as? String else { return nil }
-            return (id, name)
+        // Les classements d'albums et de titres sont filtrés par genre (celui des artistes ne l'est pas) :
+        // on en tire les artistes du genre.
+        var artists: [(Int, String)] = []
+        var seen = Set<Int>()
+        for chart in ["albums", "tracks"] {
+            let json = try await get("https://api.deezer.com/chart/\(genre.id)/\(chart)?limit=100")
+            for item in (json["data"] as? [[String: Any]]) ?? [] {
+                guard let artist = item["artist"] as? [String: Any],
+                      let id = artist["id"] as? Int, let name = artist["name"] as? String,
+                      seen.insert(id).inserted else { continue }
+                artists.append((id, name))
+            }
         }
+        artists = Array(artists.prefix(60))
         var releases = try await albums(of: artists, since: since)
         for index in releases.indices { releases[index].genre = genre.name }
         return releases
