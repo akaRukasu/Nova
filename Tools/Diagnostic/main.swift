@@ -303,7 +303,7 @@ if let key = ProcessInfo.processInfo.environment["TICKETMASTER_KEY"], !key.isEmp
 
 // MARK: - Pochettes HD des titres sans pochette carrée
 
-for artworkQuery in ["PARTIE III ÉNERGUMÈNE Caballero", "Caballero OSITO", "BAILE INoLVIDABLE Bad Bunny"] {
+for artworkQuery in ["PARTIE III ÉNERGUMÈNE Caballero", "Caballero OSITO", "Daft Punk Get Lucky"] {
     await step("Pochette HD : \(artworkQuery)") {
         for scope in [SearchScope.songs, .videos] {
             let found = try await client.search(artworkQuery, scope: scope).flatMap(\.tracks).prefix(2)

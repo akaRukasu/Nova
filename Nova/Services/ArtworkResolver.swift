@@ -24,7 +24,8 @@ actor ArtworkResolver {
     private let fileURL = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Nova", isDirectory: true)
-        .appendingPathComponent("artworks.json")
+        // Nouveau nom à chaque amélioration de la recherche : les titres restés sans pochette sont recherchés à nouveau.
+        .appendingPathComponent("artworks-v2.json")
 
     init() {
         if let data = try? Data(contentsOf: fileURL),
@@ -133,20 +134,32 @@ extension InnerTubeClient {
 
         // Dernier essai : le même titre, du même artiste, parmi les titres de la recherche.
         guard let artist = info.artist, !artist.isEmpty else { return nil }
-        let title = Self.songTitle(Parser.text(item["title"]), artist: artist)
-        guard !title.isEmpty,
-              let shelves = try? await search("\(title) \(artist)", scope: .songs) else { return nil }
-        let wantedTitle = Self.artworkKey(title), wantedArtist = Self.artworkKey(artist)
+        // Chaîne « Caballero & JeanJass » : chacun des noms compte.
+        let names = Self.artistNames(artist)
+        let title = Self.songTitle(Parser.text(item["title"]), names: names)
+        guard !title.isEmpty, let mainName = names.first,
+              let shelves = try? await search("\(title) \(mainName)", scope: .songs) else { return nil }
+        let wantedTitle = Self.artworkKey(title)
         let match = shelves.flatMap(\.tracks).first { candidate in
-            candidate.hasSquareArtwork
+            let candidateArtist = Self.artworkKey(candidate.artist)
+            return candidate.hasSquareArtwork
                 && Self.artworkKey(candidate.title) == wantedTitle
-                && Self.artworkKey(candidate.artist).contains(wantedArtist)
+                && names.contains { candidateArtist.contains(Self.artworkKey($0)) }
         }
         return match?.artworkURL
     }
 
+    /// « Caballero & JeanJass », « A, B et C », « A x B » → noms séparés.
+    private static func artistNames(_ text: String) -> [String] {
+        text.replacingOccurrences(of: #"(?i)\s*(,|&|\bet\b|\band\b|\bx\b|\bfeat\.?|\bft\.?)\s*"#, with: "|",
+                                  options: .regularExpression)
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !artworkKey($0).isEmpty }
+    }
+
     /// Titre d'un clip ramené au titre du morceau : « Artiste - Titre (Official Video) feat. X » → « Titre ».
-    private static func songTitle(_ raw: String, artist: String) -> String {
+    private static func songTitle(_ raw: String, names: [String]) -> String {
         var title = raw.replacingOccurrences(of: #"\s*[\(\[][^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
         title = title.replacingOccurrences(of: #"(?i)\s+(feat\.?|ft\.?|featuring|avec)\s+.*$"#, with: "",
                                            options: .regularExpression)
@@ -154,9 +167,13 @@ extension InnerTubeClient {
             let parts = title.components(separatedBy: separator)
             guard parts.count >= 2 else { continue }
             // L'artiste est d'un côté du tiret, le titre de l'autre.
-            if artworkKey(parts[0]).contains(artworkKey(artist)) || artworkKey(artist).contains(artworkKey(parts[0])) {
+            func isArtist(_ part: String) -> Bool {
+                let key = artworkKey(part)
+                return !key.isEmpty && names.contains { key.contains(artworkKey($0)) || artworkKey($0).contains(key) }
+            }
+            if isArtist(parts[0]) {
                 title = parts.dropFirst().joined(separator: separator)
-            } else if artworkKey(parts.last!).contains(artworkKey(artist)) {
+            } else if isArtist(parts.last!) {
                 title = parts.dropLast().joined(separator: separator)
             }
             break
