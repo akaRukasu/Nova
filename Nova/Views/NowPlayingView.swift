@@ -81,8 +81,10 @@ struct NowPlayingView: View {
         if let track = player.current, !player.currentIsVideoOnly {
             RemoteImage(urls: track.artworkURLs(pixels: 1200))
                 .aspectRatio(1, contentMode: .fit)
+                // Arrondi sur la pochette elle-même : posé après le cadre, plus large qu'elle,
+                // il tombait à côté et les coins restaient carrés.
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .frame(maxWidth: 340)
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         } else {
             RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
                 .aspectRatio(16 / 9, contentMode: .fit)
