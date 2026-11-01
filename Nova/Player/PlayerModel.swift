@@ -67,6 +67,7 @@ final class PlayerModel {
         // l'adresse du flux à l'enceinte ou à l'Apple TV, qui ne peut pas l'ouvrir (adresse liée
         // à l'iPhone, ou fichier local du cache) : « cannot play ».
         player.allowsExternalPlayback = false
+        loadDurations()
         restoreSession()
 
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
@@ -299,6 +300,7 @@ final class PlayerModel {
         endHandled = false
         artwork = nil
         updateNowPlaying()
+        if expectedDuration == nil { fetchDuration(for: track) }
         saveSession(force: true)
 
         loadTask = Task { [weak self] in
@@ -336,8 +338,9 @@ final class PlayerModel {
         // Le flux de YouTube indique la durée exacte dans son adresse (« dur=… »).
         if let dur = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(TimeInterval.init), dur > 0 {
-            knownDurations[track.id] = dur
-            if track.duration == nil {
+            // Secours seulement : la durée de YouTube Music (métadonnées ou radio) reste prioritaire.
+            if expectedDuration == nil {
+                rememberDuration(dur, for: track.id)
                 expectedDuration = dur
                 duration = dur
             }
@@ -569,5 +572,45 @@ final class PlayerModel {
         unshuffledQueue = session.unshuffledQueue
         isShuffled = session.unshuffledQueue != nil
         updateNowPlaying()
+    }
+
+    // MARK: Durées réelles
+
+    @ObservationIgnored private let durationsURL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Nova", isDirectory: true)
+        .appendingPathComponent("durations.json")
+
+    private func loadDurations() {
+        guard let data = try? Data(contentsOf: durationsURL),
+              let saved = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else { return }
+        knownDurations = saved
+    }
+
+    private func rememberDuration(_ duration: TimeInterval, for id: String) {
+        guard duration > 0, knownDurations[id] != duration else { return }
+        knownDurations[id] = duration
+        // On complète aussi la file d'attente (affichage des durées dans les listes).
+        for position in queue.indices where queue[position].id == id && queue[position].duration == nil {
+            queue[position].duration = duration
+        }
+        try? FileManager.default.createDirectory(at: durationsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(knownDurations).write(to: durationsURL, options: .atomic)
+    }
+
+    /// Titre sans durée connue (import, accueil…) : YouTube Music la donne dans la radio du titre,
+    /// dont le premier élément est le titre lui-même. AVPlayer, lui, annonce souvent le double.
+    private func fetchDuration(for track: Track) {
+        Task { [weak self] in
+            guard let self, let radio = try? await self.client.radio(for: track.id) else { return }
+            for item in radio {
+                if let value = item.duration { self.rememberDuration(value, for: item.id) }
+            }
+            guard let value = radio.first(where: { $0.id == track.id })?.duration,
+                  self.current?.id == track.id else { return }
+            self.expectedDuration = value
+            self.duration = value
+            self.updateNowPlaying()
+        }
     }
 }
