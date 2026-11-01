@@ -1,0 +1,59 @@
+name: Build NovaCord (Windows)
+
+on:
+  push:
+    branches: [novacord]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: novacord-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the installer
+        shell: bash
+        run: npx --yes @tauri-apps/cli@2 build --ci
+
+      - name: Collect the installer
+        shell: bash
+        run: |
+          SETUP=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
+          cp "$SETUP" NovaCord-Setup.exe
+          cp src-tauri/target/release/novacord.exe NovaCord-portable.exe
+          ls -l NovaCord-*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaCord-windows
+          path: NovaCord-*.exe
+
+      - name: Publish the "novacord-latest" release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete novacord-latest --yes --cleanup-tag || true
+          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe \
+            --target "${{ github.sha }}" \
+            --title "NovaCord — build ${{ github.run_number }}" \
+            --notes "Commit ${{ github.sha }}. Installe NovaCord-Setup.exe, ou lance directement NovaCord-portable.exe." \
+            --prerelease

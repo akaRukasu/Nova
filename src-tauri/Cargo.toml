@@ -1,0 +1,24 @@
+[package]
+name = "novacord"
+version = "0.1.0"
+description = "Client Discord léger pour Windows"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = ["wry", "tray-icon", "image-png", "common-controls-v6", "compression"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
