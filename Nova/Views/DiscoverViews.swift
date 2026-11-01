@@ -118,7 +118,7 @@ struct DiscoverView: View {
             HStack(spacing: 14) {
                 RemoteImage(urls: seed.squareArtworkURLs)
                     .frame(width: 84, height: 84)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Ton mix découverte")
                         .font(.headline)
@@ -299,7 +299,7 @@ struct ReleasesView: View {
         HStack(spacing: 12) {
             RemoteImage(urls: release.coverURL.map { [$0] } ?? [])
                 .frame(width: 60, height: 60)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if let date = release.releaseDate, date > previousSeen {

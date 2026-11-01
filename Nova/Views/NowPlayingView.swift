@@ -23,7 +23,7 @@ struct NowPlayingView: View {
                 HStack(spacing: 12) {
                     RemoteImage(urls: player.current?.squareArtworkURLs ?? [])
                         .frame(width: 56, height: 56)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     titleBlock
                 }
                 .padding(.top, 18)
@@ -82,11 +82,11 @@ struct NowPlayingView: View {
             RemoteImage(urls: track.artworkURLs(pixels: 1200))
                 .aspectRatio(1, contentMode: .fit)
                 .frame(maxWidth: 340)
-                .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         } else {
             RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
                 .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 

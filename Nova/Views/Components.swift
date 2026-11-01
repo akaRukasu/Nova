@@ -24,8 +24,7 @@ struct ArtworkThumb: View {
     var body: some View {
         RemoteImage(urls: urls)
             .frame(width: size, height: size)
-            .clipShape(circle ? AnyShape(Circle())
-                       : AnyShape(RoundedRectangle(cornerRadius: max(corner, size * 0.15), style: .continuous)))
+            .clipShape(circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: corner, style: .continuous)))
     }
 }
 

@@ -92,7 +92,7 @@ struct MixCard: View {
             }
             .padding(14)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: kind.colors[1].opacity(0.3), radius: 8, y: 4)
     }
 }
