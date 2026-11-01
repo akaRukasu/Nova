@@ -9,6 +9,7 @@ struct NowPlayingView: View {
     @State private var scrubPosition: Double?
     @State private var showQueue = false
     @State private var showLyrics = false
+    @State private var palette: [Color] = [Color(white: 0.18), Color(white: 0.05)]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,7 +79,7 @@ struct NowPlayingView: View {
     /// Pochette carrée pour un titre, miniature 16:9 pour un clip.
     @ViewBuilder private var artwork: some View {
         if let track = player.current, track.hasSquareArtwork {
-            RemoteImage(urls: track.squareArtworkURLs)
+            RemoteImage(urls: track.artworkURLs(pixels: 1200))
                 .aspectRatio(1, contentMode: .fit)
                 .frame(maxWidth: 340)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -89,16 +90,26 @@ struct NowPlayingView: View {
         }
     }
 
+    /// Fond aux couleurs de la pochette, comme Apple Music : dégradé des teintes dominantes
+    /// et pochette très floutée par-dessus.
     private var background: some View {
         ZStack {
             Color.black
-            RemoteImage(urls: player.current?.squareArtworkURLs ?? [])
-                .scaleEffect(1.6)
-                .blur(radius: 70)
-                .opacity(0.85)
-            LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.65)], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: palette, startPoint: .top, endPoint: .bottom)
+                .animation(.easeInOut(duration: 0.6), value: palette)
+            RemoteImage(urls: player.current?.artworkURLs(pixels: 300) ?? [])
+                .scaleEffect(1.8)
+                .blur(radius: 80)
+                .opacity(0.45)
+            LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.55)], startPoint: .top, endPoint: .bottom)
         }
         .ignoresSafeArea()
+        .task(id: player.current?.id) {
+            guard let track = player.current,
+                  let image = await ImageLoader.load(track.artworkURLs(pixels: 300)) else { return }
+            let colors = await ArtworkPalette.colors(of: image)
+            if !colors.isEmpty { palette = colors }
+        }
     }
 
     private var titleBlock: some View {

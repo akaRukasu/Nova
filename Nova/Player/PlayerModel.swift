@@ -523,7 +523,9 @@ final class PlayerModel {
 
     private func loadArtwork(for track: Track) {
         Task { [weak self] in
-            guard let image = await ImageLoader.load(track.videoThumbnailURLs) else { return }
+            // Pochette carrée en haute définition (écran verrouillé, CarPlay), miniature vidéo sinon.
+            let urls = track.hasSquareArtwork ? track.artworkURLs(pixels: 1000) : track.videoThumbnailURLs
+            guard let image = await ImageLoader.load(urls) else { return }
             guard let self, self.current?.id == track.id else { return }
             self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             self.updateNowPlaying()

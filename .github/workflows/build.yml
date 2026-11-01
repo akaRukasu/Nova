@@ -60,6 +60,17 @@ jobs:
           zip -qry Nova.ipa Payload
           ls -lh Nova.ipa
 
+      - name: Package the CarPlay IPA
+        run: |
+          # Même app, signée localement avec l'autorisation CarPlay audio (Nova/Nova.entitlements).
+          # Elle ne sert qu'avec un certificat dont le profil contient cette autorisation (accordée par Apple).
+          rm -rf CarPlay && mkdir -p CarPlay/Payload
+          cp -R build/Build/Products/Release-iphoneos/Nova.app CarPlay/Payload/
+          codesign --force --sign - --entitlements Nova/Nova.entitlements --timestamp=none CarPlay/Payload/Nova.app
+          codesign -d --entitlements - CarPlay/Payload/Nova.app
+          (cd CarPlay && zip -qry ../Nova-CarPlay.ipa Payload)
+          ls -lh Nova-CarPlay.ipa
+
       - name: Upload the build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -87,8 +98,8 @@ jobs:
             TAG="preview-$BRANCH"
           fi
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" Nova.ipa \
+          gh release create "$TAG" Nova.ipa Nova-CarPlay.ipa \
             --target "$GITHUB_SHA" \
             --title "Nova — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
-            --notes "Commit $GITHUB_SHA. IPA non signée : installe-la avec Sideloadly ou SideStore." \
+            --notes "Commit $GITHUB_SHA. Nova.ipa : à installer avec Sideloadly ou SideStore. Nova-CarPlay.ipa : même app avec l'autorisation CarPlay audio, utile seulement avec un certificat qui l'inclut." \
             --prerelease

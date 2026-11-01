@@ -35,6 +35,11 @@ struct Track: Identifiable, Codable, Hashable {
         return urls
     }
 
+    /// Pochette carrée à la taille voulue (en pixels), miniature vidéo en secours.
+    func artworkURLs(pixels: Int) -> [URL] {
+        squareArtworkURLs.map { $0.resizedArtwork(pixels: pixels) }
+    }
+
     /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées).
     var squareArtworkURLs: [URL] {
         var urls: [URL] = []
@@ -87,5 +92,24 @@ enum NovaError: LocalizedError {
         case .badResponse(let code): return "YouTube Music a répondu avec l'erreur \(code)."
         case .emptyPage: return "Cette page est vide ou indisponible."
         }
+    }
+}
+
+extension URL {
+    /// Les pochettes Google (« =w544-h544… ») se redimensionnent dans l'adresse :
+    /// on demande la taille affichée, ni floue ni trop lourde.
+    func resizedArtwork(pixels: Int) -> URL {
+        guard let host, host.contains("googleusercontent") || host.contains("ggpht") else { return self }
+        let size = Swift.max(60, Swift.min(pixels, 1600))
+        let text = absoluteString
+        let resized: String
+        if text.range(of: #"=w\d+-h\d+"#, options: .regularExpression) != nil {
+            resized = text.replacingOccurrences(of: #"=w\d+-h\d+"#, with: "=w\(size)-h\(size)", options: .regularExpression)
+        } else if text.range(of: #"=s\d+"#, options: .regularExpression) != nil {
+            resized = text.replacingOccurrences(of: #"=s\d+"#, with: "=s\(size)", options: .regularExpression)
+        } else {
+            return self
+        }
+        return URL(string: resized) ?? self
     }
 }

@@ -9,13 +9,13 @@ struct ArtworkThumb: View {
     var circle = false
 
     init(track: Track?, size: CGFloat = 52, corner: CGFloat = 8) {
-        self.urls = track?.squareArtworkURLs ?? []
+        self.urls = track?.artworkURLs(pixels: Int(size * 3)) ?? []
         self.size = size
         self.corner = corner
     }
 
     init(urls: [URL], size: CGFloat = 52, corner: CGFloat = 8, circle: Bool = false) {
-        self.urls = urls
+        self.urls = urls.map { $0.resizedArtwork(pixels: Int(size * 3)) }
         self.size = size
         self.corner = corner
         self.circle = circle
