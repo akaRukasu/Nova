@@ -33,6 +33,23 @@ struct CollectionView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
+            if let errorText, content == nil {
+                Section {
+                    VStack(spacing: 10) {
+                        Label("Chargement impossible", systemImage: "wifi.exclamationmark")
+                            .font(.headline)
+                        Text(errorText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Réessayer") { Task { await load() } }
+                            .buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .listRowSeparator(.hidden)
+                }
+            }
             if content != nil {
                 Section {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { position, track in
@@ -65,18 +82,8 @@ struct CollectionView: View {
         }
         .listStyle(.plain)
         .overlay {
-            if content == nil {
-                if let errorText {
-                    ContentUnavailableView {
-                        Label("Chargement impossible", systemImage: "wifi.exclamationmark")
-                    } description: {
-                        Text(errorText)
-                    } actions: {
-                        Button("Réessayer") { Task { await load() } }
-                    }
-                } else {
-                    ProgressView()
-                }
+            if content == nil && errorText == nil {
+                ProgressView()
             }
         }
         .navigationTitle(header.title)

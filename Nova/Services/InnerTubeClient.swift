@@ -266,7 +266,27 @@ struct InnerTubeClient {
         return last
     }
 
+    /// Requête avec nouvelles tentatives : YouTube répond parfois 403 ou 429 de façon passagère
+    /// (cookies du compte refusés, identifiant de visiteur périmé, trop de requêtes).
     private func post(_ endpoint: String, body: [String: Any], query: [URLQueryItem] = []) async throws -> JSONObject {
+        do {
+            return try await send(endpoint, body: body, query: query, authenticated: true)
+        } catch NovaError.badResponse(let status) where status == 403 || status == 401 {
+            if AuthSession.shared.cookieHeader != nil {
+                // Sans les cookies du compte : le contenu public reste accessible.
+                if let json = try? await send(endpoint, body: body, query: query, authenticated: false) { return json }
+            }
+            VisitorStore.shared.value = nil
+            try await Task.sleep(for: .milliseconds(400))
+            return try await send(endpoint, body: body, query: query, authenticated: false)
+        } catch NovaError.badResponse(429) {
+            try await Task.sleep(for: .seconds(1))
+            return try await send(endpoint, body: body, query: query, authenticated: true)
+        }
+    }
+
+    private func send(_ endpoint: String, body: [String: Any], query: [URLQueryItem],
+                      authenticated: Bool) async throws -> JSONObject {
         var components = URLComponents(url: Self.base.appendingPathComponent(endpoint), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "prettyPrint", value: "false")] + query
         var request = URLRequest(url: components.url!)
@@ -283,7 +303,7 @@ struct InnerTubeClient {
         let visitor = VisitorStore.shared.value
         if let visitor { request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id") }
 
-        if let cookies = AuthSession.shared.cookieHeader {
+        if authenticated, let cookies = AuthSession.shared.cookieHeader {
             request.setValue(cookies, forHTTPHeaderField: "Cookie")
             request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
             request.setValue(Self.origin, forHTTPHeaderField: "X-Origin")

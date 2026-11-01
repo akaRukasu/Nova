@@ -210,10 +210,49 @@ struct CategoryTile: View {
                      blue: Double(value & 0xFF) / 255)
     }
 
+    /// Icône évocatrice, d'après le nom de la catégorie.
+    private var icon: String {
+        let name = category.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased()
+        let table: [(String, String)] = [
+            ("energie", "bolt.fill"), ("entrain", "figure.run"), ("sport", "figure.run"), ("workout", "figure.run"),
+            ("humeur", "sun.max.fill"), ("bonheur", "sun.max.fill"), ("feel", "sun.max.fill"),
+            ("concentration", "brain.head.profile"), ("focus", "brain.head.profile"), ("etude", "book.fill"),
+            ("calme", "leaf.fill"), ("detente", "leaf.fill"), ("chill", "leaf.fill"), ("relax", "leaf.fill"),
+            ("sommeil", "moon.zzz.fill"), ("dormir", "moon.zzz.fill"), ("sleep", "moon.zzz.fill"),
+            ("soiree", "party.popper.fill"), ("fete", "party.popper.fill"), ("party", "party.popper.fill"),
+            ("romance", "heart.fill"), ("amour", "heart.fill"), ("love", "heart.fill"),
+            ("triste", "cloud.rain.fill"), ("melancol", "cloud.rain.fill"), ("automne", "leaf.fill"),
+            ("ete", "sun.horizon.fill"), ("hiver", "snowflake"), ("noel", "gift.fill"), ("halloween", "moon.stars.fill"),
+            ("voyage", "car.fill"), ("route", "car.fill"), ("trajet", "tram.fill"), ("cuisine", "fork.knife"),
+            ("annees", "clock.arrow.circlepath"), ("decennie", "clock.arrow.circlepath"), ("70", "clock.arrow.circlepath"),
+            ("reggae", "sun.dust.fill"), ("caraibe", "sun.dust.fill"), ("afro", "globe.europe.africa.fill"),
+            ("latin", "sun.max.fill"), ("arabe", "globe.asia.australia.fill"), ("asie", "globe.asia.australia.fill"),
+            ("hip-hop", "mic.fill"), ("hip hop", "mic.fill"), ("rap", "mic.fill"),
+            ("rock", "guitars.fill"), ("metal", "flame.fill"), ("punk", "flame.fill"),
+            ("pop", "sparkles"), ("dance", "figure.dance"), ("electro", "waveform"), ("house", "waveform"),
+            ("jazz", "music.quarternote.3"), ("blues", "music.quarternote.3"), ("soul", "music.quarternote.3"),
+            ("r&b", "music.mic"), ("classique", "music.note.house.fill"), ("classical", "music.note.house.fill"),
+            ("country", "hat.widebrim.fill"), ("folk", "guitars"), ("indie", "headphones"), ("independ", "headphones"),
+            ("bande", "film.fill"), ("film", "film.fill"), ("enfant", "teddybear.fill"), ("famille", "figure.2.and.child.holdinghands"),
+            ("gospel", "music.note.list"), ("k-pop", "star.fill"), ("chart", "chart.bar.fill"), ("classement", "chart.bar.fill"),
+            ("nouveaut", "sparkles.rectangle.stack.fill"), ("humeurs", "face.smiling"),
+        ]
+        return table.first { name.contains($0.0) }?.1 ?? "music.note"
+    }
+
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(color.gradient)
+            // Grande icône en filigrane, inclinée dans le coin.
+            Image(systemName: icon)
+                .font(.system(size: 54, weight: .bold))
+                .foregroundStyle(.white.opacity(0.35))
+                .rotationEffect(.degrees(-12))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 8)
+                .padding(.trailing, 6)
+                .clipped()
             Text(category.title)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(.white)
@@ -221,6 +260,7 @@ struct CategoryTile: View {
                 .lineLimit(2)
                 .padding(12)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
     }

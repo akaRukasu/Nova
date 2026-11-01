@@ -191,7 +191,7 @@ enum ConcertsService {
 
     /// Concerts à venir d'un artiste, et/ou autour d'une position.
     static func search(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
-                       countryCode: String?) async throws -> [Concert] {
+                       countryCode: String?, city: String? = nil) async throws -> [Concert] {
         var query = [
             URLQueryItem(name: "classificationName", value: "music"),
             URLQueryItem(name: "sort", value: "date,asc"),
@@ -211,6 +211,9 @@ enum ConcertsService {
             query.append(URLQueryItem(name: "geoPoint", value: geohash(latitude: latitude, longitude: longitude)))
             query.append(URLQueryItem(name: "radius", value: "\(radiusKm)"))
             query.append(URLQueryItem(name: "unit", value: "km"))
+        } else if let city, !city.isEmpty {
+            // Ville sans coordonnées : Ticketmaster sait chercher par nom de ville.
+            query.append(URLQueryItem(name: "city", value: city))
         } else if let countryCode, artist?.isEmpty ?? true {
             query.append(URLQueryItem(name: "countryCode", value: countryCode))
         }

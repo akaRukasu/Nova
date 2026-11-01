@@ -280,4 +280,25 @@ await step("Geohash (concerts autour d'un lieu)") {
     print("  Paris → \(ConcertsService.geohash(latitude: 48.8566, longitude: 2.3522)) (attendu : u09tvw0f…)")
 }
 
+if let key = ProcessInfo.processInfo.environment["TICKETMASTER_KEY"], !key.isEmpty {
+    UserDefaults.standard.set(key, forKey: "ticketmasterKey")
+    for (label, artist, lat, lon, city) in [
+        ("Los Angeles, tous concerts", "", 34.0522, -118.2437, ""),
+        ("Paris, tous concerts", "", 48.8566, 2.3522, ""),
+        ("Coldplay, partout", "Coldplay", 0, 0, ""),
+        ("Linkin Park, partout", "Linkin Park", 0, 0, ""),
+        ("Ville « Paris » sans coordonnées", "", 0, 0, "Paris"),
+    ] as [(String, String, Double, Double, String)] {
+        await step("Concerts : \(label)") {
+            let concerts = try await ConcertsService.search(
+                artist: artist, latitude: lat == 0 ? nil : lat, longitude: lon == 0 ? nil : lon,
+                radiusKm: 100, countryCode: nil, city: city)
+            print("  \(concerts.count) concert(s)")
+            concerts.prefix(3).forEach { print("      \($0.date) — \($0.name) — \($0.place)") }
+        }
+    }
+} else {
+    print("\n(Concerts non testés : secret TICKETMASTER_KEY absent.)")
+}
+
 print("\nTerminé.")

@@ -1,4 +1,5 @@
 import CoreLocation
+import MapKit
 import SwiftUI
 
 // MARK: - Concerts
@@ -189,7 +190,15 @@ struct ConcertsView: View {
         let name = city.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return nil }
         savedCity = name
-        return try? await CLGeocoder().geocodeAddressString(name).first?.location
+        if let location = try? await CLGeocoder().geocodeAddressString(name).first?.location {
+            return location
+        }
+        // Secours : recherche de lieu d'Apple Plans.
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = name
+        request.resultTypes = .address
+        guard let item = try? await MKLocalSearch(request: request).start().mapItems.first else { return nil }
+        return item.location
     }
 
     private func search() async {
@@ -201,8 +210,14 @@ struct ConcertsView: View {
             concerts = try await ConcertsService.search(
                 artist: artist.trimmingCharacters(in: .whitespaces),
                 latitude: origin?.coordinate.latitude, longitude: origin?.coordinate.longitude,
-                radiusKm: radius, countryCode: PlaybackSettings.region)
-            if concerts.isEmpty { errorText = "Aucun concert trouvé pour cette recherche." }
+                radiusKm: radius, countryCode: PlaybackSettings.region,
+                city: useMyLocation ? nil : city.trimmingCharacters(in: .whitespaces))
+            if concerts.isEmpty {
+                let place = useMyLocation ? "autour de toi" : (city.isEmpty ? "" : "à \(city)")
+                errorText = origin == nil && !useMyLocation && !city.isEmpty
+                    ? "Lieu « \(city) » introuvable. Vérifie l'orthographe ou active « Autour de moi »."
+                    : "Ticketmaster n'annonce aucun concert \(place) pour cette recherche. Essaie un rayon plus grand."
+            }
         } catch {
             errorText = error.localizedDescription
         }
@@ -219,7 +234,8 @@ struct ConcertsView: View {
             do {
                 let found = try await ConcertsService.search(
                     artist: name, latitude: origin?.coordinate.latitude, longitude: origin?.coordinate.longitude,
-                    radiusKm: radius, countryCode: nil)
+                    radiusKm: radius, countryCode: nil,
+                    city: useMyLocation ? nil : city.trimmingCharacters(in: .whitespaces))
                 // Résultats affichés au fur et à mesure.
                 concerts = (concerts + found.filter { seen.insert($0.id).inserted }).sorted { $0.date < $1.date }
             } catch let error as ConcertsError {

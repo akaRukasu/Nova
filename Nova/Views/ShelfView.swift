@@ -9,6 +9,8 @@ struct ShelfView: View {
     var listLimit = 6
     /// Bouton « + » sur les lignes (résultats de recherche).
     var showsAddButton = false
+    /// Numéros de classement devant les lignes.
+    var ranked = false
     /// Lecture d'un titre ; par défaut, lit l'étagère à partir de ce titre.
     var onPlay: ((Track, [Track]) -> Void)?
 
@@ -33,15 +35,24 @@ struct ShelfView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(shelf.more == nil)
+                // Pas de .disabled : le titre resterait grisé.
+                .allowsHitTesting(shelf.more != nil)
                 .padding(.horizontal, 16)
             }
 
             switch shelf.layout {
             case .list:
                 VStack(spacing: 6) {
-                    ForEach(shelf.items.prefix(listLimit)) { item in
-                        ItemRow(item: item, showsAddButton: showsAddButton, onPlay: play)
+                    ForEach(Array(shelf.items.prefix(listLimit).enumerated()), id: \.element.id) { position, item in
+                        HStack(spacing: 10) {
+                            if ranked {
+                                Text("\(position + 1)")
+                                    .font(.headline.monospacedDigit())
+                                    .foregroundStyle(position < 3 ? Color.novaAccent : .secondary)
+                                    .frame(width: 30)
+                            }
+                            ItemRow(item: item, showsAddButton: showsAddButton, onPlay: play)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -137,7 +148,9 @@ struct BrowseView: View {
                         if shelf.layout == .cards && (page.shelves.count == 1 || (shelf.isCategories && shelf.items.count <= 8)) {
                             CardGrid(shelf: shelf, showTitle: page.shelves.count > 1)
                         } else {
-                            ShelfView(shelf: shelf, listLimit: .max)
+                            // Classements et grilles : liste verticale numérotée, plus lisible qu'un carrousel coupé.
+                            ShelfView(shelf: { var copy = shelf; if copy.layout == .grid { copy.layout = .list }; return copy }(),
+                                      listLimit: .max, ranked: shelf.layout == .grid)
                         }
                     }
                 }
