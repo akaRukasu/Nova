@@ -76,9 +76,9 @@ struct NowPlayingView: View {
         .presentationDragIndicator(.hidden)
     }
 
-    /// Pochette carrée pour un titre, miniature 16:9 pour un clip.
+    /// Pochette carrée en HD (retrouvée sur YouTube Music si besoin), miniature 16:9 pour un clip seul.
     @ViewBuilder private var artwork: some View {
-        if let track = player.current, track.hasSquareArtwork {
+        if let track = player.current, !player.currentIsVideoOnly {
             RemoteImage(urls: track.artworkURLs(pixels: 1200))
                 .aspectRatio(1, contentMode: .fit)
                 .frame(maxWidth: 340)

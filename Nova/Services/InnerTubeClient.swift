@@ -268,7 +268,7 @@ struct InnerTubeClient {
 
     /// Requête avec nouvelles tentatives : YouTube répond parfois 403 ou 429 de façon passagère
     /// (cookies du compte refusés, identifiant de visiteur périmé, trop de requêtes).
-    private func post(_ endpoint: String, body: [String: Any], query: [URLQueryItem] = []) async throws -> JSONObject {
+    func post(_ endpoint: String, body: [String: Any], query: [URLQueryItem] = []) async throws -> JSONObject {
         do {
             return try await send(endpoint, body: body, query: query, authenticated: true)
         } catch NovaError.badResponse(let status) where status == 403 || status == 401 {

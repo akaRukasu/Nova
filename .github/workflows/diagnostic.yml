@@ -29,6 +29,7 @@ jobs:
             Nova/Services/ImportSources.swift \
             Nova/Services/PlaybackSettings.swift \
             Nova/Services/DiscoverySources.swift \
+            Nova/Services/ArtworkResolver.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
 

@@ -24,6 +24,8 @@ final class PlayerModel {
     }
     /// Fin du minuteur de veille.
     private(set) var sleepTimerEnd: Date?
+    /// Vrai pour un clip sans pochette carrée sur YouTube Music : le lecteur montre alors la vidéo en 16:9.
+    private(set) var currentIsVideoOnly = false
     var errorMessage: String?
 
     enum RepeatMode: Int, Codable {
@@ -301,6 +303,8 @@ final class PlayerModel {
         artwork = nil
         updateNowPlaying()
         if expectedDuration == nil { fetchDuration(for: track) }
+        currentIsVideoOnly = false
+        if !track.hasSquareArtwork { resolveArtwork(for: track) }
         saveSession(force: true)
 
         loadTask = Task { [weak self] in
@@ -527,8 +531,7 @@ final class PlayerModel {
     private func loadArtwork(for track: Track) {
         Task { [weak self] in
             // Pochette carrée en haute définition (écran verrouillé, CarPlay), miniature vidéo sinon.
-            let urls = track.hasSquareArtwork ? track.artworkURLs(pixels: 1000) : track.videoThumbnailURLs
-            guard let image = await ImageLoader.load(urls) else { return }
+            guard let image = await ImageLoader.load(track.artworkURLs(pixels: 1000)) else { return }
             guard let self, self.current?.id == track.id else { return }
             self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
             self.updateNowPlaying()
@@ -596,6 +599,25 @@ final class PlayerModel {
         }
         try? FileManager.default.createDirectory(at: durationsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(knownDurations).write(to: durationsURL, options: .atomic)
+    }
+
+    /// Titre sans pochette carrée : la vraie pochette HD remplace la miniature vidéo, dans la file
+    /// d'attente comme dans la bibliothèque.
+    private func resolveArtwork(for track: Track) {
+        Task { [weak self] in
+            let found = await ArtworkResolver.shared.artwork(for: track.id)
+            guard let self else { return }
+            guard let found else {
+                if self.current?.id == track.id, await ArtworkResolver.shared.isVideoOnly(track.id) {
+                    self.currentIsVideoOnly = true
+                }
+                return
+            }
+            for position in self.queue.indices where self.queue[position].id == track.id {
+                self.queue[position].artworkURL = found
+            }
+            self.library.updateArtwork(found, for: track.id)
+        }
     }
 
     /// Titre sans durée connue (import, accueil…) : YouTube Music la donne dans la radio du titre,

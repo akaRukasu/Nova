@@ -385,6 +385,24 @@ final class LibraryStore {
         save()
     }
 
+    // MARK: Pochettes
+
+    /// Remplace la miniature vidéo d'un titre par sa vraie pochette, partout dans la bibliothèque.
+    func updateArtwork(_ url: URL, for id: String) {
+        var changed = false
+        func patch(_ tracks: inout [Track]) {
+            for position in tracks.indices where tracks[position].id == id && tracks[position].artworkURL != url {
+                tracks[position].artworkURL = url
+                changed = true
+            }
+        }
+        patch(&recents)
+        patch(&liked)
+        patch(&addedTracks)
+        for position in playlists.indices { patch(&playlists[position].tracks) }
+        if changed { save() }
+    }
+
     // MARK: Disque
 
     private func save() {

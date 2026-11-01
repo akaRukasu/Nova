@@ -40,9 +40,11 @@ struct Track: Identifiable, Codable, Hashable {
         squareArtworkURLs.map { $0.resizedArtwork(pixels: pixels) }
     }
 
-    /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées).
+    /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées). Sans pochette carrée,
+    /// la vraie pochette HD est d'abord cherchée sur YouTube Music (voir `ArtworkResolver`).
     var squareArtworkURLs: [URL] {
         var urls: [URL] = []
+        if !hasSquareArtwork, let placeholder = ArtworkResolver.placeholderURL(for: id) { urls.append(placeholder) }
         if let artworkURL { urls.append(artworkURL) }
         if let url = URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") { urls.append(url) }
         return urls
@@ -99,6 +101,11 @@ extension URL {
     /// Les pochettes Google (« =w544-h544… ») se redimensionnent dans l'adresse :
     /// on demande la taille affichée, ni floue ni trop lourde.
     func resizedArtwork(pixels: Int) -> URL {
+        if scheme == ArtworkResolver.scheme {
+            var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+            components?.queryItems = [URLQueryItem(name: "px", value: String(pixels))]
+            return components?.url ?? self
+        }
         guard let host, host.contains("googleusercontent") || host.contains("ggpht") else { return self }
         let size = Swift.max(60, Swift.min(pixels, 1600))
         let text = absoluteString

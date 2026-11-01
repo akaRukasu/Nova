@@ -27,7 +27,16 @@ enum ImageLoader {
 
     static func load(_ urls: [URL]) async -> UIImage? {
         if let hit = cached(urls) { return hit }
-        for url in urls {
+        for listed in urls {
+            var url = listed
+            // Titre sans pochette carrée : on cherche d'abord la vraie pochette HD.
+            if listed.scheme == ArtworkResolver.scheme {
+                guard let id = listed.pathComponents.last,
+                      let found = await ArtworkResolver.shared.artwork(for: id) else { continue }
+                let pixels = URLComponents(url: listed, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first { $0.name == "px" }?.value.flatMap(Int.init) ?? 544
+                url = found.resizedArtwork(pixels: pixels)
+            }
             guard let (data, response) = try? await session.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
                   let raw = UIImage(data: data),
@@ -37,7 +46,9 @@ enum ImageLoader {
             let source = url.host?.contains("ytimg") == true ? raw.trimmingUniformBorders() : raw
             // Décodage hors du fil principal : le défilement reste fluide.
             let image = await source.byPreparingForDisplay() ?? source
-            cache.setObject(image, forKey: url as NSURL)
+            cache.setObject(image, forKey: listed as NSURL)
+            // Aussi sous l'adresse trouvée : la vue qui l'utilisera ensuite l'affiche aussitôt.
+            if url != listed { cache.setObject(image, forKey: url as NSURL) }
             return image
         }
         return nil
