@@ -6,6 +6,17 @@ Lecteur musical iOS personnel qui lit le catalogue YouTube Music, avec une inter
 
 **Interface inspirée d'Apple Music** : onglets Accueil, Nouveautés, Bibliothèque et Recherche, tuiles de catégories à parcourir, Bibliothèque par Playlists / Artistes / Albums / Titres likés avec « Ajouts récents », paroles et volume dans le lecteur, mini-lecteur au-dessus des onglets.
 
+**Découvrir, Sorties, Concerts**
+- Découvrir : mix découverte, titres, artistes et playlists similaires à partir de tes écoutes
+- Sorties : toutes les nouveautés des genres que tu choisis, des artistes que tu suis et de ceux que tu écoutes le plus (7, 30 ou 90 jours), avec un point rouge sur les nouvelles depuis ta dernière visite
+- Concerts : par artiste, pour tous tes artistes, autour de toi ou d'une ville, avec lien vers la billetterie. Nécessite une clé gratuite Ticketmaster (developer.ticketmaster.com) à coller dans Réglages › Concerts
+
+**Bibliothèque comme Apple Music** : Playlists, Artistes, Albums, Morceaux (tous tes titres, sans doublons, triables), Titres likés, Téléchargés, et **playlists intelligentes** à règles (titre, artiste, album, durée, nombre d'écoutes, dernière écoute, date d'ajout, j'aime, téléchargé ; tous ou au moins un critère ; limite et tri), mises à jour automatiquement.
+
+**Réglages** : qualité audio, lecture automatique, historique, données mobiles (cache, téléchargements), taille du cache, pays et langue du contenu, genres des sorties, clé Ticketmaster.
+
+**AirPlay** : le bouton AirPlay du lecteur envoie le son vers une enceinte, une Apple TV ou un HomePod (c'est l'iPhone qui lit le titre).
+
 **Rapidité** : les pages déjà vues (accueil, albums, playlists, artistes, paroles) s'affichent instantanément depuis le cache puis se mettent à jour ; les pochettes sont gardées sur disque (300 Mo) ; un titre déjà résolu se relance sans nouvelle extraction.
 
 **CarPlay**
