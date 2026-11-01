@@ -198,7 +198,7 @@ struct ConcertsView: View {
         request.naturalLanguageQuery = name
         request.resultTypes = .address
         guard let item = try? await MKLocalSearch(request: request).start().mapItems.first else { return nil }
-        return item.location
+        return item.placemark.location
     }
 
     private func search() async {
