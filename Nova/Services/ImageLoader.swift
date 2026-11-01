@@ -77,24 +77,17 @@ struct RemoteImage: View {
 }
 
 extension UIImage {
-    /// Retire les bandes unies (noires, grises…) autour de l'image, en plusieurs passes :
-    /// les miniatures YouTube ont souvent des bandes noires en haut et en bas, puis grises sur les côtés.
+    /// Retire les bandes unies sombres ou grises autour de l'image : les miniatures YouTube encadrent
+    /// la pochette de bandes noires (haut, bas) puis grises (côtés). Une pochette sans bandes est inchangée.
     func trimmingUniformBorders() -> UIImage {
-        guard let cgImage else { return self }
-        var crop = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
-        for _ in 0..<3 {
-            guard let current = cgImage.cropping(to: crop),
-                  let inner = Self.contentBounds(of: current), inner.size != crop.size else { break }
-            crop = CGRect(x: crop.minX + inner.minX, y: crop.minY + inner.minY, width: inner.width, height: inner.height)
-        }
-        // Rien à rogner, ou rognage absurde (image presque unie) : on garde l'original.
-        guard crop.width >= CGFloat(cgImage.width) * 0.3, crop.height >= CGFloat(cgImage.height) * 0.3,
+        guard let cgImage, let crop = Self.contentBounds(of: cgImage),
+              crop.width >= CGFloat(cgImage.width) * 0.3, crop.height >= CGFloat(cgImage.height) * 0.3,
               crop.size != CGSize(width: cgImage.width, height: cgImage.height),
-              let cropped = cgImage.cropping(to: crop.integral) else { return self }
+              let cropped = cgImage.cropping(to: crop) else { return self }
         return UIImage(cgImage: cropped, scale: scale, orientation: imageOrientation)
     }
 
-    /// Rectangle utile : on retire les lignes et colonnes de bord quasi identiques à la couleur du coin.
+    /// Rectangle utile. La couleur de référence de chaque bande est prise au milieu du bord concerné.
     private static func contentBounds(of image: CGImage) -> CGRect? {
         let width = image.width, height = image.height
         guard width > 20, height > 20,
@@ -103,42 +96,47 @@ extension UIImage {
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
               let data = context.data else { return nil }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // La mémoire du contexte, comme cropping(to:), compte les lignes depuis le haut.
         let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
 
-        func pixel(_ x: Int, _ y: Int) -> (Int, Int, Int) {
+        typealias RGB = (Int, Int, Int)
+        func pixel(_ x: Int, _ y: Int) -> RGB {
             let index = (y * width + x) * 4
             return (Int(pixels[index]), Int(pixels[index + 1]), Int(pixels[index + 2]))
         }
-        let border = pixel(1, 1)
-        // Seules les bandes sombres ou grises (pas le fond clair ou coloré d'une pochette) sont retirées.
-        let saturation = max(border.0, border.1, border.2) - min(border.0, border.1, border.2)
-        let brightness = (border.0 + border.1 + border.2) / 3
-        guard saturation < 24, brightness < 130 else { return nil }
-        func matches(_ x: Int, _ y: Int) -> Bool {
-            let (r, g, b) = pixel(x, y)
-            return abs(r - border.0) + abs(g - border.1) + abs(b - border.2) < 36
+        /// Seules les bandes sombres ou grises sont retirées, jamais le fond clair ou coloré d'une pochette.
+        func usable(_ c: RGB) -> Bool {
+            max(c.0, c.1, c.2) - min(c.0, c.1, c.2) < 24 && (c.0 + c.1 + c.2) / 3 < 130
         }
-        func rowIsBorder(_ y: Int) -> Bool {
+        func near(_ a: RGB, _ b: RGB) -> Bool {
+            abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) < 36
+        }
+        func rowIsBorder(_ y: Int, _ ref: RGB) -> Bool {
             var count = 0
-            for x in stride(from: 0, to: width, by: 2) where matches(x, y) { count += 1 }
+            for x in stride(from: 0, to: width, by: 2) where near(pixel(x, y), ref) { count += 1 }
             return Double(count) / Double((width + 1) / 2) > 0.96
         }
-        func columnIsBorder(_ x: Int, from top: Int, to bottom: Int) -> Bool {
+        func columnIsBorder(_ x: Int, _ top: Int, _ bottom: Int, _ ref: RGB) -> Bool {
             var count = 0, total = 0
             for y in stride(from: top, to: bottom, by: 2) {
                 total += 1
-                if matches(x, y) { count += 1 }
+                if near(pixel(x, y), ref) { count += 1 }
             }
             return total > 0 && Double(count) / Double(total) > 0.96
         }
 
         var top = 0, bottom = height - 1
-        while top < height / 2, rowIsBorder(top) { top += 1 }
-        while bottom > height / 2, rowIsBorder(bottom) { bottom -= 1 }
+        let topRef = pixel(width / 2, 0)
+        if usable(topRef) { while top < height / 2, rowIsBorder(top, topRef) { top += 1 } }
+        let bottomRef = pixel(width / 2, height - 1)
+        if usable(bottomRef) { while bottom > height / 2, rowIsBorder(bottom, bottomRef) { bottom -= 1 } }
+
         var left = 0, right = width - 1
-        while left < width / 2, columnIsBorder(left, from: top, to: bottom) { left += 1 }
-        while right > width / 2, columnIsBorder(right, from: top, to: bottom) { right -= 1 }
-        // La mémoire du contexte et cropping(to:) comptent tous deux les lignes depuis le haut.
+        let leftRef = pixel(0, (top + bottom) / 2)
+        if usable(leftRef) { while left < width / 2, columnIsBorder(left, top, bottom, leftRef) { left += 1 } }
+        let rightRef = pixel(width - 1, (top + bottom) / 2)
+        if usable(rightRef) { while right > width / 2, columnIsBorder(right, top, bottom, rightRef) { right -= 1 } }
+
         let rect = CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
         return rect.width > 10 && rect.height > 10 ? rect : nil
     }
