@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var isLoading = false
     @State private var errorText: String?
     @State private var loadedRevision: Int?
+    @State private var personalShelves: [Shelf] = []
     private let client = InnerTubeClient()
 
     var body: some View {
@@ -22,7 +23,16 @@ struct HomeView: View {
                                            items: library.recents.prefix(20).map(MusicItem.track),
                                            layout: .cards, more: nil))
                 }
-                ForEach(shelves) { shelf in
+                // Tes artistes et tes playlists.
+                ForEach(personalShelves) { shelf in
+                    ShelfView(shelf: shelf)
+                }
+                // Les premières sélections de YouTube Music, puis les propositions d'après tes écoutes.
+                ForEach(shelves.prefix(3)) { shelf in
+                    ShelfView(shelf: shelf)
+                }
+                DiscoverView(embedded: true)
+                ForEach(shelves.dropFirst(3)) { shelf in
                     ShelfView(shelf: shelf)
                 }
                 if continuation != nil {
@@ -55,6 +65,9 @@ struct HomeView: View {
         .refreshable { await reload(force: true) }
         .task(id: account.revision) {
             if loadedRevision != account.revision { await reload() }
+        }
+        .task(id: library.songs.count &+ library.playlists.count &* 31) {
+            personalShelves = buildPersonalShelves()
         }
     }
 
@@ -139,5 +152,31 @@ struct HomeView: View {
         } catch {
             continuation = nil
         }
+    }
+
+    /// « Tes artistes » (les plus écoutés) et « Tes playlists ».
+    private func buildPersonalShelves() -> [Shelf] {
+        var result: [Shelf] = []
+        let pool = library.recents + library.songs
+        var artistItems: [MusicItem] = []
+        for name in MixBuilder.topArtists(library).prefix(15) {
+            guard let track = pool.first(where: { MixBuilder.mainArtist($0) == name && $0.artistID != nil }),
+                  let id = track.artistID else { continue }
+            artistItems.append(.collection(MusicCollection(id: id, kind: .artist, title: name,
+                                                           subtitle: "Artiste", artworkURL: track.artworkURL)))
+        }
+        if artistItems.count >= 3 {
+            result.append(Shelf(id: "my-artists", title: "Tes artistes", items: artistItems, layout: .cards))
+        }
+        let playlists = library.playlists.prefix(15).map { playlist in
+            MusicItem.collection(MusicCollection(id: "local:" + playlist.id.uuidString, kind: .playlist,
+                                                 title: playlist.name,
+                                                 subtitle: "\(playlist.tracks.count) titres",
+                                                 artworkURL: playlist.tracks.first?.artworkURL))
+        }
+        if !playlists.isEmpty {
+            result.append(Shelf(id: "my-playlists", title: "Tes playlists", items: Array(playlists), layout: .cards))
+        }
+        return result
     }
 }

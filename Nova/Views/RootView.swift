@@ -13,11 +13,6 @@ struct RootView: View {
                     HomeView().withRoutes()
                 }
             }
-            Tab("Découvrir", systemImage: "sparkles", value: AppTab.discover) {
-                NavigationStack(path: $router.discoverPath) {
-                    DiscoverView().withRoutes()
-                }
-            }
             Tab("Nouveautés", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
                 NavigationStack(path: $router.explorePath) {
                     BrowseView(title: "Nouveautés", link: BrowseLink(browseID: "FEmusic_explore"),

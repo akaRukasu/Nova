@@ -6,6 +6,8 @@ import SwiftUI
 struct DiscoverView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerModel.self) private var player
+    /// Intégré à l'Accueil : seulement les raccourcis et les propositions, sans défilement propre.
+    var embedded = false
     @State private var sections: [DiscoverSection] = []
     @State private var isLoading = false
     private let client = InnerTubeClient()
@@ -32,9 +34,26 @@ struct DiscoverView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 30) {
-                MixesRow()
+        if embedded {
+            feed
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 30) {
+                    MixesRow()
+                    feed
+                }
+                .padding(.vertical, 12)
+            }
+            .navigationTitle("Découvrir")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { AccountButton() }
+            }
+            .refreshable { await load() }
+        }
+    }
+
+    private var feed: some View {
+        VStack(alignment: .leading, spacing: 30) {
                 shortcuts
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 20) {
@@ -55,15 +74,8 @@ struct DiscoverView: View {
                 if isLoading && sections.isEmpty {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
-            }
-            .padding(.vertical, 12)
-        }
-        .navigationTitle("Découvrir")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { AccountButton() }
         }
         .task(id: seeds.map(\.id)) { await load() }
-        .refreshable { await load() }
     }
 
     private var shortcuts: some View {

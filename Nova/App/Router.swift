@@ -71,7 +71,10 @@ struct RouteView: View {
     var body: some View {
         switch route {
         case .collection(let collection):
-            if collection.kind == .artist {
+            if collection.id.hasPrefix("local:"), let id = UUID(uuidString: String(collection.id.dropFirst(6))) {
+                // Playlist Nova affichée dans une étagère.
+                UserPlaylistView(id: id)
+            } else if collection.kind == .artist {
                 ArtistView(artist: collection)
             } else {
                 CollectionView(collection: collection)
