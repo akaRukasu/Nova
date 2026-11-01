@@ -303,13 +303,13 @@ if let key = ProcessInfo.processInfo.environment["TICKETMASTER_KEY"], !key.isEmp
 
 // MARK: - Pochettes HD des titres sans pochette carrée
 
-for artworkQuery in ["BAILE INoLVIDABLE Bad Bunny", "Daft Punk Get Lucky", "Stromae Alors on danse"] {
+for artworkQuery in ["PARTIE III ÉNERGUMÈNE Caballero", "Caballero OSITO", "BAILE INoLVIDABLE Bad Bunny"] {
     await step("Pochette HD : \(artworkQuery)") {
         for scope in [SearchScope.songs, .videos] {
             let found = try await client.search(artworkQuery, scope: scope).flatMap(\.tracks).prefix(2)
             for track in found {
                 let resolved = try await client.squareArtwork(for: track.id)
-                print("  [\(scope.rawValue)] \(track.id) \(track.title) — fournie : \(track.artworkURL?.host ?? "-")"
+                print("  [\(scope.rawValue)] \(track.id) \(track.title) — fournie : \(track.artworkURL?.absoluteString ?? "-")"
                       + " → trouvée : \(resolved?.absoluteString.prefix(90) ?? "aucune")")
             }
         }
