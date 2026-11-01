@@ -350,4 +350,32 @@ for artworkQuery in ["PARTIE III ÉNERGUMÈNE Caballero", "Caballero OSITO", "Da
     }
 }
 
+// MARK: - Humeurs et genres en détail
+
+await step("Humeurs et genres : depuis Nouveautés") {
+    let explore = try await client.browse(BrowseLink(browseID: "FEmusic_explore"))
+    for shelf in explore.shelves {
+        let categories = shelf.items.filter { if case .category = $0 { return true } else { return false } }
+        print("  étagère « \(shelf.title) » layout=\(shelf.layout) éléments=\(shelf.items.count) catégories=\(categories.count) plus=\(shelf.more.map { "\($0.browseID) \($0.params ?? "-")" } ?? "-")")
+    }
+}
+
+await step("Humeurs et genres : page complète") {
+    let page = try await client.browse(BrowseLink(browseID: "FEmusic_moods_and_genres"))
+    print("  \(page.shelves.count) étagère(s) : " + page.shelves.map { "\($0.title) (\($0.items.count))" }.joined(separator: " | "))
+    let categories = page.shelves.flatMap(\.items).compactMap { item -> BrowseCategory? in
+        if case .category(let c) = item { return c } else { return nil }
+    }
+    for category in categories.prefix(4) + categories.suffix(2) {
+        do {
+            let detail = try await client.browse(category.link)
+            print("  ✓ \(category.title) [\(category.link.browseID) \(category.link.params?.prefix(20) ?? "-")] → "
+                  + detail.shelves.map { "\($0.title) (\($0.items.count), \($0.layout))" }.joined(separator: " | "))
+        } catch {
+            print("  ✗ \(category.title) [\(category.link.browseID)] → \(error)")
+            print("    RENDERERS : " + rendererSummary(lastResponse))
+        }
+    }
+}
+
 print("\nTerminé.")
