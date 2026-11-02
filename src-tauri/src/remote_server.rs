@@ -5,7 +5,7 @@ use std::{collections::HashMap, io::Read, net::{IpAddr, Ipv4Addr, SocketAddr}, s
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use uuid::Uuid;
 
-const PAGE: &str = include_str!("../../soundboard/index.html");
+const PAGE: &str = include_str!("../soundboard/index.html");
 const MAX_UPLOAD: usize = 8 * 1024 * 1024;
 pub type Dispatch = Arc<dyn Fn(Value) -> Result<(), String> + Send + Sync>;
 

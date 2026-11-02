@@ -79,6 +79,14 @@ jobs:
             src-tauri/Cargo.lock
             tests-output/*.png
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NovaCord-diagnostics
+          path: |
+            src-tauri/Cargo.lock
+            tests-output/*.png
+
       - name: Publish the "novacord-latest" release
         if: github.ref == 'refs/heads/novacord'
         shell: bash
