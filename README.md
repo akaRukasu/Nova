@@ -16,6 +16,8 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 La version 0.3.1 corrige l’erreur WebView2 `0x8007139F` à l’ouverture de la soundboard : les deux fenêtres utilisent les mêmes options du moteur. Le workflow ouvre aussi les deux fenêtres natives de l’exécutable Windows avant de distribuer l’installateur.
 
+Deux actions supplémentaires sont disponibles dans les raccourcis personnalisés : **Quitter l’appel** et **Activer / désactiver la caméra**. Choisis tes touches puis enregistre les raccourcis ; ces actions nécessitent un appel en cours et fonctionnent aussi quand NovaCord est en arrière-plan.
+
 Ouvre **Soundboard et télécommande** depuis l’icône de NovaCord près de l’horloge, ou depuis le bouton dans les paramètres NovaCord.
 
 - Grille de sons avec recherche, favoris, catégories, couleurs et raccourcis affichés.

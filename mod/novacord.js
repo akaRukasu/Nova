@@ -38,6 +38,18 @@
       if (action === "panel") return openPanel();
       if (action === "stopSounds") return window.NovaCordAudio.stopAll();
       if (action.startsWith("sound:")) return await window.NovaCordAudio.play(action.slice(6));
+      if (action === "leaveCall" || action === "toggleCamera") {
+        const webpack = window.Vencord?.Webpack;
+        const common = webpack?.Common;
+        if (!common?.SelectedChannelStore?.getVoiceChannelId()) throw new Error("Rejoins un appel avant d’utiliser ce raccourci.");
+        if (action === "leaveCall") {
+          const calls = webpack.findByProps("disconnect", "selectVoiceChannel");
+          if (!calls?.disconnect) throw new Error("La commande pour quitter l’appel n’est pas disponible.");
+          return await calls.disconnect();
+        }
+        if (!common.MediaEngineStore?.isVideoEnabled || !common.FluxDispatcher?.dispatch) throw new Error("La commande caméra n’est pas disponible.");
+        return await common.FluxDispatcher.dispatch({ type: "MEDIA_ENGINE_SET_VIDEO_ENABLED", enabled: !common.MediaEngineStore.isVideoEnabled() });
+      }
       if (!voiceActions[action]?.onTrigger) throw new Error("L'action vocale n'est pas encore prête. Connecte-toi à Discord.");
       voiceActions[action].onTrigger();
     } catch (error) { notifyError(error); }
@@ -779,6 +791,8 @@
       ["panel", "Ouvrir les paramètres NovaCord"],
       ["TOGGLE_MUTE", "Activer / couper le micro"],
       ["TOGGLE_DEAFEN", "Activer / couper le casque"],
+      ["leaveCall", "Quitter l’appel"],
+      ["toggleCamera", "Activer / désactiver la caméra"],
       ["TOGGLE_STREAMER_MODE", "Activer / couper le mode streamer"],
       ["TOGGLE_VOICE_MODE", "Changer le mode de détection vocale"],
       ["stopSounds", "Arrêter les sons"],

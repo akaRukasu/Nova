@@ -26,7 +26,7 @@ fn validate(bindings: &[Binding]) -> Result<Vec<Shortcut>, String> {
     if bindings.len() > 30 { return Err("30 raccourcis maximum.".into()); }
     let mut ids = HashSet::new();
     bindings.iter().map(|b| {
-        if !matches!(b.action.as_str(), "panel" | "TOGGLE_MUTE" | "TOGGLE_DEAFEN" | "TOGGLE_STREAMER_MODE" | "TOGGLE_VOICE_MODE" | "stopSounds")
+        if !matches!(b.action.as_str(), "panel" | "TOGGLE_MUTE" | "TOGGLE_DEAFEN" | "TOGGLE_STREAMER_MODE" | "TOGGLE_VOICE_MODE" | "stopSounds" | "leaveCall" | "toggleCamera")
             && !(b.action.starts_with("sound:") && b.action.len() <= 100) {
             return Err("Action de raccourci inconnue.".into());
         }
@@ -136,5 +136,6 @@ mod tests {
         assert!(validate(&[binding("execute", "F8")]).is_err());
         assert!(validate(&[binding("panel", "nonsense")]).is_err());
         assert!(validate(&[binding("sound:123", "F8")]).is_ok());
+        assert!(validate(&[binding("leaveCall", "F9"), binding("toggleCamera", "F10")]).is_ok());
     }
 }
