@@ -99,22 +99,41 @@ struct ConcertsView: View {
                 }
             }
 
+            // Chargement et message d'erreur dans la liste, sous le formulaire (jamais par-dessus).
+            if isLoading && concerts.isEmpty {
+                Section {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Recherche des concerts…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+            } else if let errorText, concerts.isEmpty {
+                Section {
+                    VStack(spacing: 8) {
+                        Image(systemName: "calendar.badge.exclamationmark")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("Aucun concert trouvé")
+                            .font(.headline)
+                        Text(errorText)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                }
+            }
+
             ForEach(groupedByMonth, id: \.0) { month, items in
                 Section(month) {
                     ForEach(items) { concert in
                         row(concert)
                     }
                 }
-            }
-        }
-        .overlay {
-            if isLoading && concerts.isEmpty {
-                ProgressView("Recherche des concerts…")
-                    .padding(24)
-                    .glassEffect(in: RoundedRectangle(cornerRadius: 20))
-            } else if let errorText, concerts.isEmpty {
-                ContentUnavailableView("Recherche impossible", systemImage: "exclamationmark.triangle",
-                                       description: Text(errorText))
             }
         }
         .navigationTitle("Concerts")
