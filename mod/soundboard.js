@@ -81,12 +81,14 @@
     const destination = ctx.createMediaStreamDestination();
     destination.channelCount = Math.max(1, Math.min(2, input.getSettings?.().channelCount || 1));
     const output = destination.stream.getAudioTracks()[0];
-    output.enabled = input.enabled;
+    const store = window.Vencord?.Webpack.Common.MediaEngineStore;
+    const allowed = input.enabled && !(store?.isSelfMute() || store?.isSelfDeaf());
+    output.enabled = allowed;
     source.connect(destination);
     soundGain.connect(destination);
     try {
       await media.replaceTrack(sender, output);
-      bindings.set(sender, { input, source, destination, output, lastAllowed: input.enabled });
+      bindings.set(sender, { input, source, destination, output, lastAllowed: allowed });
       muteTimer ||= setInterval(synchronizeMute, 15);
       synchronizeMute();
       lastError = "";
@@ -203,6 +205,7 @@
         const binding = bindings.get(sender);
         if (enabled) return wire(sender);
         if (binding) {
+          if (!binding.output.enabled) binding.input.enabled = false;
           if (sender.track === binding.output) await media.replaceTrack(sender, binding.input.readyState === "live" ? binding.input : null);
           release(sender);
         }

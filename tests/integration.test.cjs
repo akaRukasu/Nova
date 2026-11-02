@@ -75,6 +75,7 @@ test("activation after joining wires the actual sender and leaves camera/capture
   await assert.rejects(env.audio.play("discord:1234"), /coupé/);
   await env.audio.setEnabled(false);
   assert.equal(env.sender.track, env.input);
+  assert.equal(env.input.enabled, false, "Désactiver le mixeur ne doit pas réactiver un micro coupé");
   assert.equal(env.input.readyState, "live");
   assert.equal(env.video.readyState, "live");
 });

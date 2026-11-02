@@ -24,7 +24,7 @@ const puppeteer = upstream("puppeteer-core");
         wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
         wav.write("data", 36); wav.writeUInt32LE(frames * 2, 40);
         for (let i = 0; i < frames; i++) wav.writeInt16LE(Math.round(Math.sin(i * 2 * Math.PI * 880 / rate) * 12000), 44 + i * 2);
-        request.respond({ status: 200, contentType: "audio/wav", body: wav });
+        request.respond({ status: 200, contentType: "audio/wav", headers: { "Access-Control-Allow-Origin": "https://discord.com" }, body: wav });
       } else request.abort();
     });
     await page.evaluateOnNewDocument(() => {
