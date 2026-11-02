@@ -13,15 +13,29 @@
   const screenTracks = new WeakSet();
   const screenAudioTracks = new WeakSet();
   const previousStats = new Map();
-  const cameraTracks = new Set();
+  const cameraTracks = new Map();
+  const storage = window.localStorage;
+  const CAMERA_KEY = "novacord:call-camera";
+  let cameraChoice = null;
+  try {
+    const saved = JSON.parse(storage?.getItem(CAMERA_KEY) || "null");
+    if (typeof saved?.id === "string" && saved.id.length <= 512 && saved.id) cameraChoice = { id: saved.id, name: String(saved.name || "Caméra choisie").slice(0,160) };
+  } catch {}
   let streamOptions;
   let capture;
   let cameraError = "";
   let captureError = "";
   let selected = { height: 1080, frameRate: 60 };
-  function rememberCamera(stream) {
-    for (const track of stream.getVideoTracks?.() || []) cameraTracks.add(track);
+  function rememberCamera(stream, role, requestedDevice) {
+    for (const track of stream.getVideoTracks?.() || []) cameraTracks.set(track, { role, requestedDevice });
     return stream;
+  }
+  async function selectCamera(id) {
+    if (!id) { cameraChoice = null; storage?.setItem(CAMERA_KEY, "null"); return; }
+    const device = (await devices.enumerateDevices()).find(device => device.kind === "videoinput" && device.deviceId === id);
+    if (!device) throw new Error("Cette caméra n’est plus disponible. Actualise la liste puis sélectionne-la à nouveau.");
+    cameraChoice = { id, name: device.label || "Caméra choisie" };
+    storage?.setItem(CAMERA_KEY, JSON.stringify(cameraChoice));
   }
 
   function quality() {
@@ -127,15 +141,23 @@
       const result = clone.call(this);
       if (screenTracks.has(this)) screenTracks.add(result);
       if (screenAudioTracks.has(this)) screenAudioTracks.add(result);
+      if (cameraTracks.has(this)) cameraTracks.set(result, cameraTracks.get(this));
       return result;
     };
   }
 
-  if (getUserMedia) devices.getUserMedia = async function (constraints) {
+  async function captureUserMedia(constraints, role = "discord") {
+    const video = constraints?.video;
+    const camera = !!video && !video.mandatory?.chromeMediaSource && !["screen", "window", "browser", "application"].includes(video.mediaSource) && !video.displaySurface;
+    if (camera && role === "discord" && cameraChoice) {
+      constraints = { ...constraints, video: { ...(typeof video === "object" ? video : {}), deviceId: { exact: cameraChoice.id } } };
+    }
+    const device = constraints?.video?.deviceId;
+    const requestedDevice = typeof device === "string" ? device : device?.exact || device?.ideal;
     try {
       const stream = await getUserMedia(constraints);
       if (constraints?.video) cameraError = "";
-      return rememberCamera(stream);
+      return camera ? rememberCamera(stream, role, requestedDevice) : stream;
     } catch (error) {
       const video = constraints?.video;
       if (error.name === "OverconstrainedError" && video && typeof video === "object"
@@ -145,13 +167,14 @@
         try {
           const stream = await getUserMedia({ ...constraints, video: relaxed });
           cameraError = "Résolution automatique : le format caméra demandé n'était pas pris en charge.";
-          return rememberCamera(stream);
+          return camera ? rememberCamera(stream, role, requestedDevice) : stream;
         } catch (retryError) { error = retryError; }
       }
       if (constraints?.video) cameraError = error.name + " : " + error.message;
       throw error;
     }
-  };
+  }
+  if (getUserMedia) devices.getUserMedia = constraints => captureUserMedia(constraints, "discord");
 
   if (getDisplayMedia) devices.getDisplayMedia = async function (options = {}) {
     const value = (constraint, fallback) => Number(typeof constraint === "object" ? constraint?.ideal ?? constraint?.max ?? fallback : constraint || fallback);
@@ -182,6 +205,8 @@
           const previous = previousStats.get(report.id);
           previousStats.set(report.id, report);
           outgoing.push({ kind: report.kind || report.mediaType, screen: isScreen(sender.track),
+            trackName: sender.track.label,
+            cameraRole: cameraTracks.get(sender.track)?.role,
             trackEnabled: sender.track.enabled, trackMuted: sender.track.muted,
             framesEncoded: report.framesEncoded, audioLevel: report.audioLevel,
             codec: stats.get(report.codecId)?.mimeType,
@@ -196,14 +221,16 @@
     const read = method => { try { return store?.[method]?.() ?? null; } catch { return null; } };
     const name = (devices, id) => (devices || {})[id]?.name || Object.values(devices || {}).find(device => device.id === id)?.name || id;
     const cameras = [];
-    for (const track of cameraTracks) {
+    for (const [track, request] of cameraTracks) {
       if (track.readyState !== "live") { cameraTracks.delete(track); continue; }
       const settings = track.getSettings();
-      cameras.push({ name: track.label, enabled: track.enabled, muted: track.muted,
+      cameras.push({ name: track.label, role: request.role,
+        matchesRequestedDevice: typeof request.requestedDevice === "string" && settings.deviceId ? settings.deviceId === request.requestedDevice : null,
+        enabled: track.enabled, muted: track.muted,
         width: settings.width, height: settings.height, frameRate: settings.frameRate });
     }
     return { requested: { ...selected }, capture: capture?.readyState === "live" ? capture.getSettings() : null,
-      cameraError, captureError, outgoing, cameras,
+      cameraError, captureError, outgoing, cameras, cameraChoice: cameraChoice ? { name: cameraChoice.name, forced: true } : null,
       discord: { input: name(read("getInputDevices"), read("getInputDeviceId")),
         output: name(read("getOutputDevices"), read("getOutputDeviceId")),
         camera: name(read("getVideoDevices"), read("getVideoDeviceId")),
@@ -219,6 +246,8 @@
     onSender(callback) { listeners.add(callback); for (const sender of senders.keys()) callback(sender); },
     replaceTrack: (sender, track) => nativeReplace.call(sender, track),
     devices: () => devices.enumerateDevices(),
-    testCamera: (deviceId) => devices.getUserMedia({ audio: false, video: deviceId ? { deviceId: { exact: deviceId } } : true }),
+    cameraChoice: () => cameraChoice ? { ...cameraChoice } : null,
+    selectCamera,
+    testCamera: (deviceId) => captureUserMedia({ audio: false, video: deviceId ? { deviceId: { exact: deviceId } } : true }, "test"),
   });
 })();

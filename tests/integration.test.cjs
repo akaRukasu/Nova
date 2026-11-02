@@ -194,6 +194,12 @@ test("Discord AudioInput receives sound before transmission gating and preserves
   assert.equal(env.sources.length, 2, 'One source for the call, one for the headset');
   assert.equal(env.sources[0].context, owner);
   assert.notEqual(env.sources[1].context, owner, 'Use the preview context for the local output');
+  env.audio.setMonitorVolume(0.2);
+  assert.equal(env.sources[1].target.gain.value, 0.2);
+  assert.equal(env.sources[0].target.gain.value, 0.7);
+  env.audio.setVolume(0.85);
+  assert.equal(env.sources[0].target.gain.value, 0.85);
+  assert.equal(env.sources[1].target.gain.value, 0.2, 'Call volume must not change headset volume');
   env.audio.setMonitor(false);
   assert.equal(env.sources[1].stopped, true);
   assert.equal(env.sources[0].stopped, false, 'Disabling the headset return must keep the call sound playing');

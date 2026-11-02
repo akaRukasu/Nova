@@ -26,19 +26,35 @@ const puppeteer = createRequire(resolve('.vencord/package.json'))('puppeteer-cor
       const context = new AudioContext(); await context.resume();
       const microphone = context.createMediaStreamDestination();
       const silence = context.createConstantSource(); silence.offset.value = 0; silence.connect(microphone); silence.start();
-      const camera = await navigator.mediaDevices.getUserMedia({ video: true });
+      const probe = await window.NovaCordMedia.testCamera('');
+      const chosenCamera = (await navigator.mediaDevices.enumerateDevices()).find(device => device.kind === 'videoinput' && device.deviceId);
+      for (const track of probe.getTracks()) track.stop();
+      await window.NovaCordMedia.selectCamera(chosenCamera.deviceId);
+      const camera = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: 'stale-discord-selection' } } });
       const video = camera.getVideoTracks()[0];
+      const cameraChoiceApplied = video.getSettings().deviceId === chosenCamera.deviceId;
+      if (!cameraChoiceApplied) throw new Error('The requested camera override was ignored');
       const original = new MediaStream([...microphone.stream.getAudioTracks(), video]);
       const input = { context, mute: false };
       const mixed = window.NovaCordAudio.attachInput(input, original);
       const peer = new RTCPeerConnection({ iceServers: [] }), remote = new RTCPeerConnection({ iceServers: [] });
-      const received = new MediaStream(); remote.ontrack = ({ track }) => { if (track.kind === 'audio') received.addTrack(track); };
+      const received = new MediaStream(), receivedVideo = new MediaStream();
+      remote.ontrack = ({ track }) => { (track.kind === 'audio' ? received : receivedVideo).addTrack(track); };
       const sender = peer.addTrack(mixed.getAudioTracks()[0], mixed);
       const cameraSender = peer.addTrack(mixed.getVideoTracks()[0], mixed);
       await peer.setLocalDescription(await peer.createOffer()); await wait(() => peer.iceGatheringState === 'complete');
       await remote.setRemoteDescription(peer.localDescription); await remote.setLocalDescription(await remote.createAnswer()); await wait(() => remote.iceGatheringState === 'complete');
       await peer.setRemoteDescription(remote.localDescription); await wait(() => peer.connectionState === 'connected' && received.getAudioTracks().length);
       const player = document.createElement('audio'); player.srcObject = received; player.volume = .00001; document.body.append(player); await player.play();
+      const image = document.createElement('video'); image.muted = true; image.srcObject = receivedVideo; document.body.append(image); await image.play();
+      await wait(() => image.videoWidth > 0);
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
+      let imagePeak = 0;
+      await wait(() => {
+        const drawing = canvas.getContext('2d'); drawing.drawImage(image,0,0,32,32);
+        const pixels = drawing.getImageData(0,0,32,32).data;
+        imagePeak = Math.max(...Array.from(pixels).filter((_,i) => i % 4 !== 3)); return imagePeak > 16;
+      });
       const analyser = context.createAnalyser(), output = context.createGain(); output.gain.value = .00001;
       context.createMediaStreamSource(received).connect(analyser); analyser.connect(output); output.connect(context.destination);
       const wav = new ArrayBuffer(44 + 48000 * 4), view = new DataView(wav);
@@ -61,12 +77,13 @@ const puppeteer = createRequire(resolve('.vencord/package.json'))('puppeteer-cor
       let muteRejected = false; try { await window.NovaCordAudio.play(id); } catch { muteRejected = true; }
       window.NovaCordAudio.releaseInput(mixed);
       const cameraPreserved = video.readyState === 'live' && mixed.getVideoTracks()[0] === video;
-      peer.close(); remote.close(); player.pause(); player.srcObject = null; video.stop(); await context.close();
-      return { rms, sameAudioTrack, cameraPreserved, muteRejected, localMonitorStarted: withMonitor.activeSources === 2 };
+      peer.close(); remote.close(); player.pause(); player.srcObject = null; image.pause(); image.srcObject = null; video.stop(); await context.close();
+      return { rms, sameAudioTrack, cameraPreserved, muteRejected, imagePeak, cameraChoiceApplied, localMonitorStarted: withMonitor.activeSources === 2 };
     });
     assert.ok(result.rms > .025); assert.equal(result.sameAudioTrack, true);
     assert.equal(result.cameraPreserved, true); assert.equal(result.muteRejected, true);
     assert.equal(result.localMonitorStarted, true);
+    assert.equal(result.cameraChoiceApplied, true); assert.ok(result.imagePeak > 16, 'The received camera image must contain non-black pixels');
     console.log('Discord AudioInput seam → remote WebRTC, camera and mute measured: ' + JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

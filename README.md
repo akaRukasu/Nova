@@ -14,6 +14,14 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
+La version 0.3.5 ajoute aussi **Volume du retour casque**, indépendant du volume envoyé dans l’appel et mémorisé entre les sessions. Ce réglage s’applique au retour automatique et à l’écoute locale ; il est disponible dans les paramètres et la soundboard sur PC.
+
+La version 0.3.5 ajoute **Utiliser cette caméra dans l’appel** : sélectionne une caméra nommée dans le panneau NovaCord, vérifie son image avec **Tester la caméra**, puis applique-la à l’appel. NovaCord enregistre le périphérique et l’impose par son identifiant exact aux prochaines captures vidéo de Discord, en préservant les contraintes du micro. Si la vidéo est déjà activée, seule la caméra est relancée pour appliquer ce choix. Le choix de la liste reste conservé après le test.
+
+Cette préférence prend le dessus sur le choix caméra affiché dans Discord. **Suivre le choix caméra de Discord** la supprime pour la prochaine activation. Un périphérique imposé débranché produit une erreur plutôt qu’une sélection silencieuse d’une autre source. Les tests NovaCord peuvent toujours essayer une autre caméra ; les captures d’écran et les requêtes micro seules ne sont pas retargetées.
+
+Le diagnostic distingue les pistes ouvertes par le **test** de celles ouvertes par **Discord**, suit leurs clones et indique si le périphérique obtenu correspond à celui demandé. Le test WebRTC de la caméra vérifie maintenant les pixels reçus, en plus du nombre d’images encodées.
+
 La version 0.3.4 ajoute **Retour casque**, activé par défaut : les sons lancés dans l’appel sont aussi joués localement, une seule fois, via le même contexte et la même sortie Windows que l’aperçu local. Cette sortie peut différer de celle sélectionnée dans Discord, notamment avec Voicemeeter. Le retour local se désactive depuis la soundboard ou les paramètres NovaCord ; le désactiver n’arrête pas le son destiné à l’appel.
 
 Le panneau NovaCord propose **Activer la caméra dans l’appel**, distinct du test caméra. Cette commande libère l’aperçu, demande à Discord le nouvel état vidéo, vérifie sa confirmation et signale un échec. Le raccourci caméra utilise ce même chemin. Le diagnostic inclut la commande caméra, la dernière tentative de lecture, le nombre de sources démarrées et l’état du retour casque. Un changement de drapeau vidéo confirmé ne prouve pas à lui seul que des images sont transmises : les statistiques vidéo restent disponibles dans le diagnostic.

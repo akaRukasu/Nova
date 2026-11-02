@@ -23,11 +23,12 @@
       }
       const status = audio.status();
       await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled,
-        active: status.active, volume: status.volume, monitor: status.monitor !== false, error: status.error || "", last_playback: status.lastPlayback || "" } });
+        active: status.active, volume: status.volume, monitor: status.monitor !== false, monitor_volume: status.monitorVolume ?? status.volume, error: status.error || "", last_playback: status.lastPlayback || "" } });
     } catch (error) {
       const status = audio.status();
       await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled, active: status.active,
-        volume: status.volume, error: "Chargement des sons : " + String(error.message || error), last_playback: status.lastPlayback || "" } }).catch(() => {});
+        volume: status.volume, monitor: status.monitor !== false, monitor_volume: status.monitorVolume ?? status.volume,
+        error: "Chargement des sons : " + String(error.message || error), last_playback: status.lastPlayback || "" } }).catch(() => {});
       throw error;
     }
   }
@@ -42,6 +43,7 @@
         case "stop": audio.stopAll(); break;
         case "volume": audio.setVolume(command.volume); break;
         case "monitor": audio.setMonitor(command.enabled); break;
+        case "monitor-volume": audio.setMonitorVolume(command.volume); break;
         case "enable": await audio.setEnabled(command.enabled); break;
         case "edit": audio.edit(command.id, command); break;
         case "delete": await audio.remove(command.id); break;

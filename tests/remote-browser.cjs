@@ -45,6 +45,9 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await pc.waitForFunction(() => snapshot.board.monitor === false);
     await pc.click("#monitor");
     await pc.waitForFunction(() => snapshot.board.monitor === true);
+    await pc.$eval("#monitor-volume", input => { input.value = '20'; input.dispatchEvent(new Event('change')); });
+    await pc.waitForFunction(() => snapshot.board.monitor_volume === 0.2);
+    assert.equal(await pc.$eval('#volume', input => input.value), '70');
     await pc.click("#remote-button");
     await pc.click("#remote-toggle");
     await pc.waitForSelector("#qr svg");
@@ -62,6 +65,7 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await pc.waitForFunction(() => document.querySelector("#feedback").textContent.includes("fixture-3"));
     await phone.$eval("#volume", (input) => { input.value = "35"; input.dispatchEvent(new Event("change")); });
     await pc.waitForFunction(() => document.querySelector("#volume").value === "35");
+    assert.equal(await pc.$eval("#monitor-volume", input => input.value), "20", "Call volume must leave local volume unchanged");
     await phone.tap("#stop");
     await pc.waitForFunction(() => document.querySelector("#feedback").textContent.includes("Sons arrêtés"));
     mkdirSync("tests-output", { recursive: true });

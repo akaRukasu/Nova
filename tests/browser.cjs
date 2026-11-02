@@ -47,7 +47,7 @@ const puppeteer = upstream("puppeteer-core");
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.3.4");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.3.5");
     assert.deepEqual(await page.evaluate(() => [...document.querySelector("#novacord-root").shadowRoot.querySelectorAll('.shortcuts select option')].filter(o => ["leaveCall", "toggleCamera"].includes(o.value)).map(o => o.value)), ["leaveCall", "toggleCamera"]);
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;
@@ -82,6 +82,17 @@ const puppeteer = upstream("puppeteer-core");
     assert.ok((await page.evaluate(() => window.NovaCordAudio.list())).some(sound => sound.name === "novacord-ui-import.wav"));
     await clickText("Tester la caméra");
     await page.waitForFunction(() => document.querySelector("#novacord-root").shadowRoot.querySelector("video").videoWidth > 0);
+    await page.waitForFunction(() => [...document.querySelector("#novacord-root").shadowRoot.querySelector('select[aria-label="Caméra à tester"]').options].some(option => option.value));
+    const cameraId = await page.evaluate(() => {
+      const select = document.querySelector("#novacord-root").shadowRoot.querySelector('select[aria-label="Caméra à tester"]');
+      select.value = [...select.options].find(option => option.value).value;
+      return select.value;
+    });
+    await clickText("Tester la caméra");
+    await page.waitForFunction(() => document.querySelector("#novacord-root").shadowRoot.querySelector("video").videoWidth > 0);
+    assert.equal(await page.evaluate(() => document.querySelector("#novacord-root").shadowRoot.querySelector('select[aria-label="Caméra à tester"]').value), cameraId);
+    await clickText("Utiliser cette caméra dans l’appel");
+    await page.waitForFunction(id => window.NovaCordMedia.cameraChoice()?.id === id, {}, cameraId);
     await clickText("Arrêter le test caméra");
     await clickText("Activer la soundboard");
     await page.waitForFunction(() => window.NovaCordAudio.status().enabled);

@@ -9,6 +9,7 @@
   const playing = new Set();
   const nativeInputs = new Map();
   const nativeGains = new Set();
+  const monitorGains = new Set();
   const localSources = new Set();
   let playbackStarts = 0;
   let lastAttempt = "";
@@ -21,6 +22,8 @@
   let monitor = storage.getItem("novacord:sound-monitor") !== "false";
   let volume = Number(storage.getItem("novacord:sound-volume") || "0.7");
   volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.7;
+  let monitorVolume = Number(storage.getItem("novacord:monitor-volume") ?? volume);
+  monitorVolume = Number.isFinite(monitorVolume) ? Math.min(1, Math.max(0, monitorVolume)) : 0.7;
   const META_KEY = "novacord:sound-metadata";
   let metadata;
   try { metadata = JSON.parse(storage.getItem(META_KEY) || "{}"); } catch { metadata = {}; }
@@ -232,21 +235,22 @@
       if (!preview && (store?.isSelfMute() || store?.isSelfDeaf() || blocked())) throw new Error("La transmission vocale a été coupée.");
       const source = owner.createBufferSource();
       source.buffer = buffer;
-      const gain = target ? owner.createGain() : null;
-      if (gain) { gain.gain.value = volume; source.connect(gain); gain.connect(target.destination); nativeGains.add(gain); }
-      else source.connect(preview ? ctx.destination : soundGain);
+      const gain = target || preview ? owner.createGain() : null;
+      const gains = target ? nativeGains : monitorGains;
+      if (gain) { gain.gain.value = target ? volume : monitorVolume; source.connect(gain); gain.connect(target?.destination || ctx.destination); gains.add(gain); }
+      else source.connect(soundGain);
       playing.add(source);
-      source.onended = () => { playing.delete(source); source.disconnect(); if (gain) { gain.disconnect(); nativeGains.delete(gain); } };
+      source.onended = () => { playing.delete(source); source.disconnect(); if (gain) { gain.disconnect(); gains.delete(gain); } };
       source.start();
       playbackStarts++;
     }
     if (!preview && monitor) {
       // Use the same Windows output as the working local preview, not Discord's virtual input context.
       const source = ctx.createBufferSource(), gain = ctx.createGain();
-      source.buffer = buffer; gain.gain.value = volume;
+      source.buffer = buffer; gain.gain.value = monitorVolume;
       source.connect(gain); gain.connect(ctx.destination);
-      nativeGains.add(gain); playing.add(source); localSources.add(source);
-      source.onended = () => { playing.delete(source); localSources.delete(source); nativeGains.delete(gain); source.disconnect(); gain.disconnect(); };
+      monitorGains.add(gain); playing.add(source); localSources.add(source);
+      source.onended = () => { playing.delete(source); localSources.delete(source); monitorGains.delete(gain); source.disconnect(); gain.disconnect(); };
       source.start();
       playbackStarts++;
     }
@@ -276,7 +280,7 @@
     preview: (id) => play(id, true), edit, attachInput, releaseInput,
     status: () => ({ enabled, active: inputsForCall().length > 0 || activeBindings().length > 0, senders: inputsForCall().length || activeBindings().length,
       route: nativeInputs.size ? "Discord AudioInput" : "WebRTC fallback", nativeInputs: nativeInputs.size,
-      context: context?.state || "non démarré", error: lastError, lastPlayback, volume, monitor,
+      context: context?.state || "non démarré", error: lastError, lastPlayback, volume, monitor, monitorVolume,
       monitorOutput: "Sortie Windows par défaut (comme l’aperçu local)", lastAttempt, playbackStarts, activeSources: playing.size }),
     setMonitor(value) {
       monitor = !!value; storage.setItem("novacord:sound-monitor", String(monitor));
@@ -298,6 +302,7 @@
       })));
     },
     setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; for (const gain of nativeGains) gain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
+    setMonitorVolume(value) { monitorVolume = Math.min(1, Math.max(0, Number(value) || 0)); for (const gain of monitorGains) gain.gain.value = monitorVolume; storage.setItem("novacord:monitor-volume", String(monitorVolume)); },
     async import(file) {
       if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
       if (!file.size) throw new Error("Le fichier audio est vide.");

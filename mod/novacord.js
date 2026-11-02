@@ -26,12 +26,12 @@
   let recordingTimer;
   let cameraCommand = null;
 
-  async function toggleCallCamera() {
+  async function toggleCallCamera(enabled) {
     const common = window.Vencord?.Webpack?.Common;
     const store = common?.MediaEngineStore;
     if (!common?.SelectedChannelStore?.getVoiceChannelId()) throw new Error("Rejoins un appel avant d’activer la caméra.");
     if (!store?.isVideoEnabled || !common.FluxDispatcher?.dispatch) throw new Error("La commande caméra Discord n’est pas prête.");
-    const enabled = !store.isVideoEnabled();
+    if (typeof enabled !== "boolean") enabled = !store.isVideoEnabled();
     cameraCommand = { requested: enabled, confirmed: false, error: "" };
     closePanel();
     try {
@@ -735,6 +735,7 @@
     const report = el("div", { class: "status", role: "status" });
     const cameraReport = el("div", { class: "status", role: "status" });
     const cameras = el("select", { "aria-label": "Caméra à tester" }, el("option", { value: "" }, "Caméra par défaut"));
+    const cameraChoiceReport = el("div", { class: "status", role: "status" });
     const diagnostic = el("textarea", { readonly: "", hidden: "", "aria-label": "Diagnostic média NovaCord" });
     diagnostic.style.cssText = "width:100%;min-height:220px;user-select:text";
     const preview = el("video", { autoplay: "", playsinline: "" });
@@ -768,14 +769,37 @@
     }
     async function enumerate() {
       const devices = await media.devices();
+      const selected = cameras.value || media.cameraChoice?.()?.id || "";
       cameras.replaceChildren(el("option", { value: "" }, "Caméra par défaut"));
       for (const device of devices.filter((device) => device.kind === "videoinput")) {
         cameras.append(el("option", { value: device.deviceId }, device.label || "Caméra " + cameras.options.length));
       }
+      if ([...cameras.options].some(option => option.value === selected)) cameras.value = selected;
+      const choice = media.cameraChoice?.();
+      cameraChoiceReport.textContent = choice ? ([...cameras.options].some(option => option.value === choice.id)
+        ? "Caméra imposée pour l’appel : " + choice.name : "Caméra enregistrée absente : " + choice.name + ". Choisis une caméra disponible ou suis le choix de Discord.")
+        : "Le choix caméra de Discord sera utilisé à la prochaine activation.";
     }
     container.append(
       el("div", { class: "hint" }, "La qualité demandée est une cible. La capture et l'envoi mesurés peuvent être plus bas selon l'écran, le réseau ou les performances. Les valeurs ci-dessous viennent des statistiques WebRTC."),
-      report, cameras,
+      report, cameras, cameraChoiceReport,
+      el("button", { class: "btn primary", onclick: async () => {
+        try {
+          const id = cameras.value;
+          if (!id) throw new Error("Sélectionne une caméra nommée dans la liste, puis teste son image.");
+          await media.selectCamera(id);
+          cameraChoiceReport.textContent = "Caméra enregistrée pour l’appel : " + media.cameraChoice().name;
+          stopCamera();
+          if (!window.Vencord?.Webpack?.Common?.SelectedChannelStore?.getVoiceChannelId()) return;
+          const active = window.Vencord?.Webpack?.Common?.MediaEngineStore?.isVideoEnabled?.();
+          if (active) await toggleCallCamera(false);
+          await toggleCallCamera(true);
+        } catch (error) { notifyError(error); }
+      } }, "Utiliser cette caméra dans l’appel"),
+      el("button", { class: "btn secondary", onclick: async () => {
+        try { await media.selectCamera(""); await enumerate(); }
+        catch (error) { notifyError(error); }
+      } }, "Suivre le choix caméra de Discord"),
       el("button", { class: "btn secondary", onclick: async () => {
         stopCamera();
         cameraReport.textContent = "Ouverture de la caméra…";
@@ -921,15 +945,19 @@
       } catch (error) { importStatus.textContent = String(error.message || error); }
       finally { file.disabled = false; file.value = ""; }
     };
-    const volume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round(audio.status().volume * 100)), "aria-label": "Volume des sons" });
+    const volume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round(audio.status().volume * 100)), "aria-label": "Volume envoyé dans l’appel" });
     volume.oninput = () => audio.setVolume(Number(volume.value) / 100);
     const monitor = el("input", { type: "checkbox", "aria-label": "Entendre les sons dans mon casque" });
     monitor.checked = audio.status().monitor !== false;
     monitor.onchange = () => audio.setMonitor(monitor.checked);
+    const monitorVolume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round((audio.status().monitorVolume ?? audio.status().volume) * 100)), "aria-label": "Volume du retour casque" });
+    const monitorPercent = el("span", {}, monitorVolume.value + " %");
+    monitorVolume.oninput = () => { audio.setMonitorVolume(Number(monitorVolume.value) / 100); monitorPercent.textContent = monitorVolume.value + " %"; };
     container.append(
       el("div", { class: "hint" }, "« Jouer dans le vocal » envoie le son aux autres. « Écouter chez moi » est un test local. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. Les requêtes du bouton soundboard Discord passent aussi par le mixeur lorsqu’il est activé."),
-      toggle, status, file, importStatus, el("div", {}, "Volume des sons", volume),
+      toggle, status, file, importStatus, el("div", {}, "Volume envoyé dans l’appel", volume),
       el("label", {}, monitor, " Entendre aussi les sons sur la sortie Windows de l’aperçu local"),
+      el("div", {}, "Volume du retour casque ", monitorVolume, monitorPercent),
       el("button", { class: "btn secondary", onclick: () => refresh().catch(notifyError) }, "Actualiser les sons Discord"),
       el("button", { class: "btn secondary", onclick: audio.stopAll }, "Arrêter les sons"), list,
     );
@@ -994,7 +1022,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.4" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.5" }),
     configurable: false,
     writable: false,
   });
