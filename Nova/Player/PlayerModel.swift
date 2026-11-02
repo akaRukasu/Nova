@@ -62,6 +62,8 @@ final class PlayerModel {
     @ObservationIgnored private var recoveryTrackID: String?
     @ObservationIgnored private var waitingSince: Date?
     @ObservationIgnored private var watchdog: Task<Void, Never>?
+    /// Téléphone en veille : temps accordé par iOS pour charger le titre suivant (silence entre deux titres).
+    @ObservationIgnored private var loadingBackgroundTask: UIBackgroundTaskIdentifier = .invalid
     /// Ordre de la file avant le mode aléatoire.
     @ObservationIgnored private var unshuffledQueue: [Track]?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
@@ -142,6 +144,23 @@ final class PlayerModel {
         }
     }
 
+    // MARK: Veille
+
+    /// Pendant le chargement d'un titre, rien ne joue : sans ce délai, iOS peut endormir l'app
+    /// (écran verrouillé) avant que le titre suivant ou la reprise ne démarre.
+    private func beginLoadingBackgroundTask() {
+        guard loadingBackgroundTask == .invalid else { return }
+        loadingBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Chargement du titre") { [weak self] in
+            Task { @MainActor in self?.endLoadingBackgroundTask() }
+        }
+    }
+
+    private func endLoadingBackgroundTask() {
+        guard loadingBackgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(loadingBackgroundTask)
+        loadingBackgroundTask = .invalid
+    }
+
     // MARK: Reprise automatique
 
     /// Toutes les 2 s : si la musique devrait jouer mais n'avance plus, on relance le titre là où il en était.
@@ -176,7 +195,9 @@ final class PlayerModel {
             // Mise en mémoire tampon : normal quelques secondes, anormal au-delà.
             let since = waitingSince ?? Date()
             waitingSince = since
-            if Date().timeIntervalSince(since) > (NetworkMonitor.shared.isConnected ? 10 : 30) {
+            // Écran verrouillé : on n'attend pas trop, iOS endort les apps silencieuses.
+            let background = UIApplication.shared.applicationState == .background
+            if Date().timeIntervalSince(since) > (NetworkMonitor.shared.isConnected ? (background ? 6 : 10) : 30) {
                 recoverPlayback(reason: "flux bloqué")
             }
         case .paused:
@@ -500,6 +521,7 @@ final class PlayerModel {
         guard let track = current else { return }
         loadTask?.cancel()
         statusObservation = nil
+        beginLoadingBackgroundTask()
         if transition == nil {
             crossfadeStarting = false
             finishTransition()
@@ -605,6 +627,7 @@ final class PlayerModel {
         isPlaying = true
         isLoading = false
         failureCount = 0
+        endLoadingBackgroundTask()
         library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
         updateNowPlaying()
         prefetchNext()
@@ -612,6 +635,7 @@ final class PlayerModel {
 
     private func handleFailure(_ error: Error, track: Track) {
         guard current?.id == track.id else { return }
+        defer { if !isLoading { endLoadingBackgroundTask() } }
         isLoading = false
         isPlaying = false
         failureCount += 1
