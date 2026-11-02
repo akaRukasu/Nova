@@ -36,6 +36,19 @@ struct NowPlayingView: View {
                 Spacer(minLength: 20)
 
                 artwork
+                    .overlay(alignment: .bottom) {
+                        if player.isTransitioning {
+                            Label(PlaybackSettings.transition == .automix ? "AutoMix" : "Fondu enchaîné",
+                                  systemImage: "infinity")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .glassEffect(in: Capsule())
+                                .padding(.bottom, 14)
+                                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.3), value: player.isTransitioning)
                     .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
                     .scaleEffect(player.isPlaying ? 1 : 0.92)
                     .animation(.spring(response: 0.45, dampingFraction: 0.75), value: player.isPlaying)

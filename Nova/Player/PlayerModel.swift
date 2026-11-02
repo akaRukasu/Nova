@@ -26,6 +26,8 @@ final class PlayerModel {
     private(set) var sleepTimerEnd: Date?
     /// Vrai pour un clip sans pochette carrée sur YouTube Music : le lecteur montre alors la vidéo en 16:9.
     private(set) var currentIsVideoOnly = false
+    /// Transition AutoMix / fondu en cours (badge dans le lecteur).
+    private(set) var isTransitioning = false
     var errorMessage: String?
 
     enum RepeatMode: Int, Codable {
@@ -106,6 +108,7 @@ final class PlayerModel {
 
     /// Lance le titre suivant avant la fin de celui-ci.
     private func beginTransition(_ duration: TimeInterval) {
+        isTransitioning = true
         crossfadeStarting = true
         endHandled = true
         index += 1
@@ -146,6 +149,7 @@ final class PlayerModel {
         }
         fadingOut = nil
         player.volume = 1
+        if !crossfadeStarting { isTransitioning = false }
     }
 
     // MARK: Commandes
@@ -338,6 +342,13 @@ final class PlayerModel {
             }
             return
         }
+        // AutoMix : même en passant au suivant à la main, les deux titres se fondent brièvement.
+        if PlaybackSettings.transition != .off, isPlaying, !isLoading, !crossfadeStarting,
+           player.currentItem != nil, JamSession.shared.role != .guest || !JamSession.shared.listenAlong {
+            finishTransition()
+            beginTransition(PlaybackSettings.transition == .automix ? 3 : min(PlaybackSettings.crossfadeSeconds, 3))
+            return
+        }
         index += 1
         load()
     }
@@ -461,6 +472,7 @@ final class PlayerModel {
             runTransition(to: incoming, duration: transition)
         } else {
             crossfadeStarting = false
+            isTransitioning = false
             player.volume = 1
             player.replaceCurrentItem(with: item)
             if startTime > 1 {
