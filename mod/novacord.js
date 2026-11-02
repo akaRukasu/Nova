@@ -47,8 +47,14 @@
           if (!calls?.disconnect) throw new Error("La commande pour quitter l’appel n’est pas disponible.");
           return await calls.disconnect();
         }
-        if (!common.MediaEngineStore?.isVideoEnabled || !common.FluxDispatcher?.dispatch) throw new Error("La commande caméra n’est pas disponible.");
-        return await common.FluxDispatcher.dispatch({ type: "MEDIA_ENGINE_SET_VIDEO_ENABLED", enabled: !common.MediaEngineStore.isVideoEnabled() });
+        closePanel(); // Release any local test-camera preview before Discord opens the device.
+        if (voiceActions.TOGGLE_VIDEO?.onTrigger) return await voiceActions.TOGGLE_VIDEO.onTrigger();
+        const camera = [...document.querySelectorAll('button[aria-label], [role="button"][aria-label]')].find(button =>
+          !button.disabled && button.getAttribute("aria-disabled") !== "true" && button.getClientRects().length
+          && /^(activer|désactiver|allumer|éteindre|turn on|turn off|enable|disable|start|stop|toggle).*(caméra|camera|vidéo|video)/i.test(button.getAttribute("aria-label")));
+        if (!camera) throw new Error("Le bouton caméra de l’appel n’est pas disponible. Ouvre l’appel dans Discord puis réessaie.");
+        camera.click();
+        return;
       }
       if (!voiceActions[action]?.onTrigger) throw new Error("L'action vocale n'est pas encore prête. Connecte-toi à Discord.");
       voiceActions[action].onTrigger();
@@ -870,20 +876,25 @@
       if (!sounds.length) list.textContent = "Importe un fichier audio, ou ouvre la soundboard Discord pour charger les sons de tes serveurs.";
     }
     const file = el("input", { type: "file", accept: "audio/*", "aria-label": "Importer un son" });
+    const importStatus = el("div", { class: "status", role: "status" });
     file.onchange = async () => {
       try {
         if (!file.files[0]) return;
+        file.disabled = true;
+        importStatus.textContent = "Import de " + file.files[0].name + "…";
         await audio.import(file.files[0]);
         file.value = "";
         await refresh();
-        status.textContent = "Son importé. Rouvre ce panneau pour lui attribuer un raccourci.";
-      } catch (error) { status.textContent = String(error.message || error); }
+        await window.NovaCordRemote?.sync(true);
+        importStatus.textContent = "Son importé. Rouvre ce panneau pour lui attribuer un raccourci.";
+      } catch (error) { importStatus.textContent = String(error.message || error); }
+      finally { file.disabled = false; file.value = ""; }
     };
     const volume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round(audio.status().volume * 100)), "aria-label": "Volume des sons" });
     volume.oninput = () => audio.setVolume(Number(volume.value) / 100);
     container.append(
       el("div", { class: "hint" }, "« Jouer dans le vocal » envoie le son aux autres. « Écouter chez moi » est un test local. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. Les requêtes du bouton soundboard Discord passent aussi par le mixeur lorsqu’il est activé."),
-      toggle, status, file, el("div", {}, "Volume des sons", volume),
+      toggle, status, file, importStatus, el("div", {}, "Volume des sons", volume),
       el("button", { class: "btn secondary", onclick: () => refresh().catch(notifyError) }, "Actualiser les sons Discord"),
       el("button", { class: "btn secondary", onclick: audio.stopAll }, "Arrêter les sons"), list,
     );
@@ -948,7 +959,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.1" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.2" }),
     configurable: false,
     writable: false,
   });

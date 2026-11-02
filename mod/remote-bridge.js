@@ -13,7 +13,7 @@
     if (!audio || !window.__TAURI__?.core?.invoke) return;
     try {
       if (force || Date.now() - catalogAt > 3000) {
-        const bindings = await invoke("get_shortcuts");
+        const bindings = await invoke("get_shortcuts").catch(() => ({ bindings: [] }));
         const sounds = await audio.list();
         catalog = sounds.slice(0, 5000).map((sound) => ({ ...sound,
           favorite: !!sound.favorite, category: sound.category || "", color: sound.color || "#7c6bff",
@@ -24,7 +24,12 @@
       const status = audio.status();
       await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled,
         active: status.active, volume: status.volume, error: status.error || "", last_playback: status.lastPlayback || "" } });
-    } catch (error) { console.error("NovaCord : synchronisation soundboard", error); }
+    } catch (error) {
+      const status = audio.status();
+      await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled, active: status.active,
+        volume: status.volume, error: "Chargement des sons : " + String(error.message || error), last_playback: status.lastPlayback || "" } }).catch(() => {});
+      throw error;
+    }
   }
   async function execute(command) {
     let error = null;
@@ -44,7 +49,9 @@
           const bytes = await invoke("take_soundboard_upload", { id: command.upload_id });
           let name;
           try { name = decodeURIComponent(command.name); } catch { name = "son.wav"; }
-          await audio.import(new File([bytes], name.slice(0, 160), { type: "application/octet-stream" }));
+          const data = Array.isArray(bytes) ? new Uint8Array(bytes) : bytes;
+          if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) throw new Error("Le transfert du fichier audio a échoué.");
+          await audio.import(new File([data], name.slice(0, 160), { type: "application/octet-stream" }));
           break;
         }
         default: throw new Error("Commande soundboard inconnue.");
@@ -54,6 +61,7 @@
     await invoke("complete_soundboard_command", { requestId: command.requestId, error });
   }
   window.NovaCordRemote = Object.freeze({ execute, sync });
-  setInterval(() => sync(), 1200);
-  sync(true);
+  const report = (error) => console.error("NovaCord : synchronisation soundboard", error);
+  setInterval(() => sync().catch(report), 1200);
+  sync(true).catch(report);
 })();

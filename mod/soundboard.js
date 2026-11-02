@@ -12,11 +12,12 @@
   let playbackGeneration = 0;
   let lastError = "";
   let lastPlayback = "";
-  let volume = Number(window.localStorage.getItem("novacord:sound-volume") || "0.7");
+  const storage = window.localStorage;
+  let volume = Number(storage.getItem("novacord:sound-volume") || "0.7");
   volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.7;
   const META_KEY = "novacord:sound-metadata";
   let metadata;
-  try { metadata = JSON.parse(window.localStorage.getItem(META_KEY) || "{}"); } catch { metadata = {}; }
+  try { metadata = JSON.parse(storage.getItem(META_KEY) || "{}"); } catch { metadata = {}; }
   metadata = Object.assign(Object.create(null), metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {});
   function edit(id, patch) {
     const previous = metadata[id] || {};
@@ -26,19 +27,20 @@
     if (typeof patch.favorite === "boolean") next.favorite = patch.favorite;
     if (typeof patch.color === "string" && /^#[0-9a-f]{6}$/i.test(patch.color)) next.color = patch.color;
     metadata[id] = next;
-    window.localStorage.setItem(META_KEY, JSON.stringify(metadata));
+    storage.setItem(META_KEY, JSON.stringify(metadata));
   }
   let muteTimer;
   let watchedStore;
-  const storage = window.localStorage;
   let enabled = storage.getItem("novacord:audio-mixer") === "true";
 
-  async function audioContext() {
+  async function audioContext(resume = true) {
     if (!context || context.state === "closed") {
       context = new AudioContext({ latencyHint: "interactive" });
       soundGain = context.createGain();
       soundGain.gain.value = volume;
     }
+    // Decoding an imported file does not require playback or user activation.
+    if (!resume) return context;
     let timeout;
     try {
       await Promise.race([context.resume(), new Promise((_, reject) => {
@@ -131,6 +133,7 @@
     request.onupgradeneeded = () => request.result.createObjectStore("sounds", { keyPath: "id" });
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Le stockage des sons est bloqué. Ferme les autres fenêtres NovaCord puis réessaie."));
   });
   database.catch(() => {});
 
@@ -195,16 +198,17 @@
   async function list() {
     const imported = await stored("readonly", (store) => store.getAll());
     const result = imported.map(({ id, name }) => ({ id, name, local: true }));
-    const sounds = window.Vencord?.Webpack.Common.SoundboardStore?.getSounds();
-    if (sounds) {
+    try {
+      const sounds = window.Vencord?.Webpack?.Common?.SoundboardStore?.getSounds?.();
       const seen = new Set();
-      for (const group of sounds.values()) for (const sound of group) {
+      const groups = sounds instanceof Map || typeof sounds?.values === "function" ? sounds.values() : Object.values(sounds || {});
+      for (const group of groups) for (const sound of Array.isArray(group) ? group : []) {
         const id = String(sound.soundId ?? sound.sound_id ?? sound.id ?? "");
         if (!/^\d+$/.test(id) || seen.has(id)) continue;
         seen.add(id);
-        result.push({ id: "discord:" + id, name: sound.name, local: false });
+        result.push({ id: "discord:" + id, name: String(sound.name || "Son Discord"), local: false });
       }
-    }
+    } catch (error) { console.warn("NovaCord : sons Discord indisponibles ; les imports restent accessibles.", error); }
     return result.map((sound) => ({ ...sound, ...(metadata[sound.id] || {}) }));
   }
 
@@ -231,8 +235,10 @@
     setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
     async import(file) {
       if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
-      const ctx = await audioContext();
-      await ctx.decodeAudioData(await file.arrayBuffer());
+      if (!file.size) throw new Error("Le fichier audio est vide.");
+      const ctx = await audioContext(false);
+      try { await ctx.decodeAudioData(await file.arrayBuffer()); }
+      catch { throw new Error("Format audio illisible. Essaie un fichier MP3, WAV ou OGG."); }
       const sound = { id: crypto.randomUUID(), name: file.name, blob: file };
       await stored("readwrite", (store) => store.put(sound));
       return sound.id;

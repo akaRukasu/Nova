@@ -280,7 +280,17 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     let result = soundboard::show(&handle);
                     if let Err(error) = &result { eprintln!("Soundboard WebView2 smoke test: {error}"); }
-                    handle.exit(if result.is_ok() { 0 } else { 1 });
+                    if result.is_err() { handle.exit(1); return; }
+                    tauri::async_runtime::spawn_blocking(move || {
+                        for _ in 0..160 {
+                            if handle.state::<Arc<remote_server::Service>>().has_sound("novacord-smoke.wav") {
+                                handle.exit(0); return;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        eprintln!("Soundboard smoke test: imported audio never appeared in the native catalog.");
+                        handle.exit(1);
+                    });
                 });
             }
             Ok(())

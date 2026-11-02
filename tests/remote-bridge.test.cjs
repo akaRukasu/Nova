@@ -6,22 +6,23 @@ const source = readFileSync("mod/remote-bridge.js", "utf8");
 
 test("remote commands use the existing audio player and acknowledge its actual outcome", async () => {
   const calls = [], replies = [], snapshots = [];
+  let failList = false;
   const audio = { async play(id) { calls.push(["play", id]); if (id === "broken") throw new Error("Micro coupé"); },
     async preview(id) { calls.push(["preview", id]); }, stopAll() { calls.push(["stop"]); },
     setVolume(value) { calls.push(["volume", value]); }, async setEnabled(value) { calls.push(["enable", value]); },
     edit(id, patch) { calls.push(["edit", id, patch.favorite]); }, async remove(id) { calls.push(["delete", id]); },
     async import(file) { assert.equal(file.name, "réaction.wav"); assert.equal(await file.text(), "RIFFtest"); calls.push(["import"]); },
-    async list() { return [{ id: "one", name: "Premier son", local: true }]; },
+    async list() { if (failList) throw new Error("Stockage bloqué"); return [{ id: "one", name: "Premier son", local: true }]; },
     status() { return { enabled: true, active: true, volume: 0.5, error: "", lastPlayback: "" }; },
   };
   const window = { NovaCordAudio: audio, __TAURI__: { core: { async invoke(command, args) {
     if (command === "get_shortcuts") return { bindings: [{ action: "sound:one", accelerator: "F8" }] };
     if (command === "sync_soundboard") snapshots.push(args.board);
-    if (command === "take_soundboard_upload") return new TextEncoder().encode("RIFFtest").buffer;
+    if (command === "take_soundboard_upload") return [...new TextEncoder().encode("RIFFtest")];
     if (command === "complete_soundboard_command") replies.push(args);
   } } } };
   window.top = window;
-  vm.runInNewContext(source, { window, location: { hostname: "discord.com" }, console, File, Date, setInterval() {} });
+  vm.runInNewContext(source, { window, location: { hostname: "discord.com" }, console, File, Date, ArrayBuffer, Uint8Array, setInterval() {} });
   for (const command of [{ action: "play", id: "one" }, { action: "play", id: "broken" }, { action: "volume", volume: 0.35 },
     { action: "enable", enabled: true }, { action: "edit", id: "one", favorite: true }, { action: "stop" },
     { action: "import", upload_id: "upload", name: "r%C3%A9action.wav" }]) {
@@ -33,4 +34,8 @@ test("remote commands use the existing audio player and acknowledge its actual o
   assert.deepEqual(calls[2], ["volume", 0.35]);
   assert.ok(calls.some((call) => call[0] === "import"));
   assert.equal(snapshots.at(-1).sounds[0].shortcut, "F8");
+  failList = true;
+  await window.NovaCordRemote.execute({ action: "refresh", requestId: "failed-refresh" });
+  assert.equal(replies.at(-1).error, "Stockage bloqué");
+  assert.match(snapshots.at(-1).error, /Stockage bloqué/);
 });

@@ -39,7 +39,7 @@ struct Data {
     synced: Option<Instant>,
     revision: u64,
     port: u16,
-    addresses: Vec<Ipv4Addr>,
+    addresses: Vec<(String, Ipv4Addr)>,
     desktop_key: String,
     phone_key: String,
     lan: bool,
@@ -54,6 +54,19 @@ pub struct Service {
 }
 
 fn key() -> String { Uuid::new_v4().simple().to_string() }
+fn addresses() -> Vec<(String, Ipv4Addr)> {
+    let preferred = local_ip_address::local_ip().ok();
+    let mut interfaces: Vec<_> = local_ip_address::list_afinet_netifas().unwrap_or_default().into_iter().filter_map(|(name, ip)| match ip {
+        IpAddr::V4(ip) if !ip.is_loopback() && (ip.is_private() || ip.is_link_local()) => Some((name, ip)), _ => None,
+    }).collect();
+    interfaces.sort_by_key(|(name, ip)| {
+        let name = name.to_lowercase();
+        let wifi = ["wi-fi", "wifi", "wlan", "wireless"].iter().any(|part| name.contains(part));
+        (!wifi, Some(IpAddr::V4(*ip)) != preferred, name.contains("vpn") || name.contains("virtual"), *ip)
+    });
+    interfaces.dedup_by_key(|(_, ip)| *ip);
+    interfaces
+}
 fn local(ip: IpAddr) -> bool { match ip { IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(), IpAddr::V6(ip) => ip.is_loopback() } }
 fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
     request.headers().iter().find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name)).map(|h| h.value.as_str())
@@ -108,6 +121,8 @@ impl Service {
     }
 
     pub fn shutdown(&self) { self.stopped.store(true, Ordering::Relaxed); }
+    pub fn port(&self) -> u16 { self.data.lock().unwrap().port }
+    pub fn has_sound(&self, name: &str) -> bool { self.data.lock().unwrap().board.sounds.iter().any(|sound| sound.name == name) }
 
     pub fn desktop_url(&self) -> String {
         let data = self.data.lock().unwrap();
@@ -117,12 +132,9 @@ impl Service {
     pub fn start(self: &Arc<Self>, dispatch: Dispatch) -> Result<String, String> {
         let mut data = self.data.lock().unwrap();
         if data.port != 0 { drop(data); return Ok(self.desktop_url()); }
-        let server = Arc::new(Server::http(("0.0.0.0", 0)).map_err(|e| e.to_string())?);
+        let server = Arc::new(Server::http(("0.0.0.0", 38427)).or_else(|_| Server::http(("0.0.0.0", 0))).map_err(|e| e.to_string())?);
         data.port = server.server_addr().to_ip().ok_or("Adresse réseau indisponible.")?.port();
-        data.addresses = local_ip_address::list_afinet_netifas().unwrap_or_default().into_iter().filter_map(|(_, ip)| match ip {
-            IpAddr::V4(ip) if !ip.is_loopback() && (ip.is_private() || ip.is_link_local()) => Some(ip), _ => None,
-        }).collect();
-        data.addresses.sort(); data.addresses.dedup();
+        data.addresses = addresses();
         drop(data);
         for _ in 0..3 {
             let service = self.clone(); let server = server.clone(); let dispatch = dispatch.clone();
@@ -192,22 +204,27 @@ impl Service {
             if header(&request, "If-None-Match") == Some(etag.as_str()) { drop(data); respond(request, 304, String::new(), "application/json", Some(etag)); return; }
             let mut value = json!({"board":data.board, "ready":ready, "desktop":desktop});
             if desktop {
-                let links: Vec<Value> = data.addresses.iter().map(|ip| {
+                let links: Vec<Value> = data.addresses.iter().map(|(name, ip)| {
                     let url = format!("http://{ip}:{}/#key={}", data.port, data.phone_key);
                     let qr = if data.lan { QrCode::new(url.as_bytes()).ok().map(|code| code.render::<svg::Color>().min_dimensions(224,224).build()).unwrap_or_default() } else { String::new() };
-                    json!({"address":ip.to_string(), "url":url, "qr":qr})
+                    json!({"address":ip.to_string(), "interface":name, "url":url, "qr":qr})
                 }).collect();
                 value["remote"] = json!({"enabled":data.lan, "connected":connected, "links":links});
             }
             drop(data); respond(request, 200, value.to_string(), "application/json; charset=utf-8", Some(etag)); return;
         }
 
+        if request.method() == &Method::Post && request.url() == "/api/network-access" && desktop {
+            let result = dispatch(json!({"action":"network-access", "requestId":""}));
+            json_response(request, if result.is_ok() { 200 } else { 409 }, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
+        }
         if request.method() == &Method::Post && request.url() == "/api/remote" && desktop {
             let mut bytes = Vec::new();
             if request.as_reader().take(1025).read_to_end(&mut bytes).is_err() || bytes.len() > 1024 { json_response(request, 400, json!({"error":"Requête invalide."})); return; }
             let enabled = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v["enabled"].as_bool());
             if let Some(enabled) = enabled {
-                let mut data = self.data.lock().unwrap(); data.lan = enabled; data.phone_key = key(); data.phone_seen = None; data.revision += 1;
+                let interfaces = addresses();
+                let mut data = self.data.lock().unwrap(); data.addresses = interfaces; data.lan = enabled; data.phone_key = key(); data.phone_seen = None; data.revision += 1;
                 drop(data); json_response(request, 200, json!({"ok":true}));
             } else { json_response(request, 400, json!({"error":"État manquant."})); }
             return;
@@ -282,6 +299,7 @@ mod tests {
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"volume","volume":3}"#, None).0, 409);
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"preview","id":"test-sound"}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/remote", &phone, br#"{"enabled":false}"#, None).0, 403);
+        assert_eq!(request(&service, "POST", "/api/network-access", &phone, b"", None).0, 403);
         assert_eq!(request(&service, "POST", "/api/upload", &desktop, b"RIFFtest", None).0, 200);
         assert!(service.uploads.lock().unwrap().is_empty());
         assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":false}"#, None).0, 200);

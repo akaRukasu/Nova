@@ -40,11 +40,13 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     const file = join(tmpdir(), "test.wav"); writeFileSync(file, "RIFFtest");
     await (await pc.$("#file")).uploadFile(file);
     await pc.waitForSelector('button[aria-label="Jouer test.wav"]');
+    await pc.click('[data-filter="all"]');
     await pc.click("#remote-button");
     await pc.click("#remote-toggle");
     await pc.waitForSelector("#qr svg");
     const link = await pc.$eval("#pair-link", (node) => node.textContent);
-    const mobileUrl = new URL(link); mobileUrl.hostname = "127.0.0.1";
+    const mobileUrl = new URL(link);
+    assert.notEqual(mobileUrl.hostname, "127.0.0.1", "Test the actual LAN listener address");
     const phoneContext = await browser.createBrowserContext();
     const phone = await phoneContext.newPage();
     phone.on("pageerror", (error) => errors.push(error.message));

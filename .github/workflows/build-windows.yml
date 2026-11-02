@@ -68,7 +68,7 @@ jobs:
           cp src-tauri/target/release/novacord.exe NovaCord-portable.exe
           ls -l NovaCord-*.exe
 
-      - name: Open both native WebView2 windows
+      - name: Open native windows and import real audio through IPC
         shell: pwsh
         run: |
           $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'novacord-native-smoke'
@@ -78,7 +78,7 @@ jobs:
             throw 'Native WebView2 smoke test timed out.'
           }
           if ($process.ExitCode -ne 0) { throw "Native WebView2 smoke test failed: $($process.ExitCode)" }
-          Write-Output 'Discord and soundboard WebView2 windows created successfully.'
+          Write-Output 'Native WebView2 windows and real WAV import through HTTP, binary IPC, decoder and IndexedDB succeeded.'
 
       - uses: actions/upload-artifact@v4
         with:

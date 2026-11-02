@@ -14,6 +14,12 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
+La version 0.3.2 corrige la gestion des fichiers importés : le transfert binaire accepte aussi les réponses IPC sous forme de liste d’octets, le décodage ne demande plus de démarrer la lecture audio et les sons locaux restent disponibles si le catalogue Discord est indisponible. Le résultat d’un import reste affiché et la grille passe automatiquement sur les fichiers locaux. Le test Windows importe un vrai WAV via HTTP, IPC, décodeur et IndexedDB dans les fenêtres de l’application.
+
+La connexion téléphone privilégie la carte Wi-Fi et affiche le nom des interfaces pour éviter les adresses VPN. Le bouton **Autoriser NovaCord dans Windows…** demande une confirmation administrateur pour ajouter une règle entrante limitée à l’exécutable NovaCord, au port de la soundboard, au profil privé et au sous-réseau local. Il ne change pas le profil du réseau : celui-ci doit être privé. Un Wi-Fi invité peut empêcher la communication entre appareils.
+
+Le raccourci caméra utilise la commande native de Discord ou son bouton caméra, et ferme tout aperçu de test avant de demander le périphérique. Il ne force plus directement le drapeau vidéo du moteur.
+
 La version 0.3.1 corrige l’erreur WebView2 `0x8007139F` à l’ouverture de la soundboard : les deux fenêtres utilisent les mêmes options du moteur. Le workflow ouvre aussi les deux fenêtres natives de l’exécutable Windows avant de distribuer l’installateur.
 
 Deux actions supplémentaires sont disponibles dans les raccourcis personnalisés : **Quitter l’appel** et **Activer / désactiver la caméra**. Choisis tes touches puis enregistre les raccourcis ; ces actions nécessitent un appel en cours et fonctionnent aussi quand NovaCord est en arrière-plan.
