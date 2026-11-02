@@ -714,6 +714,8 @@
     const report = el("div", { class: "status", role: "status" });
     const cameraReport = el("div", { class: "status", role: "status" });
     const cameras = el("select", { "aria-label": "Caméra à tester" }, el("option", { value: "" }, "Caméra par défaut"));
+    const diagnostic = el("textarea", { readonly: "", hidden: "", "aria-label": "Diagnostic média NovaCord" });
+    diagnostic.style.cssText = "width:100%;min-height:220px;user-select:text";
     const preview = el("video", { autoplay: "", playsinline: "" });
     preview.muted = true;
     preview.style.cssText = "width:100%;max-height:220px;display:none;background:#000";
@@ -776,6 +778,12 @@
       } }, "Tester la caméra"),
       el("button", { class: "btn secondary", onclick: () => { stopCamera(); cameraReport.textContent = "Aperçu arrêté, caméra libérée."; } }, "Arrêter le test caméra"),
       cameraReport, preview,
+      el("button", { class: "btn secondary", onclick: async () => {
+        diagnostic.hidden = false;
+        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, audio: window.NovaCordAudio?.status(), media: await media.diagnostics() }, null, 2);
+        diagnostic.focus(); diagnostic.select();
+      } }, "Afficher le diagnostic média"),
+      el("div", { class: "hint" }, "Pendant l’appel, active la caméra et lance un son, puis affiche ce diagnostic. Copie son texte pour le dépannage."), diagnostic,
     );
     await enumerate().catch((error) => { cameraReport.textContent = error.message; });
     await refresh();
@@ -959,7 +967,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.2" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.3" }),
     configurable: false,
     writable: false,
   });

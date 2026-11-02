@@ -14,6 +14,10 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
+La version 0.3.3 raccorde les sons dans le contexte **AudioInput de Discord**, avant la chaîne de transmission vocale, plutôt que de remplacer uniquement la piste RTP après traitement. La coupure du micro et l’appuyer-pour-parler restent respectés. Après la mise à jour, quitte complètement NovaCord puis reconnecte-toi au vocal pour créer la nouvelle entrée audio. Le test d’écoute local et l’envoi dans le vocal restent deux actions distinctes.
+
+En cas de problème dans l’appel, ouvre **Paramètres NovaCord → Afficher le diagnostic média** après avoir activé la caméra et lancé un son. Le texte contient le routage audio, les périphériques sélectionnés par Discord, l’état des pistes caméra et les statistiques d’envoi ; il n’inclut pas de jeton de connexion ni d’identifiant de compte/salon. Le test automatisé AudioInput vérifie un son reçu par un second pair WebRTC et la conservation de la piste caméra, dans un environnement contrôlé. La validation dans un appel Discord réel reste nécessaire.
+
 La version 0.3.2 corrige la gestion des fichiers importés : le transfert binaire accepte aussi les réponses IPC sous forme de liste d’octets, le décodage ne demande plus de démarrer la lecture audio et les sons locaux restent disponibles si le catalogue Discord est indisponible. Le résultat d’un import reste affiché et la grille passe automatiquement sur les fichiers locaux. Le test Windows importe un vrai WAV via HTTP, IPC, décodeur et IndexedDB dans les fenêtres de l’application.
 
 La connexion téléphone privilégie la carte Wi-Fi et affiche le nom des interfaces pour éviter les adresses VPN. Le bouton **Autoriser NovaCord dans Windows…** demande une confirmation administrateur pour ajouter une règle entrante limitée à l’exécutable NovaCord, au port de la soundboard, au profil privé et au sous-réseau local. Il ne change pas le profil du réseau : celui-ci doit être privé. Un Wi-Fi invité peut empêcher la communication entre appareils.

@@ -30,7 +30,7 @@ function setupMixer(t, enabled = false) {
   const systemAudio = { ...track(), systemAudio: true };
   const systemSender = { track: systemAudio };
   let onSender;
-  class Stream { constructor(tracks) { this.tracks = tracks; } getAudioTracks() { return this.tracks.filter((t) => t.kind === "audio"); } }
+  class Stream { constructor(tracks) { this.tracks = tracks; } getAudioTracks() { return this.tracks.filter((t) => t.kind === "audio"); } getVideoTracks() { return this.tracks.filter(t => t.kind === "video"); } }
   class Context {
     constructor() { this.state = "suspended"; this.destination = {}; }
     resume() { this.state = "running"; return Promise.resolve(); }
@@ -50,7 +50,7 @@ function setupMixer(t, enabled = false) {
     NovaCordMedia: { senderState: () => connectionState, senders: () => [sender, videoSender, systemSender], isScreenAudio: (track) => !!track.systemAudio,
       onSender(callback) { onSender = callback; callback(sender); callback(videoSender); callback(systemSender); },
       async replaceTrack(sender, track) { sender.track = track; } },
-    Vencord: { Webpack: { Common: { MediaEngineStore: { isSelfMute: () => muted, isSelfDeaf: () => false, addChangeListener: (fn) => changes.push(fn) } } } } };
+    Vencord: { Webpack: { Common: { SelectedChannelStore: { getVoiceChannelId: () => "voice" }, MediaEngineStore: { isSelfMute: () => muted, isSelfDeaf: () => false, addChangeListener: (fn) => changes.push(fn) } } } } };
   window.top = window;
   vm.runInNewContext(mixer, { window, navigator, MediaStream: Stream, AudioContext: Context,
     location: { hostname: "discord.com" }, console, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -60,7 +60,7 @@ function setupMixer(t, enabled = false) {
     mute: () => { muted = true; changes.forEach((fn) => fn()); },
     setFetch: (fn) => { fetchSound = fn; },
     replace: async (next) => { sender.track = next; onSender(sender); await window.NovaCordAudio.setEnabled(true); },
-    newTrack: track, disconnect: () => { connectionState = "disconnected"; },
+    Context, Stream, newTrack: track, disconnect: () => { connectionState = "disconnected"; },
   };
 }
 
@@ -124,7 +124,7 @@ test("a disconnected sender is not reported as ready to transmit", async (t) => 
   await env.audio.setEnabled(true);
   env.disconnect();
   assert.equal(env.audio.status().active, false);
-  await assert.rejects(env.audio.play("discord:1234"), /Aucune piste vocale/);
+  await assert.rejects(env.audio.play("discord:1234"), /Aucune entrée vocale/);
 });
 
 test("camera format fallback retains the chosen device and returns the original stream", async () => {
@@ -174,4 +174,25 @@ test("screen audio and its clones stay separate from voice audio", async () => {
   assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio), true);
   assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio.clone()), true);
   assert.equal(window.NovaCordMedia.isScreenAudio(new Track("audio")), false);
+});
+
+
+test("Discord AudioInput receives sound before transmission gating and preserves camera tracks", async (t) => {
+  const env = setupMixer(t);
+  const owner = new env.Context();
+  const original = new env.Stream([env.input, env.video]);
+  const native = { context: owner, mute: false };
+  const mixed = env.audio.attachInput(native, original);
+  assert.equal(mixed.getVideoTracks()[0], env.video);
+  assert.equal(env.input.readyState, 'live');
+  await env.audio.setEnabled(true);
+  await env.audio.play('discord:1234');
+  assert.equal(env.sender.track, env.input, 'Native integration must not replace the post-processing RTP track');
+  assert.equal(env.audio.status().route, 'Discord AudioInput');
+  assert.ok(env.sources.at(-1).started);
+  env.mute();
+  assert.equal(env.sources.at(-1).stopped, true);
+  env.audio.releaseInput(mixed);
+  assert.equal(env.input.readyState, 'ended');
+  assert.equal(env.video.readyState, 'live', 'AudioInput release must leave the camera to Discord');
 });

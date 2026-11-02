@@ -7,6 +7,8 @@
   const bindings = new Map();
   const queues = new WeakMap();
   const playing = new Set();
+  const nativeInputs = new Map();
+  const nativeGains = new Set();
   let context;
   let soundGain;
   let playbackGeneration = 0;
@@ -33,6 +35,34 @@
   let watchedStore;
   let enabled = storage.getItem("novacord:audio-mixer") === "true";
 
+  function attachInput(input, original) {
+    if (!original?.getAudioTracks().length || nativeInputs.has(original)) return original;
+    const source = input.context.createMediaStreamSource(new MediaStream(original.getAudioTracks()));
+    const destination = input.context.createMediaStreamDestination();
+    source.connect(destination);
+    const mixed = new MediaStream([...destination.stream.getAudioTracks(), ...original.getVideoTracks()]);
+    nativeInputs.set(mixed, { input, original, source, destination });
+    muteTimer ||= setInterval(synchronizeMute, 15);
+    synchronizeMute();
+    return mixed;
+  }
+  function releaseInput(stream) {
+    const entry = nativeInputs.get(stream);
+    if (!entry) return;
+    nativeInputs.delete(stream);
+    stopAll();
+    entry.source.disconnect();
+    for (const track of entry.original.getAudioTracks()) track.stop();
+    if (!nativeInputs.size && !bindings.size) { clearInterval(muteTimer); muteTimer = null; }
+  }
+  function inputsForCall() {
+    const channel = window.Vencord?.Webpack?.Common?.SelectedChannelStore?.getVoiceChannelId();
+    if (!channel) return [];
+    return [...nativeInputs].filter(([stream, entry]) => entry.input.context.state !== "closed"
+      && stream.getAudioTracks().some(track => track.readyState === "live")
+      && entry.original.getAudioTracks().some(track => track.readyState === "live")).map(([,entry]) => entry);
+  }
+
   async function audioContext(resume = true) {
     if (!context || context.state === "closed") {
       context = new AudioContext({ latencyHint: "interactive" });
@@ -58,7 +88,7 @@
     binding.source.disconnect();
     soundGain.disconnect(binding.destination);
     binding.output.stop();
-    if (!bindings.size) { clearInterval(muteTimer); muteTimer = null; }
+    if (!bindings.size && !nativeInputs.size) { clearInterval(muteTimer); muteTimer = null; }
     // Discord reste propriétaire du microphone original : ne pas l'arrêter ici.
   }
 
@@ -76,6 +106,7 @@
       store.addChangeListener?.(synchronizeMute);
     }
     const muted = !!(store?.isSelfMute() || store?.isSelfDeaf());
+    if (playing.size && nativeInputs.size && (muted || !inputsForCall().some(entry => !entry.input.mute))) stopAll();
     for (const binding of bindings.values()) {
       const allowed = binding.input.enabled && !muted;
       if (allowed !== binding.lastAllowed) {
@@ -87,6 +118,7 @@
   }
 
   async function wire(sender) {
+    if (nativeInputs.size) return;
     const previous = bindings.get(sender);
     if (previous && sender.track === previous.output && previous.input.readyState === "live" && previous.output.readyState === "live") return;
     if (previous) release(sender);
@@ -159,11 +191,13 @@
     const generation = playbackGeneration;
     if (!preview) {
       if (!enabled) throw new Error("Active la soundboard.");
-      await Promise.all(media.senders().map((sender) => enqueue(sender, () => wire(sender))));
-      if (!activeBindings().length) throw new Error(lastError || "Aucune piste vocale envoyée. Rejoins un salon vocal et ouvre ton micro.");
+      if (!nativeInputs.size) await Promise.all(media.senders().map((sender) => enqueue(sender, () => wire(sender))));
+      if (!inputsForCall().length && !activeBindings().length) throw new Error(lastError || "Aucune entrée vocale prête. Reconnecte le vocal puis réessaie.");
     }
     const store = window.Vencord?.Webpack.Common.MediaEngineStore;
-    if (!preview && (store?.isSelfMute() || store?.isSelfDeaf() || activeBindings().every((b) => !b.input.enabled || !b.output.enabled))) throw new Error("Ton micro ou ton casque est coupé. Aucun son n'a été envoyé.");
+    const blocked = () => nativeInputs.size ? !inputsForCall().some(entry => !entry.input.mute)
+      : activeBindings().every((b) => !b.input.enabled || !b.output.enabled);
+    if (!preview && (store?.isSelfMute() || store?.isSelfDeaf() || blocked())) throw new Error("Ton micro ou ton casque est coupé, ou la touche de parole n’est pas maintenue. Aucun son n'a été envoyé.");
     const ctx = await audioContext();
     if (generation !== playbackGeneration) return;
     let data;
@@ -181,18 +215,26 @@
     const buffer = await ctx.decodeAudioData(data);
     if (generation !== playbackGeneration) return;
     // L'état du micro peut changer pendant le téléchargement.
-    if (!preview && (!enabled || !activeBindings().length || store?.isSelfMute() || store?.isSelfDeaf()
-        || activeBindings().every((b) => !b.input.enabled || !b.output.enabled))) {
+    if (!preview && (!enabled || (!inputsForCall().length && !activeBindings().length) || store?.isSelfMute() || store?.isSelfDeaf() || blocked())) {
       throw new Error("Le vocal n'est plus prêt ou le micro est coupé.");
     }
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(preview ? ctx.destination : soundGain);
-    playing.add(source);
-    source.onended = () => { playing.delete(source); source.disconnect(); };
-    source.start();
+    const destinations = !preview && nativeInputs.size ? inputsForCall().filter(entry => !entry.input.mute) : [];
+    for (const target of destinations.length ? destinations : [null]) {
+      const owner = target?.input.context || ctx;
+      await owner.resume();
+      if (generation !== playbackGeneration) return;
+      if (!preview && (store?.isSelfMute() || store?.isSelfDeaf() || blocked())) throw new Error("La transmission vocale a été coupée.");
+      const source = owner.createBufferSource();
+      source.buffer = buffer;
+      const gain = target ? owner.createGain() : null;
+      if (gain) { gain.gain.value = volume; source.connect(gain); gain.connect(target.destination); nativeGains.add(gain); }
+      else source.connect(preview ? ctx.destination : soundGain);
+      playing.add(source);
+      source.onended = () => { playing.delete(source); source.disconnect(); if (gain) { gain.disconnect(); nativeGains.delete(gain); } };
+      source.start();
+    }
     lastError = "";
-    lastPlayback = preview ? "Écoute locale uniquement." : "Son lancé sur la piste vocale sortante.";
+    lastPlayback = preview ? "Écoute locale uniquement." : nativeInputs.size ? "Lecture dans l’entrée vocale Discord." : "Lecture dans le transmetteur WebRTC (mode de repli).";
   }
 
   async function list() {
@@ -214,8 +256,9 @@
 
   window.NovaCordAudio = Object.freeze({
     play: (id) => play(id).catch((error) => { lastError = error.message; throw error; }), list, stopAll,
-    preview: (id) => play(id, true), edit,
-    status: () => ({ enabled, active: activeBindings().length > 0, senders: activeBindings().length,
+    preview: (id) => play(id, true), edit, attachInput, releaseInput,
+    status: () => ({ enabled, active: inputsForCall().length > 0 || activeBindings().length > 0, senders: inputsForCall().length || activeBindings().length,
+      route: nativeInputs.size ? "Discord AudioInput" : "WebRTC fallback", nativeInputs: nativeInputs.size,
       context: context?.state || "non démarré", error: lastError, lastPlayback, volume }),
     async setEnabled(value) {
       if (value) await audioContext();
@@ -232,7 +275,7 @@
         }
       })));
     },
-    setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
+    setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; for (const gain of nativeGains) gain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
     async import(file) {
       if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
       if (!file.size) throw new Error("Le fichier audio est vide.");

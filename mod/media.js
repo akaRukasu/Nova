@@ -13,11 +13,16 @@
   const screenTracks = new WeakSet();
   const screenAudioTracks = new WeakSet();
   const previousStats = new Map();
+  const cameraTracks = new Set();
   let streamOptions;
   let capture;
   let cameraError = "";
   let captureError = "";
   let selected = { height: 1080, frameRate: 60 };
+  function rememberCamera(stream) {
+    for (const track of stream.getVideoTracks?.() || []) cameraTracks.add(track);
+    return stream;
+  }
 
   function quality() {
     const settings = window.Vencord?.Settings.plugins.WebScreenShare;
@@ -130,7 +135,7 @@
     try {
       const stream = await getUserMedia(constraints);
       if (constraints?.video) cameraError = "";
-      return stream;
+      return rememberCamera(stream);
     } catch (error) {
       const video = constraints?.video;
       if (error.name === "OverconstrainedError" && video && typeof video === "object"
@@ -140,7 +145,7 @@
         try {
           const stream = await getUserMedia({ ...constraints, video: relaxed });
           cameraError = "Résolution automatique : le format caméra demandé n'était pas pris en charge.";
-          return stream;
+          return rememberCamera(stream);
         } catch (retryError) { error = retryError; }
       }
       if (constraints?.video) cameraError = error.name + " : " + error.message;
@@ -177,6 +182,9 @@
           const previous = previousStats.get(report.id);
           previousStats.set(report.id, report);
           outgoing.push({ kind: report.kind || report.mediaType, screen: isScreen(sender.track),
+            trackEnabled: sender.track.enabled, trackMuted: sender.track.muted,
+            framesEncoded: report.framesEncoded, audioLevel: report.audioLevel,
+            codec: stats.get(report.codecId)?.mimeType,
             width: report.frameWidth, height: report.frameHeight, frameRate: report.framesPerSecond,
             bytesSent: report.bytesSent, packetsSent: report.packetsSent,
             bitrate: previous && report.timestamp > previous.timestamp ? Math.round(8000 * (report.bytesSent - previous.bytesSent) / (report.timestamp - previous.timestamp)) : null,
@@ -184,8 +192,23 @@
         }
       } catch {}
     }
+    const store = window.Vencord?.Webpack?.Common?.MediaEngineStore;
+    const read = method => { try { return store?.[method]?.() ?? null; } catch { return null; } };
+    const name = (devices, id) => (devices || {})[id]?.name || Object.values(devices || {}).find(device => device.id === id)?.name || id;
+    const cameras = [];
+    for (const track of cameraTracks) {
+      if (track.readyState !== "live") { cameraTracks.delete(track); continue; }
+      const settings = track.getSettings();
+      cameras.push({ name: track.label, enabled: track.enabled, muted: track.muted,
+        width: settings.width, height: settings.height, frameRate: settings.frameRate });
+    }
     return { requested: { ...selected }, capture: capture?.readyState === "live" ? capture.getSettings() : null,
-      cameraError, captureError, outgoing };
+      cameraError, captureError, outgoing, cameras,
+      discord: { input: name(read("getInputDevices"), read("getInputDeviceId")),
+        output: name(read("getOutputDevices"), read("getOutputDeviceId")),
+        camera: name(read("getVideoDevices"), read("getVideoDeviceId")),
+        voiceMode: read("getMode"), muted: read("isSelfMute"), deafened: read("isSelfDeaf"), videoEnabled: read("isVideoEnabled") },
+      connections: [...peers].map(peer => ({ state: peer.connectionState, ice: peer.iceConnectionState, signaling: peer.signalingState })) };
   }
 
   window.NovaCordMedia = Object.freeze({
