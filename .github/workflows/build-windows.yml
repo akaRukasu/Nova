@@ -51,8 +51,10 @@ jobs:
         shell: bash
         run: |
           node --test tests/*.test.cjs
-          node tests/browser.cjs
           cargo test --manifest-path src-tauri/Cargo.toml
+          cargo build --manifest-path src-tauri/Cargo.toml --example soundboard_server
+          node tests/browser.cjs
+          node tests/remote-browser.cjs
 
       - name: Build the installer
         shell: bash
@@ -75,6 +77,7 @@ jobs:
             mod/VENCORD-LICENSE.txt
             mod/VENCORD-NOTICES.txt
             src-tauri/Cargo.lock
+            tests-output/*.png
 
       - name: Publish the "novacord-latest" release
         if: github.ref == 'refs/heads/novacord'

@@ -4,5 +4,5 @@
   "windows": ["main"],
   "local": false,
   "remote": { "urls": ["https://discord.com/*"] },
-  "permissions": ["allow-get-shortcuts", "allow-set-shortcuts", "allow-set-shortcut-recording"]
+  "permissions": ["allow-get-shortcuts", "allow-set-shortcuts", "allow-set-shortcut-recording", "allow-open-soundboard", "allow-sync-soundboard", "allow-complete-soundboard-command", "allow-take-soundboard-upload"]
 }

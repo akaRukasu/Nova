@@ -12,6 +12,29 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 - **Mode éco** (plugin) : animations, transitions et flous désactivés.
 - **Anti-pistage** (plugin) : la télémétrie de Discord n'est plus envoyée.
 
+## Soundboard dédiée et télécommande téléphone (0.3)
+
+Ouvre **Soundboard et télécommande** depuis l’icône de NovaCord près de l’horloge, ou depuis le bouton dans les paramètres NovaCord.
+
+- Grille de sons avec recherche, favoris, catégories, couleurs et raccourcis affichés.
+- Import de fichiers audio depuis le PC (8 Mo par son), renommage et suppression des fichiers importés.
+- Volume, activation du mixeur, écoute locale sur le PC et arrêt immédiat.
+- Le téléphone pilote les mêmes sons : la lecture est effectuée sur le PC dans le vocal NovaCord.
+
+### Connecter le téléphone
+
+1. Sur le PC, ouvre la soundboard puis **Téléphone**.
+2. Clique sur **Activer**. Un QR code et un lien local apparaissent.
+3. Le téléphone et le PC doivent utiliser le même réseau local (le PC peut être en Ethernet).
+4. Scanne le QR code avec l’appareil photo du téléphone, puis ouvre le lien.
+5. Garde NovaCord ouvert sur le PC, rejoins un salon vocal et active le mixeur. Le micro doit rester ouvert.
+
+Aucune application mobile ni service distant n’est nécessaire. Windows peut demander l’autorisation réseau : autorise les réseaux privés pour la télécommande. Si plusieurs adresses sont proposées, sélectionne celle du réseau utilisé par le téléphone.
+
+L’accès téléphone est désactivé au démarrage. Le PC et le téléphone ont des clés distinctes. Désactiver puis réactiver la télécommande renouvelle la clé et révoque l’ancien appairage ; redémarrer NovaCord nécessite également un nouvel appairage. Les imports et l’écoute sur les haut-parleurs du PC sont réservés au contrôleur PC. Les sons, favoris et catégories sont stockés dans le profil Discord local de NovaCord.
+
+Les tests utilisent un vrai serveur HTTP Rust et deux navigateurs isolés, dont une vue mobile. Le pare-feu et un téléphone physique sur le Wi-Fi de l’utilisateur restent à vérifier.
+
 ## Streams, raccourcis et soundboard (0.2.1)
 
 Ouvre **Paramètres NovaCord** depuis l'icône près de l'horloge (ou `Ctrl + Alt + N` tant que tu n'as pas changé ce raccourci).

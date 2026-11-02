@@ -46,7 +46,7 @@ const puppeteer = upstream("puppeteer-core");
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.2.1");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.3.0");
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;
       const button = [...root.querySelectorAll("button")].find((button) => button.textContent === text);

@@ -657,6 +657,7 @@
         el("h2", {}, "Streams et Vencord"),
         vencord,
         vencordButton,
+        el("button", { class: "btn primary", onclick: () => invoke("open_soundboard").catch(notifyError) }, "Ouvrir la soundboard et la télécommande"),
         el("h2", {}, "Caméra et qualité réellement envoyée"),
         mediaPanel,
         el("h2", {}, "Raccourcis personnalisés"),
@@ -933,7 +934,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.2.1" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.0" }),
     configurable: false,
     writable: false,
   });

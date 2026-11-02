@@ -12,7 +12,22 @@
   let playbackGeneration = 0;
   let lastError = "";
   let lastPlayback = "";
-  let volume = 0.7;
+  let volume = Number(window.localStorage.getItem("novacord:sound-volume") || "0.7");
+  volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.7;
+  const META_KEY = "novacord:sound-metadata";
+  let metadata;
+  try { metadata = JSON.parse(window.localStorage.getItem(META_KEY) || "{}"); } catch { metadata = {}; }
+  metadata = Object.assign(Object.create(null), metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {});
+  function edit(id, patch) {
+    const previous = metadata[id] || {};
+    const next = { ...previous };
+    if (typeof patch.name === "string" && patch.name.trim()) next.name = patch.name.trim().slice(0, 160);
+    if (typeof patch.category === "string") next.category = patch.category.trim().slice(0, 48);
+    if (typeof patch.favorite === "boolean") next.favorite = patch.favorite;
+    if (typeof patch.color === "string" && /^#[0-9a-f]{6}$/i.test(patch.color)) next.color = patch.color;
+    metadata[id] = next;
+    window.localStorage.setItem(META_KEY, JSON.stringify(metadata));
+  }
   let muteTimer;
   let watchedStore;
   const storage = window.localStorage;
@@ -190,12 +205,12 @@
         result.push({ id: "discord:" + id, name: sound.name, local: false });
       }
     }
-    return result;
+    return result.map((sound) => ({ ...sound, ...(metadata[sound.id] || {}) }));
   }
 
   window.NovaCordAudio = Object.freeze({
     play: (id) => play(id).catch((error) => { lastError = error.message; throw error; }), list, stopAll,
-    preview: (id) => play(id, true),
+    preview: (id) => play(id, true), edit,
     status: () => ({ enabled, active: activeBindings().length > 0, senders: activeBindings().length,
       context: context?.state || "non démarré", error: lastError, lastPlayback, volume }),
     async setEnabled(value) {
@@ -213,7 +228,7 @@
         }
       })));
     },
-    setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; },
+    setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
     async import(file) {
       if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
       const ctx = await audioContext();
@@ -222,6 +237,6 @@
       await stored("readwrite", (store) => store.put(sound));
       return sound.id;
     },
-    remove: (id) => stored("readwrite", (store) => store.delete(id)),
+    remove: async (id) => { await stored("readwrite", (store) => store.delete(id)); delete metadata[id]; storage.setItem(META_KEY, JSON.stringify(metadata)); },
   });
 })();
