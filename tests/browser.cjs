@@ -47,7 +47,7 @@ const puppeteer = upstream("puppeteer-core");
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.0");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.1");
     assert.deepEqual(await page.evaluate(() => [...document.querySelector("#novacord-root").shadowRoot.querySelectorAll('.shortcuts select option')].filter(o => ["leaveCall", "toggleCamera"].includes(o.value)).map(o => o.value)), ["leaveCall", "toggleCamera"]);
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;
