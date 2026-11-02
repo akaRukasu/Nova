@@ -230,7 +230,8 @@ final class LibraryStore {
     func addRecent(_ track: Track) {
         recents.removeAll { $0.id == track.id }
         recents.insert(track, at: 0)
-        if recents.count > 200 { recents.removeLast(recents.count - 200) }
+        // Historique : les 1 000 derniers titres (l'Accueil n'en montre que 20).
+        if recents.count > 1000 { recents.removeLast(recents.count - 1000) }
         save()
     }
 

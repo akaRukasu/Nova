@@ -372,25 +372,119 @@ struct LikedTracksView: View {
     }
 }
 
+/// Historique complet, groupé par jour (Aujourd'hui, Hier, lundi…), avec recherche.
 struct HistoryView: View {
     @Environment(LibraryStore.self) private var library
+    @Environment(PlayerModel.self) private var player
     @State private var confirmClear = false
+    @State private var filter = ""
+
+    private struct Entry: Identifiable {
+        /// Position dans `library.recents`.
+        let position: Int
+        let track: Track
+        var id: Int { position }
+    }
+
+    private struct Day: Identifiable {
+        let id: String
+        let title: String
+        let entries: [Entry]
+    }
+
+    private var visible: [Entry] {
+        let all = library.recents.enumerated().map { Entry(position: $0.offset, track: $0.element) }
+        let query = filter.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return all }
+        return all.filter {
+            $0.track.title.localizedCaseInsensitiveContains(query) || $0.track.artist.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var days: [Day] {
+        let calendar = Calendar.current
+        var result: [Day] = []
+        for entry in visible {
+            let date = library.stats[entry.track.id]?.lastPlayed
+            let title = Self.dayTitle(date, calendar: calendar)
+            if let last = result.last, last.title == title {
+                result[result.count - 1] = Day(id: last.id, title: title, entries: last.entries + [entry])
+            } else {
+                result.append(Day(id: "\(result.count)-\(title)", title: title, entries: [entry]))
+            }
+        }
+        return result
+    }
+
+    private static func dayTitle(_ date: Date?, calendar: Calendar) -> String {
+        guard let date else { return "Plus ancien" }
+        if calendar.isDateInToday(date) { return "Aujourd'hui" }
+        if calendar.isDateInYesterday(date) { return "Hier" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: Date())).day ?? 99
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "fr_FR")
+        formatter.dateFormat = days < 7 ? "EEEE" : (calendar.isDate(date, equalTo: Date(), toGranularity: .year) ? "EEEE d MMMM" : "d MMMM yyyy")
+        return formatter.string(from: date).capitalized(with: Locale(identifier: "fr_FR"))
+    }
 
     var body: some View {
-        LocalTracksList(tracks: library.recents,
-                        emptyTitle: "Historique vide",
-                        emptyIcon: "clock",
-                        emptyMessage: "Les titres que tu écoutes apparaîtront ici.",
-                        onDelete: { library.removeRecents(at: $0) })
-            .navigationTitle("Historique")
-            .toolbar {
-                if !library.recents.isEmpty {
-                    Button("Effacer") { confirmClear = true }
+        let tracks = visible.map(\.track)
+        List {
+            if !tracks.isEmpty {
+                Section {
+                    PlayShuffleButtons {
+                        player.play(tracks)
+                    } shuffle: {
+                        player.play(tracks, shuffled: true)
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                } footer: {
+                    Text(tracks.count == 1 ? "1 titre écouté" : "\(tracks.count) titres écoutés")
                 }
             }
-            .confirmationDialog("Effacer l'historique ?", isPresented: $confirmClear, titleVisibility: .visible) {
-                Button("Effacer", role: .destructive) { library.clearRecents() }
+            ForEach(days) { day in
+                Section(day.title) {
+                    ForEach(day.entries) { entry in
+                        TrackRowButton(track: entry.track,
+                                       onRemove: { library.removeRecents(at: IndexSet(integer: entry.position)) }) {
+                            player.play(tracks, startAt: tracks.firstIndex(of: entry.track) ?? 0)
+                        }
+                        .overlay(alignment: .trailing) {
+                            if let count = library.stats[entry.track.id]?.playCount, count > 1 {
+                                Text("×\(count)")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.trailing, 44)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                    .onDelete { offsets in
+                        library.removeRecents(at: IndexSet(offsets.map { day.entries[$0].position }))
+                    }
+                }
             }
+        }
+        .listStyle(.plain)
+        .searchable(text: $filter, prompt: "Rechercher dans l'historique")
+        .overlay {
+            if library.recents.isEmpty {
+                ContentUnavailableView("Historique vide", systemImage: "clock",
+                                       description: Text("Les titres que tu écoutes apparaîtront ici."))
+            } else if tracks.isEmpty {
+                ContentUnavailableView.search(text: filter)
+            }
+        }
+        .navigationTitle("Historique")
+        .toolbar {
+            if !library.recents.isEmpty {
+                Button("Effacer") { confirmClear = true }
+            }
+        }
+        .confirmationDialog("Effacer l'historique ?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Effacer", role: .destructive) { library.clearRecents() }
+        }
     }
 }
 

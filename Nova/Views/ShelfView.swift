@@ -13,19 +13,25 @@ struct ShelfView: View {
     var ranked = false
     /// Lecture d'un titre ; par défaut, lit l'étagère à partir de ce titre.
     var onPlay: ((Track, [Track]) -> Void)?
+    /// Page ouverte par le titre de l'étagère (pages de Nova, comme l'historique).
+    var moreRoute: Route?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !shelf.title.isEmpty {
                 Button {
-                    if let more = shelf.more { router.open(Router.route(for: more, title: shelf.title)) }
+                    if let moreRoute {
+                        router.open(moreRoute)
+                    } else if let more = shelf.more {
+                        router.open(Router.route(for: more, title: shelf.title))
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Text(shelf.title)
                             .font(.title2.weight(.bold))
                             .foregroundStyle(Color.primary)
                             .lineLimit(1)
-                        if shelf.more != nil {
+                        if shelf.more != nil || moreRoute != nil {
                             Image(systemName: "chevron.right")
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(.secondary)
@@ -36,7 +42,7 @@ struct ShelfView: View {
                 }
                 .buttonStyle(.plain)
                 // Pas de .disabled : le titre resterait grisé.
-                .allowsHitTesting(shelf.more != nil)
+                .allowsHitTesting(shelf.more != nil || moreRoute != nil)
                 .padding(.horizontal, 16)
             }
 

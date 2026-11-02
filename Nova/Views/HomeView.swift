@@ -20,9 +20,11 @@ struct HomeView: View {
                 resumeCard
                 MixesRow()
                 if !library.recents.isEmpty {
+                    // 20 derniers titres ; le titre de la rangée ouvre l'historique complet.
                     ShelfView(shelf: Shelf(id: "recents", title: "Écoutés récemment",
                                            items: library.recents.prefix(20).map(MusicItem.track),
-                                           layout: .cards, more: nil))
+                                           layout: .cards, more: nil),
+                              moreRoute: .history)
                 }
                 // Tes artistes et tes playlists.
                 ForEach(personalShelves) { shelf in
