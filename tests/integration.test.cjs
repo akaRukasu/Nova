@@ -39,14 +39,14 @@ function setupMixer(t, enabled = false) {
     createMediaStreamDestination() { return { stream: new Stream([track()]) }; }
     async decodeAudioData() { return {}; }
     createBufferSource() {
-      const source = { started: false, stopped: false, connect(target) { this.target = target; }, disconnect() {}, start() { this.started = true; }, stop() { this.stopped = true; this.onended?.(); } };
+      const source = { context: this, started: false, stopped: false, connect(target) { this.target = target; }, disconnect() {}, start() { this.started = true; }, stop() { this.stopped = true; this.onended?.(); } };
       sources.push(source);
       return source;
     }
   }
   const nativeCapture = async () => new Stream([input, video]);
   const navigator = { mediaDevices: { getUserMedia: nativeCapture } };
-  const window = { localStorage: { getItem: () => String(enabled), setItem() {} },
+  const window = { localStorage: { getItem: key => key === "novacord:audio-mixer" ? String(enabled) : null, setItem() {} },
     NovaCordMedia: { senderState: () => connectionState, senders: () => [sender, videoSender, systemSender], isScreenAudio: (track) => !!track.systemAudio,
       onSender(callback) { onSender = callback; callback(sender); callback(videoSender); callback(systemSender); },
       async replaceTrack(sender, track) { sender.track = track; } },
@@ -183,6 +183,7 @@ test("Discord AudioInput receives sound before transmission gating and preserves
   const original = new env.Stream([env.input, env.video]);
   const native = { context: owner, mute: false };
   const mixed = env.audio.attachInput(native, original);
+  t.after(() => env.audio.releaseInput(mixed));
   assert.equal(mixed.getVideoTracks()[0], env.video);
   assert.equal(env.input.readyState, 'live');
   await env.audio.setEnabled(true);
@@ -190,7 +191,14 @@ test("Discord AudioInput receives sound before transmission gating and preserves
   assert.equal(env.sender.track, env.input, 'Native integration must not replace the post-processing RTP track');
   assert.equal(env.audio.status().route, 'Discord AudioInput');
   assert.ok(env.sources.at(-1).started);
+  assert.equal(env.sources.length, 2, 'One source for the call, one for the headset');
+  assert.equal(env.sources[0].context, owner);
+  assert.notEqual(env.sources[1].context, owner, 'Use the preview context for the local output');
+  env.audio.setMonitor(false);
+  assert.equal(env.sources[1].stopped, true);
+  assert.equal(env.sources[0].stopped, false, 'Disabling the headset return must keep the call sound playing');
   env.mute();
+  assert.equal(env.sources[0].stopped, true);
   assert.equal(env.sources.at(-1).stopped, true);
   env.audio.releaseInput(mixed);
   assert.equal(env.input.readyState, 'ended');

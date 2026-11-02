@@ -26,13 +26,15 @@ pub struct Board {
     pub enabled: bool,
     pub active: bool,
     pub volume: f64,
+    #[serde(default = "default_monitor")] pub monitor: bool,
     #[serde(default)] pub error: String,
     #[serde(default)] pub last_playback: String,
 }
 
 impl Default for Board {
-    fn default() -> Self { Self { sounds: vec![], enabled: false, active: false, volume: 0.7, error: String::new(), last_playback: String::new() } }
+    fn default() -> Self { Self { sounds: vec![], enabled: false, active: false, volume: 0.7, monitor: true, error: String::new(), last_playback: String::new() } }
 }
+fn default_monitor() -> bool { true }
 
 struct Data {
     board: Board,
@@ -153,13 +155,13 @@ impl Service {
             let data = self.data.lock().unwrap();
             if data.synced.is_none_or(|time| time.elapsed() > Duration::from_secs(6)) { return Err("NovaCord n'est pas prêt. Ouvre Discord sur le PC.".into()); }
             let kind = action["action"].as_str().ok_or("Action manquante.")?;
-            if !matches!(kind, "play" | "preview" | "stop" | "volume" | "enable" | "refresh" | "edit" | "delete" | "import") { return Err("Action inconnue.".into()); }
+            if !matches!(kind, "play" | "preview" | "stop" | "volume" | "monitor" | "enable" | "refresh" | "edit" | "delete" | "import") { return Err("Action inconnue.".into()); }
             if matches!(kind, "play" | "preview" | "edit" | "delete") {
                 let sound = data.board.sounds.iter().find(|s| Some(s.id.as_str()) == action["id"].as_str()).ok_or("Son introuvable.")?;
                 if kind == "delete" && !sound.local { return Err("Seuls les sons importés peuvent être supprimés.".into()); }
             }
             if kind == "volume" && !action["volume"].as_f64().is_some_and(|v| v.is_finite() && (0.0..=1.0).contains(&v)) { return Err("Volume invalide.".into()); }
-            if kind == "enable" && !action["enabled"].is_boolean() { return Err("État invalide.".into()); }
+            if matches!(kind, "enable" | "monitor") && !action["enabled"].is_boolean() { return Err("État invalide.".into()); }
             if kind == "edit" {
                 for (field, max) in [("name", 160), ("category", 48)] {
                     if action[field].as_str().is_some_and(|value| value.chars().count() > max) { return Err("Libellé trop long.".into()); }
@@ -246,7 +248,7 @@ impl Service {
             let mut bytes = Vec::new();
             if request.as_reader().take(8193).read_to_end(&mut bytes).is_err() || bytes.len() > 8192 { json_response(request, 400, json!({"error":"Commande trop longue."})); return; }
             let action = match serde_json::from_slice::<Value>(&bytes) { Ok(value) if value.is_object() => value, _ => { json_response(request, 400, json!({"error":"Commande invalide."})); return; } };
-            if action["action"] == "import" || (!desktop && action["action"] == "preview") { json_response(request, 403, json!({"error":"Action réservée au PC."})); return; }
+            if action["action"] == "import" || (!desktop && (action["action"] == "preview" || action["action"] == "monitor")) { json_response(request, 403, json!({"error":"Action réservée au PC."})); return; }
             let result = self.command(action, dispatch);
             json_response(request, if result.is_ok() {200} else {409}, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
         }
@@ -298,6 +300,7 @@ mod tests {
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"play","id":"missing"}"#, None).0, 409);
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"volume","volume":3}"#, None).0, 409);
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"preview","id":"test-sound"}"#, None).0, 403);
+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"monitor","enabled":true}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/remote", &phone, br#"{"enabled":false}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/network-access", &phone, b"", None).0, 403);
         assert_eq!(request(&service, "POST", "/api/upload", &desktop, b"RIFFtest", None).0, 200);

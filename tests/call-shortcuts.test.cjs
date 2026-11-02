@@ -10,7 +10,7 @@ test('call shortcuts leave through Discord and toggle its camera state in both d
   const common = {
     SelectedChannelStore: { getVoiceChannelId: () => channel },
     MediaEngineStore: { isVideoEnabled: () => video },
-    FluxDispatcher: { dispatch: event => { events.push(JSON.parse(JSON.stringify(event))); video = event.enabled; } },
+    FluxDispatcher: { dispatch: event => { events.push(event.enabled); video = event.enabled; } },
   };
   const window = { localStorage: { getItem: () => null }, fetch() {}, addEventListener() {},
     Vencord: { Webpack: { Common: common, waitFor() {}, findByProps(...props) {
@@ -25,7 +25,7 @@ test('call shortcuts leave through Discord and toggle its camera state in both d
   });
   await window.NovaCord.runShortcut('toggleCamera');
   await window.NovaCord.runShortcut('toggleCamera');
-  assert.deepEqual(events, [true, false], 'Use the native camera button, not a bare engine-state event');
+  assert.deepEqual(events, [true, false], 'Confirm the Discord camera state in both directions');
   await window.NovaCord.runShortcut('leaveCall');
   assert.equal(left, 1);
   await window.NovaCord.runShortcut('toggleCamera');

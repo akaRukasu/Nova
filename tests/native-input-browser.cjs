@@ -49,8 +49,12 @@ const puppeteer = createRequire(resolve('.vencord/package.json'))('puppeteer-cor
       for(let i=0;i<96000;i++) view.setInt16(44+i*2,Math.round(Math.sin(i*2*Math.PI*880/48000)*12000),true);
       const id = await window.NovaCordAudio.import(new File([wav], 'tone.wav'));
       await window.NovaCordAudio.setEnabled(true); await window.NovaCordAudio.play(id);
+      const withMonitor = window.NovaCordAudio.status();
+      if (!withMonitor.monitor || withMonitor.activeSources !== 2) throw new Error('Missing local monitor alongside the call source');
       let rms = 0;
       await wait(() => { const samples = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(samples); rms = Math.sqrt(samples.reduce((s,v) => s+v*v,0)/samples.length); return rms > .025; });
+      window.NovaCordAudio.setMonitor(false);
+      await wait(() => window.NovaCordAudio.status().activeSources === 1);
       const sameAudioTrack = sender.track === mixed.getAudioTracks()[0];
       await wait(async () => [...(await cameraSender.getStats()).values()].some(s => s.type === 'outbound-rtp' && s.kind === 'video' && s.framesEncoded > 0));
       input.mute = true;
@@ -58,10 +62,11 @@ const puppeteer = createRequire(resolve('.vencord/package.json'))('puppeteer-cor
       window.NovaCordAudio.releaseInput(mixed);
       const cameraPreserved = video.readyState === 'live' && mixed.getVideoTracks()[0] === video;
       peer.close(); remote.close(); player.pause(); player.srcObject = null; video.stop(); await context.close();
-      return { rms, sameAudioTrack, cameraPreserved, muteRejected };
+      return { rms, sameAudioTrack, cameraPreserved, muteRejected, localMonitorStarted: withMonitor.activeSources === 2 };
     });
     assert.ok(result.rms > .025); assert.equal(result.sameAudioTrack, true);
     assert.equal(result.cameraPreserved, true); assert.equal(result.muteRejected, true);
+    assert.equal(result.localMonitorStarted, true);
     console.log('Discord AudioInput seam → remote WebRTC, camera and mute measured: ' + JSON.stringify(result));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

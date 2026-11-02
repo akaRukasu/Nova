@@ -22,6 +22,7 @@ fn main() {
             "play" => board.last_playback = format!("Son envoyé : {}", action["id"].as_str().unwrap()),
             "preview" => board.last_playback = "Écoute locale".into(),
             "volume" => board.volume = action["volume"].as_f64().unwrap(),
+            "monitor" => board.monitor = action["enabled"].as_bool().unwrap(),
             "enable" => board.enabled = action["enabled"].as_bool().unwrap(),
             "stop" => board.last_playback = "Sons arrêtés".into(),
             "delete" => board.sounds.retain(|sound| Some(sound.id.as_str()) != action["id"].as_str()),

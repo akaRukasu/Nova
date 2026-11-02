@@ -9,12 +9,16 @@
   const playing = new Set();
   const nativeInputs = new Map();
   const nativeGains = new Set();
+  const localSources = new Set();
+  let playbackStarts = 0;
+  let lastAttempt = "";
   let context;
   let soundGain;
   let playbackGeneration = 0;
   let lastError = "";
   let lastPlayback = "";
   const storage = window.localStorage;
+  let monitor = storage.getItem("novacord:sound-monitor") !== "false";
   let volume = Number(storage.getItem("novacord:sound-volume") || "0.7");
   volume = Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 0.7;
   const META_KEY = "novacord:sound-metadata";
@@ -184,9 +188,11 @@
     playbackGeneration++;
     for (const source of playing) source.stop();
     playing.clear();
+    localSources.clear();
   }
 
   async function play(id, preview = false) {
+    lastAttempt = (preview ? "aperçu : " : "vocal : ") + id;
     stopAll();
     const generation = playbackGeneration;
     if (!preview) {
@@ -232,6 +238,17 @@
       playing.add(source);
       source.onended = () => { playing.delete(source); source.disconnect(); if (gain) { gain.disconnect(); nativeGains.delete(gain); } };
       source.start();
+      playbackStarts++;
+    }
+    if (!preview && monitor) {
+      // Use the same Windows output as the working local preview, not Discord's virtual input context.
+      const source = ctx.createBufferSource(), gain = ctx.createGain();
+      source.buffer = buffer; gain.gain.value = volume;
+      source.connect(gain); gain.connect(ctx.destination);
+      nativeGains.add(gain); playing.add(source); localSources.add(source);
+      source.onended = () => { playing.delete(source); localSources.delete(source); nativeGains.delete(gain); source.disconnect(); gain.disconnect(); };
+      source.start();
+      playbackStarts++;
     }
     lastError = "";
     lastPlayback = preview ? "Écoute locale uniquement." : nativeInputs.size ? "Lecture dans l’entrée vocale Discord." : "Lecture dans le transmetteur WebRTC (mode de repli).";
@@ -259,7 +276,12 @@
     preview: (id) => play(id, true), edit, attachInput, releaseInput,
     status: () => ({ enabled, active: inputsForCall().length > 0 || activeBindings().length > 0, senders: inputsForCall().length || activeBindings().length,
       route: nativeInputs.size ? "Discord AudioInput" : "WebRTC fallback", nativeInputs: nativeInputs.size,
-      context: context?.state || "non démarré", error: lastError, lastPlayback, volume }),
+      context: context?.state || "non démarré", error: lastError, lastPlayback, volume, monitor,
+      monitorOutput: "Sortie Windows par défaut (comme l’aperçu local)", lastAttempt, playbackStarts, activeSources: playing.size }),
+    setMonitor(value) {
+      monitor = !!value; storage.setItem("novacord:sound-monitor", String(monitor));
+      if (!monitor) { for (const source of localSources) source.stop(); localSources.clear(); }
+    },
     async setEnabled(value) {
       if (value) await audioContext();
       enabled = !!value;

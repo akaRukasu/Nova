@@ -24,6 +24,34 @@
   });
   let recording = null;
   let recordingTimer;
+  let cameraCommand = null;
+
+  async function toggleCallCamera() {
+    const common = window.Vencord?.Webpack?.Common;
+    const store = common?.MediaEngineStore;
+    if (!common?.SelectedChannelStore?.getVoiceChannelId()) throw new Error("Rejoins un appel avant d’activer la caméra.");
+    if (!store?.isVideoEnabled || !common.FluxDispatcher?.dispatch) throw new Error("La commande caméra Discord n’est pas prête.");
+    const enabled = !store.isVideoEnabled();
+    cameraCommand = { requested: enabled, confirmed: false, error: "" };
+    closePanel();
+    try {
+      await common.FluxDispatcher.dispatch({ type: "MEDIA_ENGINE_SET_VIDEO_ENABLED", enabled });
+      const waitForState = async () => {
+        const deadline = Date.now() + 1500;
+        while (store.isVideoEnabled() !== enabled && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+        return store.isVideoEnabled() === enabled;
+      };
+      if (!await waitForState()) {
+        const label = enabled ? /^(activer|allumer|turn on|enable|start).*(caméra|camera|vidéo|video)/i
+          : /^(désactiver|éteindre|turn off|disable|stop).*(caméra|camera|vidéo|video)/i;
+        const button = [...document.querySelectorAll('button[aria-label], [role="button"][aria-label]')].find(button =>
+          !button.disabled && button.getAttribute("aria-disabled") !== "true" && button.getClientRects().length && label.test(button.getAttribute("aria-label")));
+        if (button) button.click();
+        if (!await waitForState()) throw new Error("Discord n’a pas confirmé le changement d’état de la caméra. Affiche le diagnostic média.");
+      }
+      cameraCommand.confirmed = true;
+    } catch (error) { cameraCommand.error = String(error.message || error); throw error; }
+  }
 
   function notifyError(error) {
     const message = String(error?.message || error);
@@ -47,14 +75,7 @@
           if (!calls?.disconnect) throw new Error("La commande pour quitter l’appel n’est pas disponible.");
           return await calls.disconnect();
         }
-        closePanel(); // Release any local test-camera preview before Discord opens the device.
-        if (voiceActions.TOGGLE_VIDEO?.onTrigger) return await voiceActions.TOGGLE_VIDEO.onTrigger();
-        const camera = [...document.querySelectorAll('button[aria-label], [role="button"][aria-label]')].find(button =>
-          !button.disabled && button.getAttribute("aria-disabled") !== "true" && button.getClientRects().length
-          && /^(activer|désactiver|allumer|éteindre|turn on|turn off|enable|disable|start|stop|toggle).*(caméra|camera|vidéo|video)/i.test(button.getAttribute("aria-label")));
-        if (!camera) throw new Error("Le bouton caméra de l’appel n’est pas disponible. Ouvre l’appel dans Discord puis réessaie.");
-        camera.click();
-        return;
+        return await toggleCallCamera();
       }
       if (!voiceActions[action]?.onTrigger) throw new Error("L'action vocale n'est pas encore prête. Connecte-toi à Discord.");
       voiceActions[action].onTrigger();
@@ -777,10 +798,12 @@
         }
       } }, "Tester la caméra"),
       el("button", { class: "btn secondary", onclick: () => { stopCamera(); cameraReport.textContent = "Aperçu arrêté, caméra libérée."; } }, "Arrêter le test caméra"),
+      el("button", { class: "btn primary", onclick: () => runShortcut("toggleCamera") },
+        window.Vencord?.Webpack?.Common?.MediaEngineStore?.isVideoEnabled?.() ? "Désactiver la caméra dans l’appel" : "Activer la caméra dans l’appel"),
       cameraReport, preview,
       el("button", { class: "btn secondary", onclick: async () => {
         diagnostic.hidden = false;
-        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, audio: window.NovaCordAudio?.status(), media: await media.diagnostics() }, null, 2);
+        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, cameraCommand, audio: window.NovaCordAudio?.status(), media: await media.diagnostics() }, null, 2);
         diagnostic.focus(); diagnostic.select();
       } }, "Afficher le diagnostic média"),
       el("div", { class: "hint" }, "Pendant l’appel, active la caméra et lance un son, puis affiche ce diagnostic. Copie son texte pour le dépannage."), diagnostic,
@@ -900,9 +923,13 @@
     };
     const volume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round(audio.status().volume * 100)), "aria-label": "Volume des sons" });
     volume.oninput = () => audio.setVolume(Number(volume.value) / 100);
+    const monitor = el("input", { type: "checkbox", "aria-label": "Entendre les sons dans mon casque" });
+    monitor.checked = audio.status().monitor !== false;
+    monitor.onchange = () => audio.setMonitor(monitor.checked);
     container.append(
       el("div", { class: "hint" }, "« Jouer dans le vocal » envoie le son aux autres. « Écouter chez moi » est un test local. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. Les requêtes du bouton soundboard Discord passent aussi par le mixeur lorsqu’il est activé."),
       toggle, status, file, importStatus, el("div", {}, "Volume des sons", volume),
+      el("label", {}, monitor, " Entendre aussi les sons sur la sortie Windows de l’aperçu local"),
       el("button", { class: "btn secondary", onclick: () => refresh().catch(notifyError) }, "Actualiser les sons Discord"),
       el("button", { class: "btn secondary", onclick: audio.stopAll }, "Arrêter les sons"), list,
     );
@@ -967,7 +994,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.3" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.4" }),
     configurable: false,
     writable: false,
   });

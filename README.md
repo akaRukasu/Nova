@@ -14,6 +14,10 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
+La version 0.3.4 ajoute **Retour casque**, activé par défaut : les sons lancés dans l’appel sont aussi joués localement, une seule fois, via le même contexte et la même sortie Windows que l’aperçu local. Cette sortie peut différer de celle sélectionnée dans Discord, notamment avec Voicemeeter. Le retour local se désactive depuis la soundboard ou les paramètres NovaCord ; le désactiver n’arrête pas le son destiné à l’appel.
+
+Le panneau NovaCord propose **Activer la caméra dans l’appel**, distinct du test caméra. Cette commande libère l’aperçu, demande à Discord le nouvel état vidéo, vérifie sa confirmation et signale un échec. Le raccourci caméra utilise ce même chemin. Le diagnostic inclut la commande caméra, la dernière tentative de lecture, le nombre de sources démarrées et l’état du retour casque. Un changement de drapeau vidéo confirmé ne prouve pas à lui seul que des images sont transmises : les statistiques vidéo restent disponibles dans le diagnostic.
+
 La version 0.3.3 raccorde les sons dans le contexte **AudioInput de Discord**, avant la chaîne de transmission vocale, plutôt que de remplacer uniquement la piste RTP après traitement. La coupure du micro et l’appuyer-pour-parler restent respectés. Après la mise à jour, quitte complètement NovaCord puis reconnecte-toi au vocal pour créer la nouvelle entrée audio. Le test d’écoute local et l’envoi dans le vocal restent deux actions distinctes.
 
 En cas de problème dans l’appel, ouvre **Paramètres NovaCord → Afficher le diagnostic média** après avoir activé la caméra et lancé un son. Le texte contient le routage audio, les périphériques sélectionnés par Discord, l’état des pistes caméra et les statistiques d’envoi ; il n’inclut pas de jeton de connexion ni d’identifiant de compte/salon. Le test automatisé AudioInput vérifie un son reçu par un second pair WebRTC et la conservation de la piste caméra, dans un environnement contrôlé. La validation dans un appel Discord réel reste nécessaire.

@@ -9,7 +9,7 @@ test("remote commands use the existing audio player and acknowledge its actual o
   let failList = false;
   const audio = { async play(id) { calls.push(["play", id]); if (id === "broken") throw new Error("Micro coupé"); },
     async preview(id) { calls.push(["preview", id]); }, stopAll() { calls.push(["stop"]); },
-    setVolume(value) { calls.push(["volume", value]); }, async setEnabled(value) { calls.push(["enable", value]); },
+    setVolume(value) { calls.push(["volume", value]); }, setMonitor(value) { calls.push(["monitor", value]); }, async setEnabled(value) { calls.push(["enable", value]); },
     edit(id, patch) { calls.push(["edit", id, patch.favorite]); }, async remove(id) { calls.push(["delete", id]); },
     async import(file) { assert.equal(file.name, "réaction.wav"); assert.equal(await file.text(), "RIFFtest"); calls.push(["import"]); },
     async list() { if (failList) throw new Error("Stockage bloqué"); return [{ id: "one", name: "Premier son", local: true }]; },
@@ -34,6 +34,8 @@ test("remote commands use the existing audio player and acknowledge its actual o
   assert.deepEqual(calls[2], ["volume", 0.35]);
   assert.ok(calls.some((call) => call[0] === "import"));
   assert.equal(snapshots.at(-1).sounds[0].shortcut, "F8");
+  await window.NovaCordRemote.execute({ action: "monitor", enabled: false, requestId: "monitor-off" });
+  assert.ok(calls.some(call => call[0] === "monitor" && call[1] === false));
   failList = true;
   await window.NovaCordRemote.execute({ action: "refresh", requestId: "failed-refresh" });
   assert.equal(replies.at(-1).error, "Stockage bloqué");

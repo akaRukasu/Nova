@@ -41,6 +41,10 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await (await pc.$("#file")).uploadFile(file);
     await pc.waitForSelector('button[aria-label="Jouer test.wav"]');
     await pc.click('[data-filter="all"]');
+    await pc.click("#monitor");
+    await pc.waitForFunction(() => snapshot.board.monitor === false);
+    await pc.click("#monitor");
+    await pc.waitForFunction(() => snapshot.board.monitor === true);
     await pc.click("#remote-button");
     await pc.click("#remote-toggle");
     await pc.waitForSelector("#qr svg");
