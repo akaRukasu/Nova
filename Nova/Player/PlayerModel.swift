@@ -144,6 +144,11 @@ final class PlayerModel {
         }
     }
 
+    /// Créée hors de l'acteur principal : iOS demande l'image depuis un autre fil (écran verrouillé).
+    nonisolated private static func makeArtwork(_ image: UIImage) -> MPMediaItemArtwork {
+        MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
+    }
+
     // MARK: Veille
 
     /// Pendant le chargement d'un titre, rien ne joue : sans ce délai, iOS peut endormir l'app
@@ -151,7 +156,8 @@ final class PlayerModel {
     private func beginLoadingBackgroundTask() {
         guard loadingBackgroundTask == .invalid else { return }
         loadingBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Chargement du titre") { [weak self] in
-            Task { @MainActor in self?.endLoadingBackgroundTask() }
+            // Rendu tout de suite (sur le fil principal) : sinon iOS ferme l'app.
+            MainActor.assumeIsolated { self?.endLoadingBackgroundTask() }
         }
     }
 
@@ -591,7 +597,7 @@ final class PlayerModel {
         }
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 30
-        statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+        statusObservation = item.observe(\.status, options: [.new]) { @Sendable [weak self] item, _ in
             let failed = item.status == .failed
             let error = item.error
             Task { @MainActor in
@@ -752,27 +758,27 @@ final class PlayerModel {
 
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
-        center.playCommand.addTarget { [weak self] _ in
+        center.playCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in self?.resume() }
             return .success
         }
-        center.pauseCommand.addTarget { [weak self] _ in
+        center.pauseCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in self?.pause() }
             return .success
         }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
+        center.togglePlayPauseCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in self?.togglePlay() }
             return .success
         }
-        center.nextTrackCommand.addTarget { [weak self] _ in
+        center.nextTrackCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in self?.next() }
             return .success
         }
-        center.previousTrackCommand.addTarget { [weak self] _ in
+        center.previousTrackCommand.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in self?.previous() }
             return .success
         }
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        center.changePlaybackPositionCommand.addTarget { @Sendable [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             let position = event.positionTime
             Task { @MainActor in self?.seek(to: position) }
@@ -803,7 +809,7 @@ final class PlayerModel {
             // Pochette carrée en haute définition (écran verrouillé, CarPlay), miniature vidéo sinon.
             guard let image = await ImageLoader.load(track.artworkURLs(pixels: 1000), maxPixels: 1000) else { return }
             guard let self, self.current?.id == track.id else { return }
-            self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            self.artwork = Self.makeArtwork(image)
             self.updateNowPlaying()
         }
     }

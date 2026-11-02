@@ -185,7 +185,7 @@ final class LibraryStore {
         if addToHistory {
             addRecent(track)
         } else {
-            save()
+            save(rebuildingSongs: false)
         }
     }
 
@@ -232,17 +232,17 @@ final class LibraryStore {
         recents.insert(track, at: 0)
         // Historique : les 1 000 derniers titres (l'Accueil n'en montre que 20).
         if recents.count > 1000 { recents.removeLast(recents.count - 1000) }
-        save()
+        save(rebuildingSongs: false)
     }
 
     func removeRecents(at offsets: IndexSet) {
         recents.remove(atOffsets: offsets)
-        save()
+        save(rebuildingSongs: false)
     }
 
     func clearRecents() {
         recents = []
-        save()
+        save(rebuildingSongs: false)
     }
 
     // MARK: Titres likés
@@ -378,12 +378,12 @@ final class LibraryStore {
         searches.removeAll { $0.caseInsensitiveCompare(text) == .orderedSame }
         searches.insert(text, at: 0)
         if searches.count > 30 { searches.removeLast(searches.count - 30) }
-        save()
+        save(rebuildingSongs: false)
     }
 
     func clearSearches() {
         searches = []
-        save()
+        save(rebuildingSongs: false)
     }
 
     // MARK: Pochettes
@@ -400,22 +400,51 @@ final class LibraryStore {
         patch(&recents)
         patch(&liked)
         patch(&addedTracks)
-        for position in playlists.indices { patch(&playlists[position].tracks) }
-        if changed { save() }
+        for position in playlists.indices where playlists[position].tracks.contains(where: { $0.id == id }) {
+            patch(&playlists[position].tracks)
+        }
+        // « Morceaux » corrigé sur place : pas besoin de tout recalculer.
+        if songs.contains(where: { $0.id == id }) { patch(&songs) }
+        if changed { save(rebuildingSongs: false) }
     }
 
     // MARK: Disque
 
-    private func save() {
-        rebuildSongs()
+    @ObservationIgnored private var pendingWrite: Task<Void, Never>?
+
+    /// Enregistre la bibliothèque. Avec des dizaines de milliers de titres, l'écriture est lourde :
+    /// elle est regroupée (une seule après une rafale de changements) et faite hors du fil principal.
+    /// Sans ça, chaque titre écouté recalculait et réécrivait tout, et iOS fermait l'app en arrière-plan.
+    private func save(rebuildingSongs: Bool = true) {
+        if rebuildingSongs { rebuildSongs() }
+        pendingWrite?.cancel()
+        pendingWrite = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.writeNow()
+        }
+    }
+
+    /// Écriture immédiate (passage en arrière-plan, fermeture).
+    func flush() {
+        guard pendingWrite != nil else { return }
+        pendingWrite?.cancel()
+        writeNow()
+    }
+
+    private func writeNow() {
+        pendingWrite = nil
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
                                 addedTracks: addedTracks, savedDates: savedDates)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(snapshot).write(to: fileURL, options: .atomic)
-        } catch {
-            // Pas bloquant : la bibliothèque sera réécrite au prochain changement.
+        let directory = directory, fileURL = fileURL
+        Task.detached(priority: .utility) {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try JSONEncoder().encode(snapshot).write(to: fileURL, options: .atomic)
+            } catch {
+                // Pas bloquant : la bibliothèque sera réécrite au prochain changement.
+            }
         }
     }
 }

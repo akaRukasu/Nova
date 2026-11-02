@@ -200,7 +200,8 @@ final class ImportManager {
     private func beginBackgroundTime() {
         guard backgroundTask == .invalid else { return }
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Import Nova") { [weak self] in
-            Task { @MainActor in self?.endBackgroundTime() }
+            // Rendu tout de suite (sur le fil principal) : sinon iOS ferme l'app.
+            MainActor.assumeIsolated { self?.endBackgroundTime() }
         }
     }
 

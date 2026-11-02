@@ -63,7 +63,10 @@ struct RootView: View {
             JamView()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { player.saveSession(force: true) }
+            if phase != .active {
+                player.saveSession(force: true)
+                player.library.flush()
+            }
         }
     }
 }
