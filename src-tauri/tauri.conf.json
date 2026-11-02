@@ -1,14 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "NovaCord",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "identifier": "com.akarukasu.novacord",
   "build": {
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [],
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "security": {
       "csp": null
     }

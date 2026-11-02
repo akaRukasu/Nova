@@ -1,6 +1,9 @@
 // Pas de console noire derrière la fenêtre en version finale.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod shortcuts;
+use std::sync::Mutex;
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -14,6 +17,9 @@ const START_URL: &str = "https://discord.com/app";
 
 /// Couche de mods injectée dans Discord avant ses propres scripts.
 const MOD_SCRIPT: &str = include_str!("../../mod/novacord.js");
+const VENCORD_SCRIPT: &str = include_str!("../../mod/vencord.bundle.js");
+const AUDIO_SCRIPT: &str = include_str!("../../mod/soundboard.js");
+const MEDIA_SCRIPT: &str = include_str!("../../mod/media.js");
 
 /// Options du moteur WebView2 (Chromium d'Edge déjà présent sur Windows).
 /// Les trois premières désactivations sont celles que Tauri met par défaut ;
@@ -198,6 +204,9 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
     .additional_browser_args(BROWSER_ARGS)
     // Indispensable pour glisser-déposer des fichiers dans Discord.
     .disable_drag_drop_handler()
+    .initialization_script(MEDIA_SCRIPT)
+    .initialization_script(AUDIO_SCRIPT)
+    .initialization_script(VENCORD_SCRIPT)
     .initialization_script(MOD_SCRIPT)
     .on_navigation(|url| {
         if is_discord(url) {
@@ -241,11 +250,17 @@ fn main() {
     let start_hidden = std::env::args().any(|a| a == "--minimized");
 
     tauri::Builder::default()
+        .manage(Mutex::new(shortcuts::Shortcuts::default()))
+        .invoke_handler(tauri::generate_handler![shortcuts::get_shortcuts, shortcuts::set_shortcuts, shortcuts::set_shortcut_recording])
+        .plugin(tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| shortcuts::handle(app, shortcut, event.state()))
+            .build())
         // Une seule instance : relancer l'appli remet la fenêtre au premier plan.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app);
         }))
         .setup(move |app| {
+            shortcuts::init(app.handle())?;
             build_tray(app.handle())?;
             build_main_window(app.handle(), start_hidden)?;
             Ok(())

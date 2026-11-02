@@ -1,0 +1,8 @@
+{
+  "identifier": "discord-shortcuts",
+  "description": "Lire et modifier uniquement les raccourcis NovaCord depuis Discord.",
+  "windows": ["main"],
+  "local": false,
+  "remote": { "urls": ["https://discord.com/*"] },
+  "permissions": ["allow-get-shortcuts", "allow-set-shortcuts", "allow-set-shortcut-recording"]
+}
