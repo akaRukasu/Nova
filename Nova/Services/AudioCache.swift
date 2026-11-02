@@ -26,6 +26,11 @@ actor AudioCache {
         return url
     }
 
+    /// Fichier illisible : retiré du cache.
+    func remove(_ id: String) {
+        try? FileManager.default.removeItem(at: fileURL(for: id))
+    }
+
     func contains(_ id: String) -> Bool {
         FileManager.default.fileExists(atPath: fileURL(for: id).path)
     }

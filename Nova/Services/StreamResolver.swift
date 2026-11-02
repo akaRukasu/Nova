@@ -19,6 +19,16 @@ enum StreamResolver {
         return resolved
     }
 
+    /// Lien refusé en cours de lecture (expiré, ou lié à l'ancien réseau) : on en redemandera un.
+    static func invalidate(_ videoID: String) async {
+        await cache.remove(videoID)
+    }
+
+    /// Changement de réseau (Wi-Fi ↔ données mobiles) : les liens de YouTube sont liés à l'adresse IP.
+    static func invalidateAll() async {
+        await cache.removeAll()
+    }
+
     private static func resolve(_ videoID: String) async throws -> Resolved {
         let streams = try await YouTube(videoID: videoID, methods: [.local, .remote]).streams
         let audio = streams.filterAudioOnly()
@@ -43,6 +53,14 @@ private actor ResolvedCache {
     func value(for id: String) -> StreamResolver.Resolved? {
         guard let (resolved, expiry) = entries[id], expiry > Date().addingTimeInterval(60) else { return nil }
         return resolved
+    }
+
+    func remove(_ id: String) {
+        entries[id] = nil
+    }
+
+    func removeAll() {
+        entries.removeAll()
     }
 
     func store(_ resolved: StreamResolver.Resolved, for id: String) {

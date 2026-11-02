@@ -56,6 +56,12 @@ final class PlayerModel {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var artwork: MPMediaItemArtwork?
     @ObservationIgnored private var failureCount = 0
+    /// Reprises automatiques du titre en cours (flux coupé, lien expiré…), limitées.
+    @ObservationIgnored private var recoveryCount = 0
+    @ObservationIgnored private var recoveringSince: Date?
+    @ObservationIgnored private var recoveryTrackID: String?
+    @ObservationIgnored private var waitingSince: Date?
+    @ObservationIgnored private var watchdog: Task<Void, Never>?
     /// Ordre de la file avant le mode aléatoire.
     @ObservationIgnored private var unshuffledQueue: [Track]?
     @ObservationIgnored private var sleepTask: Task<Void, Never>?
@@ -83,6 +89,38 @@ final class PlayerModel {
                 self.trackDidEnd()
             }
         }
+        // Flux coupé en pleine lecture (lien expiré, réseau changé, YouTube qui ralentit…).
+        NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
+            let item = note.object as AnyObject?
+            Task { @MainActor in
+                guard let self, item === self.player.currentItem else { return }
+                self.recoverPlayback(reason: "fin de flux inattendue")
+            }
+        }
+        // Casque débranché, enceinte Bluetooth éteinte : iOS met en pause, l'interface suit.
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt)
+                .flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            Task { @MainActor in
+                guard let self, reason == .oldDeviceUnavailable else { return }
+                self.finishTransition()
+                self.player.pause()
+                self.isPlaying = false
+                self.updateNowPlaying()
+            }
+        }
+        // Services audio d'iOS relancés : on reconfigure et on reprend.
+        NotificationCenter.default.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.configureAudioSession()
+                if self.isPlaying { self.recoverPlayback(reason: "services audio relancés") }
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NetworkMonitor.didChangeNetwork, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.waitingSince = nil }
+        }
+        startWatchdog()
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
@@ -101,6 +139,84 @@ final class PlayerModel {
     private func attachTimeObserver() {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in self?.tick(time) }
+        }
+    }
+
+    // MARK: Reprise automatique
+
+    /// Toutes les 2 s : si la musique devrait jouer mais n'avance plus, on relance le titre là où il en était.
+    private func startWatchdog() {
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                self?.checkPlayback()
+            }
+        }
+    }
+
+    private func checkPlayback() {
+        // Fin du titre déjà gérée (passage au suivant en cours) : rien à relancer.
+        guard isPlaying, !isLoading, !crossfadeStarting, !endHandled, let item = player.currentItem else {
+            waitingSince = nil
+            return
+        }
+        if item.status == .failed {
+            recoverPlayback(reason: "flux en échec")
+            return
+        }
+        switch player.timeControlStatus {
+        case .playing:
+            waitingSince = nil
+            if let since = recoveringSince, Date().timeIntervalSince(since) > 20 {
+                // Lecture repartie et stable : le compteur de reprises repart de zéro.
+                recoveringSince = nil
+                recoveryCount = 0
+            }
+        case .waitingToPlayAtSpecifiedRate:
+            // Mise en mémoire tampon : normal quelques secondes, anormal au-delà.
+            let since = waitingSince ?? Date()
+            waitingSince = since
+            if Date().timeIntervalSince(since) > (NetworkMonitor.shared.isConnected ? 10 : 30) {
+                recoverPlayback(reason: "flux bloqué")
+            }
+        case .paused:
+            // Arrêtée sans qu'on l'ait demandé (ni pause, ni interruption) : on relance.
+            if waitingSince == nil {
+                waitingSince = Date()
+                player.play()
+            } else {
+                recoverPlayback(reason: "lecture arrêtée")
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    /// Relance le titre en cours à la même position, avec un lien de flux neuf.
+    private func recoverPlayback(reason: String) {
+        guard let track = current, !isLoading, !endHandled else { return }
+        waitingSince = nil
+        if recoveryTrackID != track.id {
+            recoveryTrackID = track.id
+            recoveryCount = 0
+        }
+        guard recoveryCount < 3 else {
+            // Trop d'échecs pour ce titre : on passe au suivant.
+            recoveryCount = 0
+            recoveringSince = nil
+            handleFailure(NovaError.noPlayableStream, track: track)
+            return
+        }
+        recoveryCount += 1
+        recoveringSince = Date()
+        let position = currentTime
+        let usedLocalFile = (player.currentItem?.asset as? AVURLAsset)?.url.isFileURL == true
+        Task {
+            await StreamResolver.invalidate(track.id)
+            // Fichier du cache illisible : retiré, le flux en ligne prend le relais.
+            if usedLocalFile, downloads.localURL(for: track.id) == nil { await AudioCache.shared.remove(track.id) }
+            guard current?.id == track.id else { return }
+            load(resumeAt: position)
         }
     }
 
@@ -457,8 +573,13 @@ final class PlayerModel {
             let failed = item.status == .failed
             let error = item.error
             Task { @MainActor in
-                guard let self, failed else { return }
-                self.handleFailure(error ?? NovaError.noPlayableStream, track: track)
+                guard let self, failed, self.current?.id == track.id else { return }
+                // Échec après le début du titre : on le relance là où il en était plutôt que de le sauter.
+                if self.currentTime > 2 {
+                    self.recoverPlayback(reason: "flux en échec")
+                } else {
+                    self.handleFailure(error ?? NovaError.noPlayableStream, track: track)
+                }
             }
         }
         try? AVAudioSession.sharedInstance().setActive(true)
