@@ -91,7 +91,7 @@ struct HomeView: View {
                 }
             } label: {
                 ZStack(alignment: .bottomLeading) {
-                    RemoteImage(urls: last.videoThumbnailURLs)
+                    RemoteImage(urls: last.videoThumbnailURLs, maxPixels: 1000)
                         .aspectRatio(16 / 9, contentMode: .fit)
                     LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
                     HStack(alignment: .bottom) {

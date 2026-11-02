@@ -12,6 +12,8 @@ actor PageCache {
     }
 
     private var memory: [String: Entry] = [:]
+    /// Taille des pages gardées en mémoire (les pages d'humeurs et genres pèsent plusieurs Mo).
+    private var memoryBytes = 0
     private let directory: URL
 
     init() {
@@ -36,7 +38,7 @@ actor PageCache {
                   let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             else { return nil }
             entry = Entry(date: date, data: data)
-            memory[key] = entry
+            remember(entry, for: key)
         }
         guard let value = try? JSONDecoder().decode(T.self, from: entry.data) else { return nil }
         return (value, Date().timeIntervalSince(entry.date))
@@ -44,12 +46,23 @@ actor PageCache {
 
     func store<T: Encodable>(_ value: T, for key: String) {
         guard let data = try? JSONEncoder().encode(value) else { return }
-        memory[key] = Entry(date: Date(), data: data)
-        if memory.count > 80 { memory.removeAll() }
+        remember(Entry(date: Date(), data: data), for: key)
         try? data.write(to: fileURL(for: key), options: .atomic)
     }
 
+    private func remember(_ entry: Entry, for key: String) {
+        if let old = memory[key] { memoryBytes -= old.data.count }
+        // Au-delà de 25 Mo, la mémoire est vidée : le disque garde tout.
+        if memoryBytes + entry.data.count > 25_000_000 || memory.count >= 80 {
+            memory.removeAll()
+            memoryBytes = 0
+        }
+        memory[key] = entry
+        memoryBytes += entry.data.count
+    }
+
     func clear() {
+        memoryBytes = 0
         memory.removeAll()
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         files.forEach { try? FileManager.default.removeItem(at: $0) }

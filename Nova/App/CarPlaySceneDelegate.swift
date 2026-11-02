@@ -216,7 +216,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func loadImage(_ urls: [URL], into item: CPListItem) {
         guard !urls.isEmpty else { return }
         Task {
-            if let image = await ImageLoader.load(urls) {
+            if let image = await ImageLoader.load(urls, maxPixels: 320) {
                 item.setImage(image)
             }
         }

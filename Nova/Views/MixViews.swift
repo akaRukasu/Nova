@@ -69,7 +69,7 @@ struct MixCard: View {
                     let side = proxy.size.width / 2
                     LazyVGrid(columns: [GridItem(.fixed(side), spacing: 0), GridItem(.fixed(side), spacing: 0)], spacing: 0) {
                         ForEach(Array(previews.prefix(4).enumerated()), id: \.offset) { _, track in
-                            RemoteImage(urls: track.squareArtworkURLs)
+                            RemoteImage(urls: track.squareArtworkURLs, maxPixels: 320)
                                 .frame(width: side, height: side)
                         }
                     }

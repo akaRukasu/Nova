@@ -76,7 +76,7 @@ struct ArtistView: View {
 
     private var banner: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(urls: page?.header.artworkURL.map { [$0] } ?? artist.artworkURLs)
+            RemoteImage(urls: page?.header.artworkURL.map { [$0] } ?? artist.artworkURLs, maxPixels: 1100)
                 .frame(height: 360)
                 .frame(maxWidth: .infinity)
                 .clipped()

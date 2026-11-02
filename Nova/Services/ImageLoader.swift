@@ -1,18 +1,22 @@
+import ImageIO
 import SwiftUI
 import UIKit
 
 /// Charge la première image disponible d'une liste d'URL, avec un cache mémoire.
+/// Les images sont décodées directement à la taille d'affichage : une miniature vidéo 1280×720
+/// affichée en vignette ne coûte pas 4 Mo de mémoire (iOS ferme les apps qui en consomment trop).
 enum ImageLoader {
-    private static let cache: NSCache<NSURL, UIImage> = {
-        let cache = NSCache<NSURL, UIImage>()
-        cache.countLimit = 300
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.totalCostLimit = 120_000_000
+        cache.countLimit = 400
         return cache
     }()
 
     /// Session avec un cache disque de 300 Mo : les pochettes ne sont téléchargées qu'une fois.
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.urlCache = URLCache(memoryCapacity: 40_000_000, diskCapacity: 300_000_000,
+        configuration.urlCache = URLCache(memoryCapacity: 20_000_000, diskCapacity: 300_000_000,
                                           directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                                             .appendingPathComponent("Images", isDirectory: true))
         configuration.requestCachePolicy = .returnCacheDataElseLoad
@@ -20,13 +24,28 @@ enum ImageLoader {
         return URLSession(configuration: configuration)
     }()
 
-    static func cached(_ urls: [URL]) -> UIImage? {
-        for url in urls { if let image = cache.object(forKey: url as NSURL) { return image } }
+    /// Tailles regroupées par paliers : une même image sert à plusieurs vues de tailles voisines.
+    private static func bucket(_ pixels: Int) -> Int {
+        [160, 320, 640, 1000, 1400].first { $0 >= pixels } ?? 1400
+    }
+
+    private static func key(_ url: URL, _ pixels: Int) -> NSString {
+        "\(url.absoluteString)#\(bucket(pixels))" as NSString
+    }
+
+    private static func store(_ image: UIImage, for url: URL, pixels: Int) {
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1_000_000
+        cache.setObject(image, forKey: key(url, pixels), cost: cost)
+    }
+
+    static func cached(_ urls: [URL], maxPixels: Int = 640) -> UIImage? {
+        for url in urls { if let image = cache.object(forKey: key(url, maxPixels)) { return image } }
         return nil
     }
 
-    static func load(_ urls: [URL]) async -> UIImage? {
-        if let hit = cached(urls) { return hit }
+    static func load(_ urls: [URL], maxPixels: Int = 640) async -> UIImage? {
+        if let hit = cached(urls, maxPixels: maxPixels) { return hit }
+        let size = bucket(maxPixels)
         for listed in urls {
             var url = listed
             // Titre sans pochette carrée : on cherche d'abord la vraie pochette HD.
@@ -39,25 +58,41 @@ enum ImageLoader {
             }
             guard let (data, response) = try? await session.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
-                  let raw = UIImage(data: data),
-                  raw.size.width > 130 // YouTube renvoie parfois une image vide de 120 px
+                  let decoded = downsample(data, maxPixels: size),
+                  decoded.originalWidth > 130 // YouTube renvoie parfois une image vide de 120 px
             else { continue }
             // Miniatures vidéo de YouTube : bandes noires ou grises autour de la pochette, rognées.
-            let source = url.host?.contains("ytimg") == true ? raw.trimmingUniformBorders() : raw
-            // Décodage hors du fil principal : le défilement reste fluide.
-            let image = await source.byPreparingForDisplay() ?? source
-            cache.setObject(image, forKey: listed as NSURL)
+            let image = url.host?.contains("ytimg") == true ? decoded.image.trimmingUniformBorders() : decoded.image
+            store(image, for: listed, pixels: size)
             // Aussi sous l'adresse trouvée : la vue qui l'utilisera ensuite l'affiche aussitôt.
-            if url != listed { cache.setObject(image, forKey: url as NSURL) }
+            if url != listed { store(image, for: url, pixels: size) }
             return image
         }
         return nil
+    }
+
+    /// Décodage à la taille voulue (ImageIO), hors du fil principal, prêt à l'affichage.
+    private static func downsample(_ data: Data, maxPixels: Int) -> (image: UIImage, originalWidth: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return (UIImage(cgImage: thumbnail), width)
     }
 }
 
 /// Image distante qui essaie plusieurs URL dans l'ordre.
 struct RemoteImage: View {
     let urls: [URL]
+    /// Plus grand côté utile, en pixels (taille d'affichage × 3).
+    var maxPixels = 640
     @State private var image: UIImage?
 
     var body: some View {
@@ -79,9 +114,9 @@ struct RemoteImage: View {
             }
             .clipped()
         .task(id: urls) {
-            if let hit = ImageLoader.cached(urls) { image = hit; return }
+            if let hit = ImageLoader.cached(urls, maxPixels: maxPixels) { image = hit; return }
             image = nil
-            let loaded = await ImageLoader.load(urls)
+            let loaded = await ImageLoader.load(urls, maxPixels: maxPixels)
             withAnimation(.easeOut(duration: 0.2)) { image = loaded }
         }
     }

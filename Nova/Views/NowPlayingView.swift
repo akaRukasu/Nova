@@ -22,7 +22,7 @@ struct NowPlayingView: View {
             if showLyrics {
                 // Mode paroles, comme dans Apple Music : petite pochette en haut, paroles au centre.
                 HStack(spacing: 12) {
-                    RemoteImage(urls: player.current?.squareArtworkURLs ?? [])
+                    RemoteImage(urls: player.current?.squareArtworkURLs ?? [], maxPixels: 200)
                         .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     titleBlock
@@ -96,14 +96,14 @@ struct NowPlayingView: View {
     /// Pochette carrée en HD (retrouvée sur YouTube Music si besoin), miniature 16:9 pour un clip seul.
     @ViewBuilder private var artwork: some View {
         if let track = player.current, !player.currentIsVideoOnly {
-            RemoteImage(urls: track.artworkURLs(pixels: 1200))
+            RemoteImage(urls: track.artworkURLs(pixels: 1200), maxPixels: 1100)
                 .aspectRatio(1, contentMode: .fit)
                 // Arrondi sur la pochette elle-même : posé après le cadre, plus large qu'elle,
                 // il tombait à côté et les coins restaient carrés.
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .frame(maxWidth: 340)
         } else {
-            RemoteImage(urls: player.current?.videoThumbnailURLs ?? [])
+            RemoteImage(urls: player.current?.videoThumbnailURLs ?? [], maxPixels: 1100)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
@@ -116,7 +116,7 @@ struct NowPlayingView: View {
             Color.black
             LinearGradient(colors: palette, startPoint: .top, endPoint: .bottom)
                 .animation(.easeInOut(duration: 0.6), value: palette)
-            RemoteImage(urls: player.current?.artworkURLs(pixels: 300) ?? [])
+            RemoteImage(urls: player.current?.artworkURLs(pixels: 300) ?? [], maxPixels: 160)
                 .scaleEffect(1.8)
                 .blur(radius: 80)
                 .opacity(0.45)
@@ -125,7 +125,7 @@ struct NowPlayingView: View {
         .ignoresSafeArea()
         .task(id: player.current?.id) {
             guard let track = player.current,
-                  let image = await ImageLoader.load(track.artworkURLs(pixels: 300)) else { return }
+                  let image = await ImageLoader.load(track.artworkURLs(pixels: 300), maxPixels: 160) else { return }
             let colors = await ArtworkPalette.colors(of: image)
             if !colors.isEmpty { palette = colors }
         }
