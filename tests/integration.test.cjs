@@ -27,6 +27,8 @@ function setupMixer(t, enabled = false) {
   const video = track("video");
   const sender = { track: input };
   const videoSender = { track: video };
+  const systemAudio = { ...track(), systemAudio: true };
+  const systemSender = { track: systemAudio };
   let onSender;
   class Stream { constructor(tracks) { this.tracks = tracks; } getAudioTracks() { return this.tracks.filter((t) => t.kind === "audio"); } }
   class Context {
@@ -45,7 +47,8 @@ function setupMixer(t, enabled = false) {
   const nativeCapture = async () => new Stream([input, video]);
   const navigator = { mediaDevices: { getUserMedia: nativeCapture } };
   const window = { localStorage: { getItem: () => String(enabled), setItem() {} },
-    NovaCordMedia: { senderState: () => connectionState, senders: () => [sender, videoSender], onSender(callback) { onSender = callback; callback(sender); callback(videoSender); },
+    NovaCordMedia: { senderState: () => connectionState, senders: () => [sender, videoSender, systemSender], isScreenAudio: (track) => !!track.systemAudio,
+      onSender(callback) { onSender = callback; callback(sender); callback(videoSender); callback(systemSender); },
       async replaceTrack(sender, track) { sender.track = track; } },
     Vencord: { Webpack: { Common: { MediaEngineStore: { isSelfMute: () => muted, isSelfDeaf: () => false, addChangeListener: (fn) => changes.push(fn) } } } } };
   window.top = window;
@@ -53,7 +56,7 @@ function setupMixer(t, enabled = false) {
     location: { hostname: "discord.com" }, console, setTimeout, clearTimeout, setInterval, clearInterval,
     indexedDB: { open: () => ({}) }, fetch: (...args) => fetchSound(...args) });
   t.after(() => window.NovaCordAudio.setEnabled(false));
-  return { audio: window.NovaCordAudio, sender, input, video, videoSender, sources, navigator, nativeCapture,
+  return { audio: window.NovaCordAudio, sender, input, video, videoSender, systemAudio, systemSender, sources, navigator, nativeCapture,
     mute: () => { muted = true; changes.forEach((fn) => fn()); },
     setFetch: (fn) => { fetchSound = fn; },
     replace: async (next) => { sender.track = next; onSender(sender); await window.NovaCordAudio.setEnabled(true); },
@@ -68,6 +71,8 @@ test("activation after joining wires the actual sender and leaves camera/capture
   await env.audio.setEnabled(true);
   assert.notEqual(env.sender.track, env.input);
   assert.equal(env.videoSender.track, env.video);
+  assert.equal(env.systemSender.track, env.systemAudio, "Le son du partage ne doit pas recevoir la soundboard");
+  assert.equal(env.audio.status().senders, 1);
   await env.audio.play("discord:1234");
   assert.equal(env.sources[0].started, true);
   env.mute();
@@ -150,4 +155,23 @@ test("stream configuration uses the chosen profile instead of fixed 4K/120", () 
   assert.equal(options.encode.height, 720);
   assert.equal(options.capture.framerate, 30);
   assert.ok(options.bitrateTarget > 600000);
+});
+
+test("screen audio and its clones stay separate from voice audio", async () => {
+  class Track {
+    constructor(kind) { this.kind = kind; this.readyState = "live"; }
+    clone() { return new Track(this.kind); }
+    getSettings() { return { width: 1280, height: 720 }; }
+    async applyConstraints() {}
+  }
+  const systemAudio = new Track("audio");
+  const screen = new Track("video");
+  const window = { MediaStreamTrack: Track };
+  window.top = window;
+  const navigator = { mediaDevices: { getDisplayMedia: async () => ({ getVideoTracks: () => [screen], getAudioTracks: () => [systemAudio] }) } };
+  vm.runInNewContext(mediaScript, { window, navigator, location: { hostname: "discord.com" }, console });
+  await navigator.mediaDevices.getDisplayMedia({ video: { height: 720, frameRate: 30 }, audio: true });
+  assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio), true);
+  assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio.clone()), true);
+  assert.equal(window.NovaCordMedia.isScreenAudio(new Track("audio")), false);
 });

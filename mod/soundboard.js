@@ -74,7 +74,7 @@
     if (previous && sender.track === previous.output && previous.input.readyState === "live" && previous.output.readyState === "live") return;
     if (previous) release(sender);
     const input = sender.track;
-    if (!enabled || input?.kind !== "audio" || input.readyState !== "live") return;
+    if (!enabled || input?.kind !== "audio" || input.readyState !== "live" || media.isScreenAudio?.(input)) return;
     const ctx = await audioContext();
     if (!enabled || sender.track !== input || input.readyState !== "live") return;
     const source = ctx.createMediaStreamSource(new MediaStream([input]));

@@ -11,6 +11,7 @@
   const peers = new Set();
   const listeners = new Set();
   const screenTracks = new WeakSet();
+  const screenAudioTracks = new WeakSet();
   const previousStats = new Map();
   let streamOptions;
   let capture;
@@ -115,6 +116,16 @@
     };
   }
 
+  if (window.MediaStreamTrack) {
+    const clone = window.MediaStreamTrack.prototype.clone;
+    window.MediaStreamTrack.prototype.clone = function () {
+      const result = clone.call(this);
+      if (screenTracks.has(this)) screenTracks.add(result);
+      if (screenAudioTracks.has(this)) screenAudioTracks.add(result);
+      return result;
+    };
+  }
+
   if (getUserMedia) devices.getUserMedia = async function (constraints) {
     try {
       const stream = await getUserMedia(constraints);
@@ -144,6 +155,7 @@
     captureError = "";
     try {
       const stream = await getDisplayMedia(options);
+      for (const track of stream.getAudioTracks()) screenAudioTracks.add(track);
       for (const track of stream.getVideoTracks()) {
         screenTracks.add(track);
         try {
@@ -178,6 +190,7 @@
 
   window.NovaCordMedia = Object.freeze({
     configureStreamOptions, diagnostics,
+    isScreenAudio: (track) => screenAudioTracks.has(track),
     senderState: (sender) => senders.get(sender)?.connectionState,
     senders: () => [...senders].filter(([, peer]) => peer.connectionState !== "closed").map(([sender]) => sender),
     onSender(callback) { listeners.add(callback); for (const sender of senders.keys()) callback(sender); },
