@@ -78,6 +78,7 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await pc.waitForFunction(() => document.querySelector('#online-note').textContent.includes('Écoute locale'));
     await pc.click('button[aria-label="Jouer Myinstants : Myinstants test"]');
     await pc.waitForFunction(() => document.querySelector('#feedback').textContent.includes('fixture-horn'));
+    await pc.waitForFunction(() => !document.querySelector('button[aria-label="Ajouter Myinstants : Myinstants test"]').disabled);
     await pc.click('button[aria-label="Ajouter Myinstants : Myinstants test"]');
     await pc.waitForFunction(() => snapshot.board.sounds.filter(sound => sound.source_slug === 'fixture-horn').length === 1);
     await pc.screenshot({ path: 'tests-output/myinstants-desktop.png' });
@@ -88,6 +89,7 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await phone.waitForFunction(() => onlinePlayer.duration > 0 && previewSlug === 'fixture-phone');
     await phone.tap('button[aria-label="Jouer Myinstants : Myinstants mobile"]');
     await pc.waitForFunction(() => document.querySelector('#feedback').textContent.includes('fixture-phone'));
+    await phone.waitForFunction(() => !document.querySelector('button[aria-label="Ajouter Myinstants : Myinstants mobile"]').disabled);
     await phone.tap('button[aria-label="Ajouter Myinstants : Myinstants mobile"]');
     await phone.waitForFunction(() => snapshot.board.sounds.some(sound => sound.source_slug === 'fixture-phone'));
     await phone.screenshot({ path: 'tests-output/myinstants-phone.png' });
