@@ -153,6 +153,16 @@ const puppeteer = upstream("puppeteer-core");
           sent, received }));
       }
       const receivedRms = rms();
+      const requestResponse = await fetch(new Request("https://discord.com/api/v10/channels/123/send-soundboard-sound", {
+        method: "POST", body: JSON.stringify({ sound_id: "1234" }), headers: { "Content-Type": "application/json" },
+      }));
+      const xhrStatus = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/api/v10/channels/123/send-soundboard-sound");
+        xhr.onload = () => resolve(xhr.status);
+        xhr.onerror = () => reject(new Error("Échec de la route soundboard XHR"));
+        xhr.send(JSON.stringify({ sound_id: "1234" }));
+      });
       input.enabled = false;
       await wait(() => audioSender.track.enabled === false, "coupure du micro respectée");
       let muteRejected = false;
@@ -187,7 +197,7 @@ const puppeteer = upstream("puppeteer-core");
       for (const track of camera.getTracks()) track.stop();
       screen.stop(); input.stop();
       await inputContext.close(); await receiverContext.close();
-      return { wiredLate, cameraUntouched, cameraFramesSent, before, receivedRms, nativeSoundStatus: response.status,
+      return { wiredLate, cameraUntouched, cameraFramesSent, before, receivedRms, nativeSoundStatus: response.status, requestStatus: requestResponse.status, xhrStatus,
         muteRejected, restored, configuredHeight: profile.capture.height, sentHeight: encoded.frameHeight,
         sentWidth: encoded.frameWidth, maxFramerate: highest.maxFramerate };
     });
@@ -197,6 +207,8 @@ const puppeteer = upstream("puppeteer-core");
     assert.ok(result.before < 0.001, "La piste de référence doit être silencieuse");
     assert.ok(result.receivedRms > 0.025, "Le second pair doit réellement recevoir le son");
     assert.equal(result.nativeSoundStatus, 204);
+    assert.equal(result.requestStatus, 204);
+    assert.equal(result.xhrStatus, 204);
     assert.equal(result.muteRejected, true);
     assert.equal(result.restored, true);
     assert.equal(result.configuredHeight, 720);

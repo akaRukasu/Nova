@@ -107,6 +107,7 @@
 
   function activeBindings() {
     return [...bindings].filter(([sender, b]) => sender.track === b.output
+      && (!media.senderState || media.senderState(sender) === "connected")
       && b.output.readyState === "live" && b.input.readyState === "live").map(([, b]) => b);
   }
 

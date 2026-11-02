@@ -18,6 +18,7 @@ test("Vencord stream defaults preserve user choices", () => {
 
 function setupMixer(t, enabled = false) {
   let muted = false;
+  let connectionState = "connected";
   let fetchSound = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) });
   const sources = [];
   const changes = [];
@@ -44,7 +45,7 @@ function setupMixer(t, enabled = false) {
   const nativeCapture = async () => new Stream([input, video]);
   const navigator = { mediaDevices: { getUserMedia: nativeCapture } };
   const window = { localStorage: { getItem: () => String(enabled), setItem() {} },
-    NovaCordMedia: { senders: () => [sender, videoSender], onSender(callback) { onSender = callback; callback(sender); callback(videoSender); },
+    NovaCordMedia: { senderState: () => connectionState, senders: () => [sender, videoSender], onSender(callback) { onSender = callback; callback(sender); callback(videoSender); },
       async replaceTrack(sender, track) { sender.track = track; } },
     Vencord: { Webpack: { Common: { MediaEngineStore: { isSelfMute: () => muted, isSelfDeaf: () => false, addChangeListener: (fn) => changes.push(fn) } } } } };
   window.top = window;
@@ -56,7 +57,7 @@ function setupMixer(t, enabled = false) {
     mute: () => { muted = true; changes.forEach((fn) => fn()); },
     setFetch: (fn) => { fetchSound = fn; },
     replace: async (next) => { sender.track = next; onSender(sender); await window.NovaCordAudio.setEnabled(true); },
-    newTrack: track,
+    newTrack: track, disconnect: () => { connectionState = "disconnected"; },
   };
 }
 
@@ -111,6 +112,14 @@ test("a disabled mixer refuses transmission but allows explicit local preview", 
   await env.audio.preview("discord:1234");
   assert.equal(env.sources[0].started, true);
   assert.equal(env.sender.track, env.input);
+});
+
+test("a disconnected sender is not reported as ready to transmit", async (t) => {
+  const env = setupMixer(t);
+  await env.audio.setEnabled(true);
+  env.disconnect();
+  assert.equal(env.audio.status().active, false);
+  await assert.rejects(env.audio.play("discord:1234"), /Aucune piste vocale/);
 });
 
 test("camera format fallback retains the chosen device and returns the original stream", async () => {

@@ -178,6 +178,7 @@
 
   window.NovaCordMedia = Object.freeze({
     configureStreamOptions, diagnostics,
+    senderState: (sender) => senders.get(sender)?.connectionState,
     senders: () => [...senders].filter(([, peer]) => peer.connectionState !== "closed").map(([sender]) => sender),
     onSender(callback) { listeners.add(callback); for (const sender of senders.keys()) callback(sender); },
     replaceTrack: (sender, track) => nativeReplace.call(sender, track),

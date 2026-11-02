@@ -310,18 +310,30 @@
     return touched;
   }
 
-  // Retourne { block: true } ou { body } (corps modifié) ou null.
+  function isSoundboardRequest(method, raw) {
+    if (!window.NovaCordAudio?.status().enabled || String(method).toUpperCase() !== "POST") return false;
+    try {
+      const url = new URL(raw, location.href);
+      return url.origin === location.origin && /^\/api\/v\d+\/channels\/\d+\/send-soundboard-sound\/?$/.test(url.pathname);
+    } catch { return false; }
+  }
+
+  function playSoundResponse(id) {
+    return window.NovaCordAudio.play(id).then(() => new Response(null, { status: 204 })).catch((error) => {
+      notifyError(error);
+      throw error;
+    });
+  }
+
+  // Retourne { block: true }, { sound }, { body } ou null.
   function inspect(method, url, body) {
     method = String(method || "GET").toUpperCase();
     url = String(url || "");
 
-    if (window.NovaCordAudio?.status().enabled && method === "POST") {
+    if (isSoundboardRequest(method, url)) {
       try {
-        const target = new URL(url, location.href);
-        if (target.origin === location.origin && /^\/api\/v\d+\/channels\/\d+\/send-soundboard-sound\/?$/.test(target.pathname)) {
-          const payload = JSON.parse(body);
-          if (/^\d+$/.test(String(payload.sound_id))) return { sound: "discord:" + payload.sound_id };
-        }
+        const payload = JSON.parse(body);
+        if (/^\d+$/.test(String(payload.sound_id))) return { sound: "discord:" + payload.sound_id };
       } catch {}
     }
     if (enabled("noTrack") && TRACKING_URL.test(url)) return { block: true };
@@ -352,13 +364,14 @@
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const method = (init && init.method) || (input instanceof Request ? input.method : "GET");
-      const verdict = inspect(method, url, init && init.body);
-      if (verdict?.sound) {
-        return window.NovaCordAudio.play(verdict.sound).then(() => new Response(null, { status: 204 })).catch((error) => {
-          notifyError(error);
-          throw error;
+      if (input instanceof Request && init?.body === undefined && isSoundboardRequest(method, url)) {
+        return input.clone().text().then((body) => {
+          const verdict = inspect(method, url, body);
+          return verdict?.sound ? playSoundResponse(verdict.sound) : nativeFetch.call(this, input, init);
         });
       }
+      const verdict = inspect(method, url, init && init.body);
+      if (verdict?.sound) return playSoundResponse(verdict.sound);
       if (verdict && verdict.block) {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
