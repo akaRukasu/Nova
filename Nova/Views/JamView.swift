@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// Page du Jam : lancer, rejoindre, voir la file commune.
@@ -100,7 +101,7 @@ struct JamView: View {
         } header: {
             Text("Jams à proximité")
         } footer: {
-            Text("Tes amis doivent avoir Nova, avec le Wi-Fi ou le Bluetooth activé. La première fois, autorise Nova à accéder au réseau local.")
+            Text("Ou scanne le QR code du Jam d'un ami avec l'appareil photo de ton iPhone. Tes amis doivent avoir Nova, avec le Wi-Fi ou le Bluetooth activé. La première fois, autorise Nova à accéder au réseau local.")
         }
     }
 
@@ -123,6 +124,29 @@ struct JamView: View {
             Text("Ton Jam est ouvert")
         } footer: {
             Text("La musique sort de ton iPhone (ou de l'enceinte AirPlay choisie). Chacun peut ajouter des titres depuis le menu « … » d'un titre.")
+        }
+        if let url = jam.joinURL {
+            Section {
+                VStack(spacing: 12) {
+                    QRCodeView(text: url.absoluteString)
+                        .frame(width: 200, height: 200)
+                        .padding(14)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Text("Code \(jam.code ?? "")")
+                        .font(.headline.monospaced())
+                    ShareLink(item: url, subject: Text("Rejoins mon Jam Nova"),
+                              message: Text("Ouvre ce lien sur ton iPhone (Nova installé, à côté de moi) pour rejoindre mon Jam.")) {
+                        Label("Envoyer le lien", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            } header: {
+                Text("Inviter avec le QR code")
+            } footer: {
+                Text("Tes amis scannent ce code avec l'appareil photo de leur iPhone : Nova s'ouvre et rejoint ton Jam.")
+            }
         }
         queueSections(jam.state)
         Section {
@@ -197,5 +221,33 @@ struct JamView: View {
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// QR code net (agrandi sans lissage).
+struct QRCodeView: View {
+    let text: String
+
+    var body: some View {
+        if let image = Self.image(for: text) {
+            Image(uiImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Image(systemName: "qrcode")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.black)
+        }
+    }
+
+    private static func image(for text: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
+              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }

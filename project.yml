@@ -41,6 +41,9 @@ targets:
         NSLocationWhenInUseUsageDescription: Nova utilise ta position pour trouver les concerts près de chez toi.
         NSLocalNetworkUsageDescription: Nova trouve les Jams de tes amis à proximité pour écouter ensemble.
         NSBonjourServices: [_nova-jam._tcp, _nova-jam._udp]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.akarukasu.nova.jam
+            CFBundleURLSchemes: [nova]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.akarukasu.nova

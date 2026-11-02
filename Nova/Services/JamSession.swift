@@ -47,6 +47,10 @@ final class JamSession: NSObject {
     /// Dernier état connu (reçu de l'hôte, ou envoyé par soi en tant qu'hôte).
     private(set) var state: JamState?
     private(set) var isConnecting = false
+    /// Code du Jam lancé (dans le QR code et le lien « nova://jam/CODE »).
+    private(set) var code: String?
+    /// Page Jam ouverte depuis un QR code.
+    var isPresented = false
     var message: String?
     var guestsCanControl = true {
         didSet { if role == .host { broadcastState() } }
@@ -62,6 +66,7 @@ final class JamSession: NSObject {
     struct NearbyJam: Identifiable, Hashable {
         let peer: MCPeerID
         let name: String
+        let code: String?
         var id: MCPeerID { peer }
     }
 
@@ -75,6 +80,11 @@ final class JamSession: NSObject {
     @ObservationIgnored private var lastSent = Date.distantPast
     @ObservationIgnored private var names: [MCPeerID: String] = [:]
     @ObservationIgnored private var addedBy: [String: String] = [:]
+    /// Code scanné : on rejoint ce Jam dès qu'il est trouvé à proximité.
+    @ObservationIgnored private var pendingCode: String?
+
+    /// Lien du Jam, à scanner avec l'appareil photo de l'iPhone.
+    var joinURL: URL? { code.flatMap { URL(string: "nova://jam/\($0)") } }
 
     private var player: PlayerModel { PlayerModel.shared }
 
@@ -102,7 +112,10 @@ final class JamSession: NSObject {
         let session = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
         self.session = session
-        let advertiser = MCNearbyServiceAdvertiser(peer: peer, discoveryInfo: ["name": publicName], serviceType: serviceType)
+        let newCode = String((0..<6).map { _ in "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".randomElement()! })
+        code = newCode
+        let advertiser = MCNearbyServiceAdvertiser(peer: peer, discoveryInfo: ["name": publicName, "code": newCode],
+                                                   serviceType: serviceType)
         advertiser.delegate = self
         advertiser.startAdvertisingPeer()
         self.advertiser = advertiser
@@ -163,6 +176,31 @@ final class JamSession: NSObject {
         broadcastState()
     }
 
+    // MARK: QR code
+
+    /// Lien « nova://jam/CODE » ouvert depuis l'appareil photo : on rejoint ce Jam.
+    @discardableResult
+    func open(_ url: URL) -> Bool {
+        guard url.scheme == "nova", url.host == "jam",
+              let scanned = url.pathComponents.last?.uppercased(), scanned.count >= 4 else { return false }
+        isPresented = true
+        if role == .host, scanned == code { return true }
+        if role == .guest {
+            guard state == nil || nearbyCodeOfHost != scanned else { return true }
+            leave(silently: true)
+        }
+        pendingCode = scanned
+        message = "Recherche du Jam \(scanned)…"
+        startBrowsing()
+        if let match = nearby.first(where: { $0.code == scanned }) {
+            pendingCode = nil
+            join(match)
+        }
+        return true
+    }
+
+    @ObservationIgnored private var nearbyCodeOfHost: String?
+
     // MARK: Invité
 
     /// Cherche les Jams autour de soi (tant que la page Jam est ouverte).
@@ -183,6 +221,7 @@ final class JamSession: NSObject {
 
     func join(_ jam: NearbyJam) {
         guard let browser, let peer = peerID else { return }
+        nearbyCodeOfHost = jam.code
         let session = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
         self.session = session
@@ -244,6 +283,9 @@ final class JamSession: NSObject {
         session = nil
         role = .none
         state = nil
+        code = nil
+        pendingCode = nil
+        nearbyCodeOfHost = nil
         nearby = []
         names = [:]
         isConnecting = false
@@ -293,7 +335,13 @@ final class JamSession: NSObject {
 
     fileprivate func found(_ peer: MCPeerID, info: [String: String]?) {
         guard peer != peerID, !nearby.contains(where: { $0.peer == peer }) else { return }
-        nearby.append(NearbyJam(peer: peer, name: info?["name"] ?? peer.displayName))
+        let jam = NearbyJam(peer: peer, name: info?["name"] ?? peer.displayName, code: info?["code"])
+        nearby.append(jam)
+        if let pendingCode, jam.code == pendingCode, role == .none, !isConnecting {
+            self.pendingCode = nil
+            message = nil
+            join(jam)
+        }
     }
 
     fileprivate func lost(_ peer: MCPeerID) {

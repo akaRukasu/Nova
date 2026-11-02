@@ -7,6 +7,8 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var router = router
+        // Lu ici pour que la page Jam s'ouvre dès qu'un QR code est scanné.
+        let showJam = JamSession.shared.isPresented && !router.showPlayer
         TabView(selection: $router.tab) {
             Tab("Accueil", systemImage: "house.fill", value: AppTab.home) {
                 NavigationStack(path: $router.homePath) {
@@ -46,6 +48,19 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(player.errorMessage ?? "")
+        }
+        // QR code d'un Jam scanné avec l'appareil photo (« nova://jam/CODE »).
+        .onOpenURL { url in
+            guard url.host == "jam" else { return }
+            router.showPlayer = false
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                JamSession.shared.open(url)
+            }
+        }
+        .sheet(isPresented: Binding(get: { showJam },
+                                    set: { JamSession.shared.isPresented = $0 })) {
+            JamView()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { player.saveSession(force: true) }

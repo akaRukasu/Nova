@@ -263,33 +263,37 @@ struct NowPlayingView: View {
         .buttonStyle(.plain)
     }
 
+    /// Quatre boutons de même largeur : les icônes restent alignées quelle que soit leur taille.
     private var bottomBar: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 0) {
             RoutePicker()
                 .frame(width: 30, height: 30)
-            Spacer()
+                .frame(maxWidth: .infinity)
             Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { showLyrics.toggle() } } label: {
                 Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
                     .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
             .accessibilityLabel("Paroles")
-            Spacer()
             Button { showJam = true } label: {
                 Image(systemName: JamSession.shared.role == .none ? "person.2.wave.2" : "person.2.wave.2.fill")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(JamSession.shared.role == .none ? Color.white : Color.novaAccent)
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
             .accessibilityLabel("Jam")
-            Spacer()
             Button { showQueue = true } label: {
                 Image(systemName: "list.bullet")
                     .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .accessibilityLabel("File d'attente")
         }
-        .padding(.horizontal, 22)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
         .padding(.vertical, 12)
         .glassEffect(in: Capsule())
     }

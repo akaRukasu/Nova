@@ -25,7 +25,7 @@ actor ArtworkResolver {
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Nova", isDirectory: true)
         // Nouveau nom à chaque amélioration de la recherche : les titres restés sans pochette sont recherchés à nouveau.
-        .appendingPathComponent("artworks-v2.json")
+        .appendingPathComponent("artworks-v3.json")
 
     init() {
         if let data = try? Data(contentsOf: fileURL),
@@ -144,14 +144,20 @@ extension InnerTubeClient {
             let candidateArtist = Self.artworkKey(candidate.artist)
             return candidate.hasSquareArtwork
                 && Self.artworkKey(candidate.title) == wantedTitle
-                && names.contains { candidateArtist.contains(Self.artworkKey($0)) }
+                && names.contains { name in
+                    let key = Self.artworkKey(name)
+                    return !key.isEmpty && (candidateArtist.contains(key) || key.contains(candidateArtist))
+                }
         }
         return match?.artworkURL
     }
 
     /// « Caballero & JeanJass », « A, B et C », « A x B » → noms séparés.
     private static func artistNames(_ text: String) -> [String] {
-        text.replacingOccurrences(of: #"(?i)\s*(,|&|\bet\b|\band\b|\bx\b|\bfeat\.?|\bft\.?)\s*"#, with: "|",
+        // Chaînes YouTube : « LuvResvalVEVO », « Stromae - Topic », « Orelsan Officiel »…
+        let channel = text.replacingOccurrences(of: #"(?i)\s*(-\s*topic|vevo|official|officiel|music|tv)\s*$"#, with: "",
+                                                options: .regularExpression)
+        return channel.replacingOccurrences(of: #"(?i)\s*(,|&|\bet\b|\band\b|\bx\b|\bfeat\.?|\bft\.?)\s*"#, with: "|",
                                   options: .regularExpression)
             .split(separator: "|")
             .map { $0.trimmingCharacters(in: .whitespaces) }
