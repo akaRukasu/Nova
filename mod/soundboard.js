@@ -261,50 +261,20 @@
     lastPlayback = preview ? "Écoute locale uniquement." : nativeInputs.size ? "Lecture dans l’entrée vocale Discord." : "Lecture dans le transmetteur WebRTC (mode de repli).";
   }
 
-  const discordCatalog = new Map();
-  const discordFetched = new Map();
-  let discordUser, discordLoading = false, discordError = "";
-  function collectDiscord(value, result, depth = 0) {
-    if (!value || typeof value !== "object" || depth > 4) return;
-    const id = String(value.soundId ?? value.sound_id ?? value.id ?? "");
-    if (/^\d+$/.test(id) && typeof value.name === "string") {
-      result.set(id, { id: "discord:" + id, name: value.name, local: false }); return;
-    }
-    for (const child of typeof value.values === "function" ? value.values() : Object.values(value)) collectDiscord(child, result, depth + 1);
-  }
-  function loadDiscordCatalog(common) {
-    const user = common.UserStore?.getCurrentUser?.()?.id;
-    if (user !== discordUser) { discordCatalog.clear(); discordFetched.clear(); discordUser = user; }
-    if (!common.RestAPI?.get || !user || discordLoading) return;
-    const guilds = new Set([common.SelectedGuildStore?.getGuildId?.(),
-      common.ChannelStore?.getChannel?.(common.SelectedChannelStore?.getVoiceChannelId?.())?.guild_id]);
-    const scopes = ["default", ...[...guilds].filter(id => /^\d+$/.test(id))];
-    const scope = scopes.find(id => Date.now() - (discordFetched.get(id) || 0) >= 60000);
-    if (!scope) return;
-    discordLoading = true; discordFetched.set(scope, Date.now());
-    // Use Discord's own authenticated client; never read or copy its token.
-    Promise.resolve().then(() => common.RestAPI.get({ url: scope === "default" ? "/soundboard-default-sounds" : "/guilds/" + scope + "/soundboard-sounds" }))
-      .then(response => {
-        if (discordUser !== user) return;
-        if (!response || response.ok === false || response.status >= 400) throw new Error("Catalogue Discord indisponible.");
-        const sounds = new Map(); collectDiscord(response.body?.items ?? response.body, sounds);
-        discordCatalog.set(scope, sounds); discordError = "";
-      }).catch(error => { if (discordUser === user) discordError = String(error.message || error); })
-      .finally(() => { discordLoading = false; });
-  }
   async function list() {
     const imported = await stored("readonly", (store) => store.getAll());
     const result = imported.map(({ id, name, source_slug }) => ({ id, name, local: true, ...(source_slug ? { source_slug } : {}) }));
-    const common = window.Vencord?.Webpack?.Common || {};
-    loadDiscordCatalog(common);
-    const sounds = new Map();
-    for (const group of discordCatalog.values()) for (const [id, sound] of group) sounds.set(id, sound);
     try {
-      const store = common.SoundboardStore || window.Vencord?.Webpack?.findStore?.("SoundboardStore");
-      collectDiscord(store?.getSounds?.(), sounds);
-      collectDiscord(store?.getOverlaySerializedState?.()?.soundboardSounds, sounds);
-    } catch (error) { discordError = String(error.message || error); }
-    result.push(...sounds.values());
+      const sounds = window.Vencord?.Webpack?.Common?.SoundboardStore?.getSounds?.();
+      const seen = new Set();
+      const groups = sounds instanceof Map || typeof sounds?.values === "function" ? sounds.values() : Object.values(sounds || {});
+      for (const group of groups) for (const sound of Array.isArray(group) ? group : []) {
+        const id = String(sound.soundId ?? sound.sound_id ?? sound.id ?? "");
+        if (!/^\d+$/.test(id) || seen.has(id)) continue;
+        seen.add(id);
+        result.push({ id: "discord:" + id, name: String(sound.name || "Son Discord"), local: false });
+      }
+    } catch (error) { console.warn("NovaCord : sons Discord indisponibles ; les imports restent accessibles.", error); }
     return result.map((sound) => ({ ...sound, ...(metadata[sound.id] || {}) }));
   }
 
@@ -336,7 +306,6 @@
     },
     status: () => ({ enabled, active: inputsForCall().length > 0 || activeBindings().length > 0, senders: inputsForCall().length || activeBindings().length,
       route: nativeInputs.size ? "Discord AudioInput" : "WebRTC fallback", nativeInputs: nativeInputs.size,
-      discordCatalog: { loading: discordLoading, error: discordError, groups: discordCatalog.size },
       context: context?.state || "non démarré", error: lastError, lastPlayback, volume, monitor, monitorVolume,
       monitorOutput: "Sortie Windows par défaut (comme l’aperçu local)", lastAttempt, playbackStarts, activeSources: playing.size }),
     setMonitor(value) {
