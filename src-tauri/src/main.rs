@@ -19,6 +19,7 @@ const START_URL: &str = "https://discord.com/app";
 const MOD_SCRIPT: &str = include_str!("../../mod/novacord.js");
 const VENCORD_SCRIPT: &str = include_str!("../../mod/vencord.bundle.js");
 const AUDIO_SCRIPT: &str = include_str!("../../mod/soundboard.js");
+const MEDIA_SCRIPT: &str = include_str!("../../mod/media.js");
 
 /// Options du moteur WebView2 (Chromium d'Edge déjà présent sur Windows).
 /// Les trois premières désactivations sont celles que Tauri met par défaut ;
@@ -203,8 +204,9 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
     .additional_browser_args(BROWSER_ARGS)
     // Indispensable pour glisser-déposer des fichiers dans Discord.
     .disable_drag_drop_handler()
-    .initialization_script(VENCORD_SCRIPT)
+    .initialization_script(MEDIA_SCRIPT)
     .initialization_script(AUDIO_SCRIPT)
+    .initialization_script(VENCORD_SCRIPT)
     .initialization_script(MOD_SCRIPT)
     .on_navigation(|url| {
         if is_discord(url) {

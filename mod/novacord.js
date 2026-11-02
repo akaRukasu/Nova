@@ -315,6 +315,15 @@
     method = String(method || "GET").toUpperCase();
     url = String(url || "");
 
+    if (window.NovaCordAudio?.status().enabled && method === "POST") {
+      try {
+        const target = new URL(url, location.href);
+        if (target.origin === location.origin && /^\/api\/v\d+\/channels\/\d+\/send-soundboard-sound\/?$/.test(target.pathname)) {
+          const payload = JSON.parse(body);
+          if (/^\d+$/.test(String(payload.sound_id))) return { sound: "discord:" + payload.sound_id };
+        }
+      } catch {}
+    }
     if (enabled("noTrack") && TRACKING_URL.test(url)) return { block: true };
     if (enabled("silentTyping") && method === "POST" && TYPING_URL.test(url)) {
       return { block: true };
@@ -344,6 +353,12 @@
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const method = (init && init.method) || (input instanceof Request ? input.method : "GET");
       const verdict = inspect(method, url, init && init.body);
+      if (verdict?.sound) {
+        return window.NovaCordAudio.play(verdict.sound).then(() => new Response(null, { status: 204 })).catch((error) => {
+          notifyError(error);
+          throw error;
+        });
+      }
       if (verdict && verdict.block) {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
@@ -367,6 +382,13 @@
       try {
         verdict = inspect(req.method, req.url, body);
       } catch {}
+      if (verdict?.sound) {
+        window.NovaCordAudio.play(verdict.sound).then(() => fakeEmptyResponse(this), (error) => {
+          notifyError(error);
+          fakeEmptyResponse(this, 400, String(error.message || error));
+        });
+        return;
+      }
       if (verdict && verdict.block) return fakeEmptyResponse(this);
       if (verdict && verdict.body !== undefined) body = verdict.body;
     }
@@ -374,13 +396,14 @@
   };
 
   // Simule un « 204 No Content » pour qu'une requête bloquée passe pour réussie.
-  function fakeEmptyResponse(xhr) {
+  function fakeEmptyResponse(xhr, status = 204, message = "") {
     const define = (k, v) => Object.defineProperty(xhr, k, { value: v, configurable: true });
     define("readyState", 4);
-    define("status", 204);
-    define("statusText", "No Content");
-    define("responseText", "");
-    define("response", "");
+    define("status", status);
+    define("statusText", status === 204 ? "No Content" : "Soundboard unavailable");
+    const body = message ? JSON.stringify({ message }) : "";
+    define("responseText", body);
+    define("response", xhr.responseType === "json" && message ? { message } : body);
     define("responseURL", xhr.__nova.url);
     xhr.getAllResponseHeaders = () => "";
     xhr.getResponseHeader = () => null;
@@ -505,6 +528,7 @@
   `;
 
   let host = null;
+  const panelCleanups = new Set();
 
   function el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
@@ -528,6 +552,8 @@
   }
 
   function closePanel() {
+    for (const cleanup of panelCleanups) cleanup();
+    panelCleanups.clear();
     if (recording) stopRecording();
     if (host) host.remove();
     host = null;
@@ -539,6 +565,8 @@
     const { h, root } = makeHost();
     host = h;
 
+    const mediaPanel = el("div");
+    buildMediaPanel(mediaPanel).catch(notifyError);
     const shortcutEditor = el("div", { class: "shortcuts" });
     const soundboard = el("div");
     buildSoundboard(soundboard).catch(notifyError);
@@ -616,6 +644,8 @@
         el("h2", {}, "Streams et Vencord"),
         vencord,
         vencordButton,
+        el("h2", {}, "Caméra et qualité réellement envoyée"),
+        mediaPanel,
         el("h2", {}, "Raccourcis personnalisés"),
         shortcutEditor,
         el("h2", {}, "Soundboard dans le micro"),
@@ -643,6 +673,83 @@
     root.append(backdrop);
     const first = root.querySelector("input");
     if (first) first.focus();
+  }
+
+
+  async function buildMediaPanel(container) {
+    const media = window.NovaCordMedia;
+    if (!media) { container.textContent = "Le suivi des médias n'a pas démarré."; return; }
+    const report = el("div", { class: "status", role: "status" });
+    const cameraReport = el("div", { class: "status", role: "status" });
+    const cameras = el("select", { "aria-label": "Caméra à tester" }, el("option", { value: "" }, "Caméra par défaut"));
+    const preview = el("video", { autoplay: "", playsinline: "" });
+    preview.muted = true;
+    preview.style.cssText = "width:100%;max-height:220px;display:none;background:#000";
+    let cameraStream;
+    function stopCamera() {
+      if (cameraStream) for (const track of cameraStream.getTracks()) track.stop();
+      cameraStream = null;
+      preview.srcObject = null;
+      preview.style.display = "none";
+    }
+    panelCleanups.add(stopCamera);
+    async function refresh() {
+      const info = await media.diagnostics();
+      if (!container.isConnected) return;
+      const lines = [];
+      if (info.capture) {
+        lines.push("Demandé : " + info.requested.height + "p / " + info.requested.frameRate + " i/s.");
+        lines.push("Capturé : " + info.capture.width + " × " + info.capture.height + " / " + Math.round(info.capture.frameRate || 0) + " i/s.");
+      }
+      const streams = info.outgoing.filter((entry) => entry.kind === "video" && entry.screen);
+      if (!streams.length) lines.push("Aucun partage d'écran en cours d'envoi.");
+      for (const entry of streams) lines.push("Envoyé : " + (entry.width || "?") + " × " + (entry.height || "?")
+        + " / " + Math.round(entry.frameRate || 0) + " i/s"
+        + (entry.bitrate == null ? "" : " / " + (entry.bitrate / 1000000).toFixed(2) + " Mbit/s")
+        + (entry.limitation && entry.limitation !== "none" ? " — limitation : " + entry.limitation : ""));
+      if (info.captureError) lines.push("Capture : " + info.captureError);
+      if (info.cameraError) lines.push("Caméra : " + info.cameraError);
+      report.textContent = lines.join("\n");
+    }
+    async function enumerate() {
+      const devices = await media.devices();
+      cameras.replaceChildren(el("option", { value: "" }, "Caméra par défaut"));
+      for (const device of devices.filter((device) => device.kind === "videoinput")) {
+        cameras.append(el("option", { value: device.deviceId }, device.label || "Caméra " + cameras.options.length));
+      }
+    }
+    container.append(
+      el("div", { class: "hint" }, "La qualité demandée est une cible. La capture et l'envoi mesurés peuvent être plus bas selon l'écran, le réseau ou les performances. Les valeurs ci-dessous viennent des statistiques WebRTC."),
+      report, cameras,
+      el("button", { class: "btn secondary", onclick: async () => {
+        stopCamera();
+        cameraReport.textContent = "Ouverture de la caméra…";
+        try {
+          const stream = await media.testCamera(cameras.value);
+          if (!container.isConnected) { for (const track of stream.getTracks()) track.stop(); return; }
+          cameraStream = stream;
+          preview.srcObject = stream;
+          preview.style.display = "block";
+          await preview.play();
+          const settings = stream.getVideoTracks()[0].getSettings();
+          cameraReport.textContent = "Caméra ouverte : " + settings.width + " × " + settings.height + ". Ferme cet aperçu avant de l'activer dans Discord.";
+          await enumerate();
+        } catch (error) {
+          stopCamera();
+          cameraReport.textContent = error.name + " : " + error.message;
+          if (error.name === "NotAllowedError") cameraReport.textContent += "\nVérifie Réglages Windows → Confidentialité → Caméra → Autoriser les applications de bureau.";
+          if (error.name === "NotReadableError") cameraReport.textContent += "\nFerme les autres logiciels utilisant cette caméra.";
+          if (error.name === "NotFoundError") cameraReport.textContent += "\nAucune caméra utilisable détectée dans Windows.";
+        }
+      } }, "Tester la caméra"),
+      el("button", { class: "btn secondary", onclick: () => { stopCamera(); cameraReport.textContent = "Aperçu arrêté, caméra libérée."; } }, "Arrêter le test caméra"),
+      cameraReport, preview,
+    );
+    await enumerate().catch((error) => { cameraReport.textContent = error.message; });
+    await refresh();
+    if (!container.isConnected) return;
+    const timer = setInterval(() => refresh().catch(() => {}), 1000);
+    panelCleanups.add(() => clearInterval(timer));
   }
 
   async function buildShortcutEditor(container) {
@@ -715,7 +822,9 @@
     function updateStatus() {
       const state = audio.status();
       toggle.textContent = state.enabled ? "Désactiver la soundboard" : "Activer la soundboard";
-      status.textContent = state.error || (state.active ? "Mixeur prêt sur ton micro." : state.enabled ? "Reconnecte le vocal pour brancher le mixeur sur ton micro." : "Active la soundboard avant de rejoindre le vocal.");
+      status.textContent = state.error || (state.active ? "Mixeur branché sur " + state.senders + " piste(s) vocale(s) sortante(s)."
+        : state.enabled ? "Aucune piste vocale sortante : rejoins un salon et ouvre ton micro." : "Soundboard désactivée.");
+      if (state.lastPlayback) status.textContent += "\n" + state.lastPlayback;
     }
     const list = el("div", { class: "sound-list" });
     async function refresh() {
@@ -724,7 +833,7 @@
       for (const sound of sounds) {
         const row = el("div", { class: "row" }, el("div", { class: "text" }, sound.name), el("button", {
           class: "btn secondary", onclick: () => audio.play(sound.id).catch(notifyError),
-        }, "Jouer"));
+        }, "Jouer dans le vocal"), el("button", { class: "btn secondary", onclick: () => audio.preview(sound.id).catch(notifyError) }, "Écouter chez moi"));
         if (sound.local) row.append(el("button", { class: "btn secondary", onclick: async () => {
           try { await audio.remove(sound.id); await refresh(); } catch (error) { notifyError(error); }
         } }, "Supprimer"));
@@ -742,15 +851,17 @@
         status.textContent = "Son importé. Rouvre ce panneau pour lui attribuer un raccourci.";
       } catch (error) { status.textContent = String(error.message || error); }
     };
-    const volume = el("input", { type: "range", min: "0", max: "100", value: "70", "aria-label": "Volume des sons" });
+    const volume = el("input", { type: "range", min: "0", max: "100", value: String(Math.round(audio.status().volume * 100)), "aria-label": "Volume des sons" });
     volume.oninput = () => audio.setVolume(Number(volume.value) / 100);
     container.append(
-      el("div", { class: "hint" }, "Les autres entendent les sons dans ta voix, sans effet soundboard natif. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. La suppression du bruit peut atténuer les sons."),
+      el("div", { class: "hint" }, "« Jouer dans le vocal » envoie le son aux autres. « Écouter chez moi » est un test local. Ton micro doit être ouvert ; en appuyer-pour-parler, maintiens aussi ta touche. Les requêtes du bouton soundboard Discord passent aussi par le mixeur lorsqu’il est activé."),
       toggle, status, file, el("div", {}, "Volume des sons", volume),
       el("button", { class: "btn secondary", onclick: () => refresh().catch(notifyError) }, "Actualiser les sons Discord"),
       el("button", { class: "btn secondary", onclick: audio.stopAll }, "Arrêter les sons"), list,
     );
     updateStatus();
+    const timer = setInterval(() => { if (container.isConnected) updateStatus(); }, 1000);
+    panelCleanups.add(() => clearInterval(timer));
     await refresh();
   }
 
@@ -809,7 +920,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.2.0" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.2.1" }),
     configurable: false,
     writable: false,
   });

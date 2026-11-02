@@ -12,17 +12,24 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 - **Mode éco** (plugin) : animations, transitions et flous désactivés.
 - **Anti-pistage** (plugin) : la télémétrie de Discord n'est plus envoyée.
 
-## Streams, raccourcis et soundboard (0.2)
+## Streams, raccourcis et soundboard (0.2.1)
 
 Ouvre **Paramètres NovaCord** depuis l'icône près de l'horloge (ou `Ctrl + Alt + N` tant que tu n'as pas changé ce raccourci).
 
 - **Qualité des streams** : Vencord est maintenant réellement embarqué, avec `FakeNitro`, `WebScreenShare`, `WebScreenShareFixes` et `WebKeybinds` activés par défaut. Au lancement d'un partage, le sélecteur Vencord propose la résolution et les images/seconde (1080p / 60 par défaut). Cela configure ton émission : les performances dépendent de la source, du matériel et du réseau. Cela n'améliore pas la qualité du stream émis par quelqu'un d'autre.
 - **Créer tes raccourcis** : section *Raccourcis personnalisés* → *Ajouter un raccourci* → choisir une action → *Enregistrer les touches* → saisir ta combinaison → *Enregistrer les raccourcis*. Ils sont enregistrés dans Windows et restent actifs en arrière-plan. Les conflits et doublons sont signalés ; si l'enregistrement échoue, les anciens raccourcis sont restaurés. Actions : micro, casque, mode streamer, mode vocal, paramètres, jouer un son, arrêter les sons. Le changement de mode vocal ne crée pas un raccourci « maintenir pour parler ».
-- **Soundboard** : active *Soundboard dans le micro*, puis reconnecte le vocal. Ouvre la soundboard de Discord une fois pour charger les sons auxquels ton compte a accès, puis clique sur *Actualiser les sons Discord* dans NovaCord. Tu peux aussi importer tes fichiers audio (8 Mo maximum) : ils restent stockés localement. Rouvre le panneau après un import pour pouvoir attribuer un raccourci au son.
+- **Soundboard** : active *Soundboard dans le micro*. Le mixeur se branche sur les pistes WebRTC sortantes, même si le vocal est déjà connecté. Ouvre la soundboard de Discord une fois pour charger les sons auxquels ton compte a accès, puis clique sur *Actualiser les sons Discord* dans NovaCord. Tu peux aussi importer tes fichiers audio (8 Mo maximum) : ils restent stockés localement. Rouvre le panneau après un import pour pouvoir attribuer un raccourci au son.
 
 Les sons sont mélangés à ta piste micro : les autres peuvent les entendre sans utiliser l'API soundboard native. Ils n'ont pas ses animations ni son réglage de volume séparé chez les auditeurs. Le micro doit être ouvert ; en appuyer-pour-parler, il faut aussi maintenir ta touche de parole. La suppression du bruit peut atténuer les sons. Désactiver la soundboard arrête ses sons et laisse la voix fonctionner ; reconnecter le vocal retire aussi le mixeur.
 
-Ces fonctions doivent être validées dans un appel réel sous Windows. Les tests automatisés ne remplacent pas un essai avec un autre auditeur.
+### Correction des médias en 0.2.1
+
+- La caméra et le flux original de capture ne sont plus modifiés par le mixeur. Un format caméra trop strict peut être relâché automatiquement en conservant le périphérique choisi. Le panneau propose un aperçu local, libéré dès l'arrêt du test ou la fermeture du panneau, avec les erreurs de permission/périphérique.
+- La soundboard remplace uniquement la piste audio du transmetteur WebRTC. L'activation fonctionne après la connexion au vocal, et la désactivation restaure la piste d'origine. Le micro reste soumis à sa coupure et au mode de transmission. Les changements de microphone et la fermeture de la connexion libèrent le mixeur sans arrêter le périphérique appartenant à Discord.
+- « Jouer dans le vocal » transmet le son ; « Écouter chez moi » est un aperçu local. Quand le mixeur est activé, les requêtes d'envoi de la soundboard native sont redirigées vers cette même sortie vocale. Les boutons que Discord bloque avant l'envoi restent soumis à son interface : utilise alors la liste du panneau NovaCord.
+- Le profil de partage utilise la résolution et la fréquence choisies, au lieu des valeurs maximales fixes de 4K/120 i/s. La couche vidéo haute conserve ce profil et un budget de débit adapté. Le panneau affiche séparément la cible, la capture et les dimensions/fréquence/débit réellement encodés, ainsi que les limitations indiquées par WebRTC. La qualité réelle dépend toujours de la source, du processeur et du réseau.
+
+Les tests Edge créent deux pairs WebRTC et mesurent le niveau sonore reçu, avec la caméra active ; ils vérifient aussi un envoi vidéo 1280 × 720. Ils utilisent des périphériques simulés et une page contrôlée. Ils ne remplacent pas un essai avec le matériel de l'utilisateur dans un appel Discord réel.
 
 ## Plugins
 

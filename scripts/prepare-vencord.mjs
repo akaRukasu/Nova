@@ -16,6 +16,8 @@ const source = readFileSync(entry, "utf8");
 if (!source.includes('import "./NovaCordNative"')) {
   writeFileSync(entry, source.replace('import "./VencordNativeStub";', 'import "./NovaCordNative";'));
 }
+mkdirSync(resolve(upstream, "src/userplugins"), { recursive: true });
+writeFileSync(resolve(upstream, "src/userplugins/novacordMedia.ts"), readFileSync(new URL("../mod/vencord-media.ts", import.meta.url)));
 execFileSync(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["buildWeb", "--standalone", "--skip-extension", "--dev"], {
   cwd: upstream, stdio: "inherit", shell: process.platform === "win32",
 });

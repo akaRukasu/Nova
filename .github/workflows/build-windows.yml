@@ -44,7 +44,7 @@ jobs:
         run: |
           pnpm --dir .vencord install --frozen-lockfile
           node scripts/prepare-vencord.mjs .vencord
-          git -C .vencord add browser/Vencord.ts browser/NovaCordNative.ts
+          git -C .vencord add browser/Vencord.ts browser/NovaCordNative.ts src/userplugins/novacordMedia.ts
           git -C .vencord archive --format=zip --output=../Vencord-source.zip "$(git -C .vencord write-tree)"
 
       - name: Check shortcuts and audio mixer
