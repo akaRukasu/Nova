@@ -4,6 +4,7 @@
 mod shortcuts;
 mod remote_server;
 mod soundboard;
+mod myinstants;
 use std::sync::{Arc, Mutex};
 
 use tauri::{

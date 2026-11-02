@@ -41,6 +41,10 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         .title("NovaCord · Soundboard").inner_size(1180.0, 820.0).min_inner_size(720.0, 560.0)
         .background_color(tauri::window::Color(0x10, 0x11, 0x17, 0xff))
         .on_navigation(|url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1"))
+        .on_new_window(|url,_| {
+            if url.scheme() == "https" && matches!(url.host_str(),Some("www.myinstants.com" | "myinstants.com")) { crate::open_external(&url); }
+            tauri::webview::NewWindowResponse::Deny
+        })
         .build().map_err(|e| e.to_string())?;
     Ok(())
 }

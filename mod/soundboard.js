@@ -11,6 +11,8 @@
   const nativeGains = new Set();
   const monitorGains = new Set();
   const localSources = new Set();
+  const temporarySounds = new Map();
+  let pendingOnline = null;
   let playbackStarts = 0;
   let lastAttempt = "";
   let context;
@@ -188,6 +190,7 @@
   }
 
   function stopAll() {
+    pendingOnline = null;
     playbackGeneration++;
     for (const source of playing) source.stop();
     playing.clear();
@@ -217,7 +220,7 @@
       if (!response.ok) throw new Error("Ce son Discord n'est pas téléchargeable.");
       data = await response.arrayBuffer();
     } else {
-      const sound = await stored("readonly", (store) => store.get(id));
+      const sound = temporarySounds.get(id) || await stored("readonly", (store) => store.get(id));
       if (!sound) throw new Error("Son introuvable.");
       data = await sound.blob.arrayBuffer();
     }
@@ -260,7 +263,7 @@
 
   async function list() {
     const imported = await stored("readonly", (store) => store.getAll());
-    const result = imported.map(({ id, name }) => ({ id, name, local: true }));
+    const result = imported.map(({ id, name, source_slug }) => ({ id, name, local: true, ...(source_slug ? { source_slug } : {}) }));
     try {
       const sounds = window.Vencord?.Webpack?.Common?.SoundboardStore?.getSounds?.();
       const seen = new Set();
@@ -275,9 +278,32 @@
     return result.map((sound) => ({ ...sound, ...(metadata[sound.id] || {}) }));
   }
 
+  async function importSound(file, id = crypto.randomUUID(), source_slug) {
+    if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
+    if (!file.size) throw new Error("Le fichier audio est vide.");
+    const ctx = await audioContext(false);
+    try { await ctx.decodeAudioData(await file.arrayBuffer()); }
+    catch { throw new Error("Format audio illisible. Essaie un fichier MP3, WAV ou OGG."); }
+    await stored("readwrite", store => store.put({ id, name: file.name, blob: file, ...(source_slug ? { source_slug } : {}) }));
+    return id;
+  }
   window.NovaCordAudio = Object.freeze({
     play: (id) => play(id).catch((error) => { lastError = error.message; throw error; }), list, stopAll,
     preview: (id) => play(id, true), edit, attachInput, releaseInput,
+    prepareOnline(token) { stopAll(); pendingOnline = token; },
+    async playFile(file, token, preview = false) {
+      if (token !== pendingOnline) throw new Error("Lecture Myinstants annulée.");
+      const id = "online:" + crypto.randomUUID(); temporarySounds.set(id, { blob: file });
+      try { await play(id, preview); } catch (error) { lastError = error.message; throw error; }
+      finally { temporarySounds.delete(id); }
+    },
+    async importOnline(file, slug, color) {
+      if (!/^[a-z0-9_-]{1,160}$/i.test(slug)) throw new Error("Son Myinstants invalide.");
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(slug));
+      const id = "myinstants:" + [...new Uint8Array(hash)].slice(0,16).map(value => value.toString(16).padStart(2,"0")).join("");
+      if (await stored("readonly", store => store.get(id))) return id;
+      await importSound(file, id, slug); edit(id, { category: "Myinstants", color }); return id;
+    },
     status: () => ({ enabled, active: inputsForCall().length > 0 || activeBindings().length > 0, senders: inputsForCall().length || activeBindings().length,
       route: nativeInputs.size ? "Discord AudioInput" : "WebRTC fallback", nativeInputs: nativeInputs.size,
       context: context?.state || "non démarré", error: lastError, lastPlayback, volume, monitor, monitorVolume,
@@ -303,16 +329,7 @@
     },
     setVolume(value) { volume = Math.min(1, Math.max(0, Number(value) || 0)); if (soundGain) soundGain.gain.value = volume; for (const gain of nativeGains) gain.gain.value = volume; storage.setItem("novacord:sound-volume", String(volume)); },
     setMonitorVolume(value) { monitorVolume = Math.min(1, Math.max(0, Number(value) || 0)); for (const gain of monitorGains) gain.gain.value = monitorVolume; storage.setItem("novacord:monitor-volume", String(monitorVolume)); },
-    async import(file) {
-      if (file.size > 8 * 1024 * 1024) throw new Error("Choisis un son de moins de 8 Mo.");
-      if (!file.size) throw new Error("Le fichier audio est vide.");
-      const ctx = await audioContext(false);
-      try { await ctx.decodeAudioData(await file.arrayBuffer()); }
-      catch { throw new Error("Format audio illisible. Essaie un fichier MP3, WAV ou OGG."); }
-      const sound = { id: crypto.randomUUID(), name: file.name, blob: file };
-      await stored("readwrite", (store) => store.put(sound));
-      return sound.id;
-    },
+    import: file => importSound(file),
     remove: async (id) => { await stored("readwrite", (store) => store.delete(id)); delete metadata[id]; storage.setItem(META_KEY, JSON.stringify(metadata)); },
   });
 })();

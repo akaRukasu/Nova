@@ -53,7 +53,7 @@ function setupMixer(t, enabled = false) {
     Vencord: { Webpack: { Common: { SelectedChannelStore: { getVoiceChannelId: () => "voice" }, MediaEngineStore: { isSelfMute: () => muted, isSelfDeaf: () => false, addChangeListener: (fn) => changes.push(fn) } } } } };
   window.top = window;
   vm.runInNewContext(mixer, { window, navigator, MediaStream: Stream, AudioContext: Context,
-    location: { hostname: "discord.com" }, console, setTimeout, clearTimeout, setInterval, clearInterval,
+    location: { hostname: "discord.com" }, crypto: { randomUUID: () => "transient-test" }, console, setTimeout, clearTimeout, setInterval, clearInterval,
     indexedDB: { open: () => ({}) }, fetch: (...args) => fetchSound(...args) });
   t.after(() => window.NovaCordAudio.setEnabled(false));
   return { audio: window.NovaCordAudio, sender, input, video, videoSender, systemAudio, systemSender, sources, navigator, nativeCapture,
@@ -209,4 +209,16 @@ test("Discord AudioInput receives sound before transmission gating and preserves
   env.audio.releaseInput(mixed);
   assert.equal(env.input.readyState, 'ended');
   assert.equal(env.video.readyState, 'live', 'AudioInput release must leave the camera to Discord');
+});
+
+
+test('an online download cannot start after stop, while direct playback uses the existing mixer', async t => {
+  const env = setupMixer(t); await env.audio.setEnabled(true);
+  env.audio.prepareOnline('cancel-me'); env.audio.stopAll();
+  await assert.rejects(env.audio.playFile(new File(['data'], 'Online'), 'cancel-me'), /annulée/);
+  assert.equal(env.sources.length, 0);
+  env.audio.prepareOnline('play-me');
+  await env.audio.playFile(new File(['data'], 'Online'), 'play-me');
+  assert.ok(env.sources[0].started);
+  assert.match(env.audio.status().lastAttempt, /online:/);
 });

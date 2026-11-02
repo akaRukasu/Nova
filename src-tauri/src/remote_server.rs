@@ -18,6 +18,7 @@ pub struct Sound {
     #[serde(default)] pub category: String,
     #[serde(default)] pub color: String,
     #[serde(default)] pub shortcut: String,
+    #[serde(default)] pub source_slug: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -55,6 +56,7 @@ pub struct Service {
     pending: Mutex<HashMap<String, mpsc::SyncSender<Result<(), String>>>>,
     uploads: Mutex<HashMap<String, Vec<u8>>>,
     stopped: AtomicBool,
+    myinstants: crate::myinstants::Catalog,
 }
 
 fn key() -> String { Uuid::new_v4().simple().to_string() }
@@ -81,7 +83,7 @@ fn respond(request: Request, status: u16, body: String, mime: &str, etag: Option
     for (name, value) in [
         ("Content-Type", mime), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "no-referrer"), ("X-Frame-Options", "DENY"),
-        ("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"),
+        ("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src blob:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"),
     ] {
         response.add_header(Header::from_bytes(name, value).unwrap());
     }
@@ -93,8 +95,11 @@ fn json_response(request: Request, status: u16, value: Value) { respond(request,
 
 impl Service {
     pub fn new() -> Self {
+        Self::with_myinstants(crate::myinstants::Catalog::new())
+    }
+    pub fn with_myinstants(myinstants: crate::myinstants::Catalog) -> Self {
         Self { data: Mutex::new(Data { board: Board::default(), synced: None, revision: 0, port: 0, addresses: vec![], desktop_key: key(), phone_key: key(), lan: false, phone_seen: None }),
-            pending: Mutex::new(HashMap::new()), uploads: Mutex::new(HashMap::new()), stopped: AtomicBool::new(false) }
+            pending: Mutex::new(HashMap::new()), uploads: Mutex::new(HashMap::new()), stopped: AtomicBool::new(false), myinstants }
     }
 
     pub fn sync(&self, mut board: Board) -> Result<(), String> {
@@ -105,6 +110,7 @@ impl Service {
             sound.name = sound.name.chars().take(160).collect();
             sound.category = sound.category.chars().take(48).collect();
             sound.shortcut = sound.shortcut.chars().take(80).collect();
+            sound.source_slug = sound.source_slug.chars().take(160).collect();
             if sound.color.len() != 7 || !sound.color.starts_with('#') || !sound.color[1..].bytes().all(|b| b.is_ascii_hexdigit()) { sound.color = "#7c6bff".into(); }
         }
         board.error = board.error.chars().take(400).collect();
@@ -158,7 +164,7 @@ impl Service {
             let data = self.data.lock().unwrap();
             if data.synced.is_none_or(|time| time.elapsed() > Duration::from_secs(6)) { return Err("NovaCord n'est pas prêt. Ouvre Discord sur le PC.".into()); }
             let kind = action["action"].as_str().ok_or("Action manquante.")?;
-            if !matches!(kind, "play" | "preview" | "stop" | "volume" | "monitor" | "monitor-volume" | "enable" | "refresh" | "edit" | "delete" | "import") { return Err("Action inconnue.".into()); }
+            if !matches!(kind, "play" | "preview" | "stop" | "volume" | "monitor" | "monitor-volume" | "enable" | "refresh" | "edit" | "delete" | "import" | "online-sound" | "online-prepare") { return Err("Action inconnue.".into()); }
             if matches!(kind, "play" | "preview" | "edit" | "delete") {
                 let sound = data.board.sounds.iter().find(|s| Some(s.id.as_str()) == action["id"].as_str()).ok_or("Son introuvable.")?;
                 if kind == "delete" && !sound.local { return Err("Seuls les sons importés peuvent être supprimés.".into()); }
@@ -200,6 +206,37 @@ impl Service {
         if !desktop && !phone { drop(data); json_response(request, 401, json!({"error":"Appairage nécessaire ou expiré."})); return; }
         drop(data);
         if phone { self.data.lock().unwrap().phone_seen = Some(Instant::now()); }
+
+        if request.method() == &Method::Post && matches!(request.url(), "/api/myinstants/search" | "/api/myinstants/audio" | "/api/myinstants/action") {
+            let route = request.url().to_owned();
+            let mut bytes = Vec::new();
+            if request.as_reader().take(2049).read_to_end(&mut bytes).is_err() || bytes.len()>2048 { json_response(request,400,json!({"error":"Requête Myinstants trop longue."})); return; }
+            let value: Value = match serde_json::from_slice(&bytes) { Ok(value) => value, Err(_) => { json_response(request,400,json!({"error":"Requête Myinstants invalide."})); return; } };
+            if route == "/api/myinstants/search" {
+                match self.myinstants.search(value["query"].as_str().unwrap_or(""), value["page"].as_u64().and_then(|n| u32::try_from(n).ok()).unwrap_or(1)) {
+                    Ok(page) => json_response(request,200,json!(page)), Err(error) => json_response(request,error.status,json!({"error":error.message})),
+                } return;
+            }
+            let mode = value["mode"].as_str().unwrap_or("");
+            if route.ends_with("/action") && (!matches!(mode,"play" | "save" | "preview") || (!desktop && mode=="preview")) { json_response(request,403,json!({"error":"Action Myinstants indisponible depuis cet appareil."})); return; }
+            let token = key();
+            if route.ends_with("/action") && matches!(mode,"play" | "preview") {
+                if let Err(error) = self.command(json!({"action":"online-prepare","token":token}),dispatch) { json_response(request,409,json!({"error":error})); return; }
+            }
+            let (sound, bytes) = match self.myinstants.audio(value["slug"].as_str().unwrap_or("")) {
+                Ok(value) => value, Err(error) => { json_response(request,error.status,json!({"error":error.message})); return; }
+            };
+            if route.ends_with("/audio") {
+                let mut response = Response::from_data(bytes.as_ref().clone());
+                for (name,value) in [("Content-Type","audio/mpeg"),("Cache-Control","no-store"),("X-Content-Type-Options","nosniff"),("Referrer-Policy","no-referrer")] { response.add_header(Header::from_bytes(name,value).unwrap()); }
+                let _ = request.respond(response); return;
+            }
+            let upload_id = key();
+            { let mut uploads = self.uploads.lock().unwrap(); if uploads.len()>=2 { drop(uploads); json_response(request,429,json!({"error":"Un téléchargement est déjà en cours."})); return; } uploads.insert(upload_id.clone(),bytes.as_ref().clone()); }
+            let result = self.command(json!({"action":"online-sound", "upload_id":upload_id, "mode":mode, "token":token, "name":sound.name, "slug":sound.slug, "color":sound.color}),dispatch);
+            self.uploads.lock().unwrap().remove(&upload_id);
+            json_response(request,if result.is_ok(){200}else{409},result.map_or_else(|error|json!({"error":error}), |_|json!({"ok":true}))); return;
+        }
 
         if request.method() == &Method::Get && request.url() == "/api/state" {
             let data = self.data.lock().unwrap();
@@ -251,7 +288,7 @@ impl Service {
             let mut bytes = Vec::new();
             if request.as_reader().take(8193).read_to_end(&mut bytes).is_err() || bytes.len() > 8192 { json_response(request, 400, json!({"error":"Commande trop longue."})); return; }
             let action = match serde_json::from_slice::<Value>(&bytes) { Ok(value) if value.is_object() => value, _ => { json_response(request, 400, json!({"error":"Commande invalide."})); return; } };
-            if action["action"] == "import" || (!desktop && matches!(action["action"].as_str(), Some("preview" | "monitor" | "monitor-volume"))) { json_response(request, 403, json!({"error":"Action réservée au PC."})); return; }
+            if matches!(action["action"].as_str(), Some("import" | "online-sound" | "online-prepare")) || (!desktop && matches!(action["action"].as_str(), Some("preview" | "monitor" | "monitor-volume"))) { json_response(request, 403, json!({"error":"Action réservée au PC."})); return; }
             let result = self.command(action, dispatch);
             json_response(request, if result.is_ok() {200} else {409}, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
         }
@@ -292,6 +329,7 @@ mod tests {
         let desktop = service.data.lock().unwrap().desktop_key.clone();
         assert_eq!(request(&service, "GET", "/", "", b"", None).0, 200);
         assert_eq!(request(&service, "GET", "/api/state", "", b"", None).0, 401);
+        assert_eq!(request(&service, "POST", "/api/myinstants/search", "", br#"{"query":"test"}"#, None).0, 401);
         assert_eq!(request(&service, "GET", "/api/state", &desktop, b"", None).0, 200);
         assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":true}"#, Some("http://evil.invalid")).0, 403);
         assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":true}"#, None).0, 200);
@@ -305,6 +343,9 @@ mod tests {
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"preview","id":"test-sound"}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"monitor","enabled":true}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"monitor-volume","volume":0.2}"#, None).0, 403);
+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"online-sound"}"#, None).0, 403);
+        assert_eq!(request(&service, "POST", "/api/myinstants/search", &phone, br#"{"query":"x"}"#, None).0, 400);
+        assert_eq!(request(&service, "POST", "/api/myinstants/audio", &phone, br#"{"slug":"unknown"}"#, None).0, 404);
         assert_eq!(request(&service, "POST", "/api/command", &desktop, br#"{"action":"monitor-volume","volume":2}"#, None).0, 409);
         assert_eq!(request(&service, "POST", "/api/remote", &phone, br#"{"enabled":false}"#, None).0, 403);
         assert_eq!(request(&service, "POST", "/api/network-access", &phone, b"", None).0, 403);

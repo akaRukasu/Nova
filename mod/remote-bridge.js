@@ -48,6 +48,16 @@
         case "edit": audio.edit(command.id, command); break;
         case "delete": await audio.remove(command.id); break;
         case "refresh": break;
+        case "online-prepare": audio.prepareOnline(command.token); break;
+        case "online-sound": {
+          const bytes = await invoke("take_soundboard_upload", { id: command.upload_id });
+          const data = Array.isArray(bytes) ? new Uint8Array(bytes) : bytes;
+          if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) throw new Error("Le téléchargement Myinstants a échoué.");
+          const file = new File([data], command.name.slice(0,160), { type: "audio/mpeg" });
+          if (command.mode === "save") await audio.importOnline(file, command.slug, command.color);
+          else await audio.playFile(file, command.token, command.mode === "preview");
+          break;
+        }
         case "import": {
           const bytes = await invoke("take_soundboard_upload", { id: command.upload_id });
           let name;

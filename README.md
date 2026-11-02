@@ -12,6 +12,17 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 - **Mode éco** (plugin) : animations, transitions et flous désactivés.
 - **Anti-pistage** (plugin) : la télémétrie de Discord n'est plus envoyée.
 
+## Myinstants intégré (0.4)
+
+Dans la fenêtre **Soundboard et télécommande**, ouvre **Myinstants**, saisis le nom d’un son et clique sur **Rechercher**.
+
+- **Écouter** lance un aperçu local : sur le PC via le volume de retour casque, sur le téléphone via son propre lecteur audio. Si le navigateur mobile le demande, touche une seconde fois Écouter après le chargement.
+- La grande carte **Jouer dans l’appel** transmet le son via le PC sans l’ajouter à ta bibliothèque. NovaCord doit rester ouvert, avec le mixeur activé et un appel en cours.
+- **Ajouter** conserve une copie dans **Mes fichiers**, catégorie **Myinstants**. Le même son peut ensuite être utilisé hors ligne, en favori et avec un raccourci. Un second ajout du même bouton Myinstants ne crée pas de doublon.
+- La recherche, la lecture dans l’appel et l’ajout sont aussi accessibles depuis la télécommande téléphone.
+
+L’intégration utilise l’[API officielle Myinstants](https://www.myinstants.com/api/v1/), sans compte ni jeton. La limite anonyme est de 10 recherches par minute. Les pages sont mises en cache pendant 10 minutes et six fichiers audio au maximum restent temporairement en mémoire. Les sons sont limités à 8 Mo ; seules les adresses audio HTTPS Myinstants connues par une recherche sont téléchargées. Aucun compte Discord ni jeton n’est envoyé au site. Le lien de chaque résultat permet de retrouver sa page source. Une connexion Internet sur le PC est nécessaire pour les recherches et les nouveaux téléchargements.
+
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
 La version 0.3.5 ajoute aussi **Volume du retour casque**, indépendant du volume envoyé dans l’appel et mémorisé entre les sessions. Ce réglage s’applique au retour automatique et à l’écoute locale ; il est disponible dans les paramètres et la soundboard sur PC.

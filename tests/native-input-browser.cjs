@@ -64,7 +64,7 @@ const puppeteer = createRequire(resolve('.vencord/package.json'))('puppeteer-cor
       text(36,'data'); view.setUint32(40,wav.byteLength-44,true);
       for(let i=0;i<96000;i++) view.setInt16(44+i*2,Math.round(Math.sin(i*2*Math.PI*880/48000)*12000),true);
       const id = await window.NovaCordAudio.import(new File([wav], 'tone.wav'));
-      await window.NovaCordAudio.setEnabled(true); await window.NovaCordAudio.play(id);
+      await window.NovaCordAudio.setEnabled(true); window.NovaCordAudio.prepareOnline('direct-file'); await window.NovaCordAudio.playFile(new File([wav], 'Online tone'), 'direct-file');
       const withMonitor = window.NovaCordAudio.status();
       if (!withMonitor.monitor || withMonitor.activeSources !== 2) throw new Error('Missing local monitor alongside the call source');
       let rms = 0;

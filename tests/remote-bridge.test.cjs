@@ -12,6 +12,9 @@ test("remote commands use the existing audio player and acknowledge its actual o
     setVolume(value) { calls.push(["volume", value]); }, setMonitor(value) { calls.push(["monitor", value]); }, setMonitorVolume(value) { calls.push(["monitor-volume", value]); }, async setEnabled(value) { calls.push(["enable", value]); },
     edit(id, patch) { calls.push(["edit", id, patch.favorite]); }, async remove(id) { calls.push(["delete", id]); },
     async import(file) { assert.equal(file.name, "réaction.wav"); assert.equal(await file.text(), "RIFFtest"); calls.push(["import"]); },
+    prepareOnline(token) { calls.push(['prepare-online', token]); },
+    async playFile(file, token) { assert.equal(await file.text(), 'RIFFtest'); calls.push(['online-play', token]); },
+    async importOnline(file, slug, color) { assert.equal(file.name, 'Online'); calls.push(['online-save', slug, color]); },
     async list() { if (failList) throw new Error("Stockage bloqué"); return [{ id: "one", name: "Premier son", local: true }]; },
     status() { return { enabled: true, active: true, volume: 0.5, error: "", lastPlayback: "" }; },
   };
@@ -38,6 +41,11 @@ test("remote commands use the existing audio player and acknowledge its actual o
   assert.ok(calls.some(call => call[0] === "monitor" && call[1] === false));
   await window.NovaCordRemote.execute({ action: "monitor-volume", volume: 0.2, requestId: "local-volume" });
   assert.ok(calls.some(call => call[0] === "monitor-volume" && call[1] === 0.2));
+  await window.NovaCordRemote.execute({ action: 'online-prepare', token: 'token', requestId: 'prep' });
+  await window.NovaCordRemote.execute({ action: 'online-sound', mode: 'play', token: 'token', upload_id: 'file', name: 'Online', slug: 'test', requestId: 'online-play' });
+  await window.NovaCordRemote.execute({ action: 'online-sound', mode: 'save', upload_id: 'file', name: 'Online', slug: 'test', color: '#abcdef', requestId: 'online-save' });
+  assert.ok(calls.some(call => call[0] === 'online-play' && call[1] === 'token'));
+  assert.ok(calls.some(call => call[0] === 'online-save' && call[1] === 'test'));
   failList = true;
   await window.NovaCordRemote.execute({ action: "refresh", requestId: "failed-refresh" });
   assert.equal(replies.at(-1).error, "Stockage bloqué");
