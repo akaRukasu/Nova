@@ -11,6 +11,7 @@ struct HomeView: View {
     @State private var errorText: String?
     @State private var loadedRevision: Int?
     @State private var personalShelves: [Shelf] = []
+    @State private var refreshID = 0
     private let client = InnerTubeClient()
 
     var body: some View {
@@ -31,14 +32,16 @@ struct HomeView: View {
                 ForEach(shelves.prefix(3)) { shelf in
                     ShelfView(shelf: shelf)
                 }
-                DiscoverView(embedded: true)
+                DiscoverView(embedded: true, refreshID: refreshID)
                 ForEach(shelves.dropFirst(3)) { shelf in
                     ShelfView(shelf: shelf)
                 }
                 if continuation != nil {
                     ProgressView()
                         .frame(maxWidth: .infinity)
-                        .task { await loadMore() }
+                        .padding(.vertical, 20)
+                        // Relancé pour chaque nouvelle page, même si l'indicateur reste à l'écran.
+                        .task(id: continuation) { await loadMore() }
                 }
                 if let errorText, shelves.isEmpty {
                     ContentUnavailableView {
@@ -62,7 +65,10 @@ struct HomeView: View {
                 AccountButton()
             }
         }
-        .refreshable { await reload(force: true) }
+        .refreshable {
+            refreshID += 1
+            await reload(force: true)
+        }
         .task(id: account.revision) {
             if loadedRevision != account.revision { await reload() }
         }
@@ -125,6 +131,8 @@ struct HomeView: View {
             let client = self.client
             try await loadCached("home-\(account.isSignedIn)", freshFor: force ? 0 : 300,
                                  fetch: { try await client.home() }) { page in
+                // Même contenu : rien ne bouge (la version fraîche arrive pendant le défilement).
+                guard page.shelves != shelves else { return }
                 shelves = page.shelves
                 continuation = page.continuation
             }
@@ -150,6 +158,8 @@ struct HomeView: View {
             }
             continuation = page.continuation
         } catch {
+            // Défilement rapide : la requête annulée sera relancée, la suite n'est pas perdue.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             continuation = nil
         }
     }

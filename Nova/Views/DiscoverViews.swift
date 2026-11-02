@@ -8,7 +8,10 @@ struct DiscoverView: View {
     @Environment(PlayerModel.self) private var player
     /// Intégré à l'Accueil : seulement les raccourcis et les propositions, sans défilement propre.
     var embedded = false
+    /// Change quand l'Accueil est tiré pour rafraîchir : les propositions sont recalculées.
+    var refreshID = 0
     @State private var sections: [DiscoverSection] = []
+    @State private var loadedFor: Int?
     @State private var isLoading = false
     private let client = InnerTubeClient()
 
@@ -75,7 +78,13 @@ struct DiscoverView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 }
         }
-        .task(id: seeds.map(\.id)) { await load() }
+        // Calculé une fois (et à chaque rafraîchissement), pas à chaque titre écouté :
+        // sinon les rangées se reconstruisent au milieu de l'Accueil pendant le défilement.
+        .task(id: refreshID) {
+            guard loadedFor != refreshID || sections.isEmpty else { return }
+            await load()
+            loadedFor = refreshID
+        }
     }
 
     private var shortcuts: some View {
@@ -155,10 +164,15 @@ struct DiscoverView: View {
                     && shelf.title != seed.artist
             }
             if !useful.isEmpty {
-                loaded.append(DiscoverSection(id: seed.id, seed: seed, shelves: Array(useful.prefix(3))))
-                sections = loaded
+                loaded.append(DiscoverSection(id: seed.id, seed: seed, shelves: Array(useful.prefix(3)).enumerated().map {
+                    var shelf = $0.element
+                    shelf.id = "\(seed.id)-\($0.offset)"
+                    return shelf
+                }))
             }
         }
+        // Une seule mise à jour : la page ne bouge pas plusieurs fois.
+        withAnimation(.easeOut(duration: 0.25)) { sections = loaded }
     }
 }
 
