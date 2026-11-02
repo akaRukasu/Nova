@@ -14,6 +14,8 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         window.eval(format!("window.NovaCordRemote?.execute({})", action)).map_err(|e| e.to_string())
     }))?;
     WebviewWindowBuilder::new(app, "soundboard", WebviewUrl::External(url.parse().map_err(|_| "Adresse de la soundboard invalide.")?))
+        // WebView2 shares the browser process: environment options must match Discord's.
+        .additional_browser_args(crate::BROWSER_ARGS)
         .title("NovaCord · Soundboard").inner_size(1180.0, 820.0).min_inner_size(720.0, 560.0)
         .background_color(tauri::window::Color(0x10, 0x11, 0x17, 0xff))
         .on_navigation(|url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1"))

@@ -68,6 +68,18 @@ jobs:
           cp src-tauri/target/release/novacord.exe NovaCord-portable.exe
           ls -l NovaCord-*.exe
 
+      - name: Open both native WebView2 windows
+        shell: pwsh
+        run: |
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'novacord-native-smoke'
+          $process = Start-Process -FilePath './NovaCord-portable.exe' -ArgumentList '--smoke-soundboard' -PassThru
+          if (-not $process.WaitForExit(60000)) {
+            $process.Kill()
+            throw 'Native WebView2 smoke test timed out.'
+          }
+          if ($process.ExitCode -ne 0) { throw "Native WebView2 smoke test failed: $($process.ExitCode)" }
+          Write-Output 'Discord and soundboard WebView2 windows created successfully.'
+
       - uses: actions/upload-artifact@v4
         with:
           name: NovaCord-windows

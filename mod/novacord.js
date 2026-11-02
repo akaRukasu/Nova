@@ -934,7 +934,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.0" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.3.1" }),
     configurable: false,
     writable: false,
   });

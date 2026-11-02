@@ -14,6 +14,8 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 
 ## Soundboard dédiée et télécommande téléphone (0.3)
 
+La version 0.3.1 corrige l’erreur WebView2 `0x8007139F` à l’ouverture de la soundboard : les deux fenêtres utilisent les mêmes options du moteur. Le workflow ouvre aussi les deux fenêtres natives de l’exécutable Windows avant de distribuer l’installateur.
+
 Ouvre **Soundboard et télécommande** depuis l’icône de NovaCord près de l’horloge, ou depuis le bouton dans les paramètres NovaCord.
 
 - Grille de sons avec recherche, favoris, catégories, couleurs et raccourcis affichés.

@@ -257,6 +257,7 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
 
 fn main() {
     let start_hidden = std::env::args().any(|a| a == "--minimized");
+    let smoke_soundboard = std::env::args().any(|a| a == "--smoke-soundboard");
 
     tauri::Builder::default()
         .manage(Mutex::new(shortcuts::Shortcuts::default()))
@@ -274,6 +275,14 @@ fn main() {
             shortcuts::init(app.handle())?;
             build_tray(app.handle())?;
             build_main_window(app.handle(), start_hidden)?;
+            if smoke_soundboard {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let result = soundboard::show(&handle);
+                    if let Err(error) = &result { eprintln!("Soundboard WebView2 smoke test: {error}"); }
+                    handle.exit(if result.is_ok() { 0 } else { 1 });
+                });
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
