@@ -89,7 +89,12 @@ const puppeteer = upstream("puppeteer-core");
       const originalVideoId = videoTrack.id;
       const inputContext = new AudioContext();
       await inputContext.resume();
-      const silentMicrophone = inputContext.createMediaStreamDestination().stream;
+      const silentDestination = inputContext.createMediaStreamDestination();
+      const silence = inputContext.createConstantSource();
+      silence.offset.value = 0;
+      silence.connect(silentDestination);
+      silence.start();
+      const silentMicrophone = silentDestination.stream;
       const input = silentMicrophone.getAudioTracks()[0];
       const senderPeer = new RTCPeerConnection({ iceServers: [] });
       const receiverPeer = new RTCPeerConnection({ iceServers: [] });
@@ -109,7 +114,7 @@ const puppeteer = upstream("puppeteer-core");
       await receiverContext.resume();
       const analyser = receiverContext.createAnalyser();
       const silentOutput = receiverContext.createGain();
-      silentOutput.gain.value = 0;
+      silentOutput.gain.value = 0.00001;
       receiverContext.createMediaStreamSource(remoteAudio).connect(analyser);
       analyser.connect(silentOutput);
       silentOutput.connect(receiverContext.destination);
@@ -128,7 +133,18 @@ const puppeteer = upstream("puppeteer-core");
       const response = await fetch("/api/v10/channels/123/send-soundboard-sound", {
         method: "POST", body: JSON.stringify({ sound_id: "1234" }), headers: { "Content-Type": "application/json" },
       });
-      await wait(() => rms() > 0.025, "son reçu par le second pair");
+      let peakRms = 0;
+      try {
+        await wait(() => { peakRms = Math.max(peakRms, rms()); return peakRms > 0.025; }, "son reçu par le second pair");
+      } catch (error) {
+        const sent = [...(await audioSender.getStats()).values()].filter((s) => s.kind === "audio" || s.type === "media-source");
+        const received = [...(await receiverPeer.getStats()).values()].filter((s) => s.type === "inbound-rtp" && s.kind === "audio");
+        throw new Error(error.message + " " + JSON.stringify({ peakRms, status: window.NovaCordAudio.status(),
+          senderTrack: { enabled: audioSender.track.enabled, muted: audioSender.track.muted, state: audioSender.track.readyState },
+          remoteTrack: { enabled: remoteAudio.getAudioTracks()[0].enabled, muted: remoteAudio.getAudioTracks()[0].muted },
+          inputTime: inputContext.currentTime, receiverTime: receiverContext.currentTime, receiverState: receiverContext.state,
+          sent, received }));
+      }
       const receivedRms = rms();
       input.enabled = false;
       await wait(() => audioSender.track.enabled === false, "coupure du micro respectée");
@@ -153,7 +169,7 @@ const puppeteer = upstream("puppeteer-core");
       window.Vencord.Settings.plugins.WebScreenShare.frameRate = "30";
       const profile = window.NovaCordMedia.configureStreamOptions({ capture: {}, encode: {} });
       await videoSender.replaceTrack(screen);
-      await wait(async () => [...(await videoSender.getStats()).values()].some((entry) => entry.type === "outbound-rtp" && entry.frameHeight === 720 && entry.frameWidth === 1280), "vidéo envoyée en 720p");
+      await wait(async () => videoSender.getParameters().encodings.some((e) => e.maxFramerate === 30) && [...(await videoSender.getStats()).values()].some((entry) => entry.type === "outbound-rtp" && entry.frameHeight === 720 && entry.frameWidth === 1280), "vidéo envoyée en 720p");
       const encoded = [...(await videoSender.getStats()).values()].find((entry) => entry.type === "outbound-rtp" && entry.kind === "video");
       const parameters = videoSender.getParameters();
       const highest = parameters.encodings.reduce((a, b) => (a.scaleResolutionDownBy || 1) < (b.scaleResolutionDownBy || 1) ? a : b);

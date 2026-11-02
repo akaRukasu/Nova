@@ -172,6 +172,7 @@
     playing.add(source);
     source.onended = () => { playing.delete(source); source.disconnect(); };
     source.start();
+    lastError = "";
     lastPlayback = preview ? "Écoute locale uniquement." : "Son lancé sur la piste vocale sortante.";
   }
 
