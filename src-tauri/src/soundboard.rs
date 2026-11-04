@@ -68,7 +68,12 @@ fn request_network_access(port: u16) -> Result<(), String> {
 pub async fn open_soundboard(app: AppHandle) -> Result<(), String> { show(&app) }
 
 #[tauri::command]
-pub fn sync_soundboard(board: Board, service: State<'_, Arc<Service>>) -> Result<(), String> { service.sync(board) }
+pub fn sync_soundboard(board: Option<Board>, service: State<'_, Arc<Service>>) -> Result<(), String> {
+    match board {
+        Some(board) => service.sync(board),
+        None => { service.heartbeat(); Ok(()) }
+    }
+}
 
 #[tauri::command]
 pub fn complete_soundboard_command(request_id: String, error: Option<String>, service: State<'_, Arc<Service>>) {

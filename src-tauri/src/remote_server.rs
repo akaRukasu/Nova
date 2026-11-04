@@ -121,6 +121,11 @@ impl Service {
         Ok(())
     }
 
+    pub fn heartbeat(&self) {
+        let mut data = self.data.lock().unwrap();
+        if data.synced.is_some() { data.synced = Some(Instant::now()); }
+    }
+
     pub fn complete(&self, request_id: &str, error: Option<String>) {
         if let Some(sender) = self.pending.lock().unwrap().remove(request_id) {
             let _ = sender.send(error.map_or(Ok(()), Err));

@@ -827,7 +827,7 @@
       cameraReport, preview,
       el("button", { class: "btn secondary", onclick: async () => {
         diagnostic.hidden = false;
-        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, cameraCommand, audio: window.NovaCordAudio?.status(), media: await media.diagnostics() }, null, 2);
+        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, cameraCommand, audio: window.NovaCordAudio?.status(), media: await media.diagnostics({ includeIncoming: true }) }, null, 2);
         diagnostic.focus(); diagnostic.select();
       } }, "Afficher le diagnostic média"),
       el("div", { class: "hint" }, "Pendant l’appel, active la caméra et lance un son, puis affiche ce diagnostic. Copie son texte pour le dépannage."), diagnostic,
@@ -835,7 +835,7 @@
     await enumerate().catch((error) => { cameraReport.textContent = error.message; });
     await refresh();
     if (!container.isConnected) return;
-    const timer = setInterval(() => refresh().catch(() => {}), 1000);
+    const timer = setInterval(() => { if (!document.hidden) refresh().catch(() => {}); }, 1000);
     panelCleanups.add(() => clearInterval(timer));
   }
 
@@ -1022,7 +1022,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.0" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.1" }),
     configurable: false,
     writable: false,
   });

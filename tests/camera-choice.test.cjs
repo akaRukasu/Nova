@@ -10,6 +10,7 @@ test('the tested webcam can replace a stale Discord choice without retargeting t
     constructor(id) { this.id = id; this.label = id === 'webcam' ? 'Working webcam' : 'USB capture'; }
     getSettings() { return { deviceId: this.id, width: 640, height: 480, frameRate: 30 }; }
     clone() { return new Track(this.id); }
+    stop() { this.readyState = "ended"; }
   }
   const storage = { getItem: key => saved.get(key), setItem: (key,value) => saved.set(key,value) };
   const native = async options => {
@@ -38,7 +39,7 @@ test('the tested webcam can replace a stale Discord choice without retargeting t
   assert.equal(calls[1].video.width, undefined);
   assert.equal(request.video.deviceId.exact, 'capture', 'Do not mutate the caller constraints');
   stream.getVideoTracks()[0].clone();
-  await window.NovaCordMedia.testCamera('capture');
+  const preview = await window.NovaCordMedia.testCamera('capture');
   assert.equal(calls.at(-1).video.deviceId.exact, 'capture', 'Testing another device must ignore the call preference');
   const info = await window.NovaCordMedia.diagnostics();
   assert.equal(info.cameras.filter(camera => camera.role === 'discord' && camera.matchesRequestedDevice).length, 2);
@@ -53,4 +54,5 @@ test('the tested webcam can replace a stale Discord choice without retargeting t
   await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: 'capture' } } });
   assert.equal(calls.at(-1).video.deviceId.exact, 'capture');
   assert.equal(window.NovaCordMedia.cameraChoice(), null);
+  assert.equal(preview.getVideoTracks()[0].readyState, 'ended', 'Call capture releases the camera test');
 });

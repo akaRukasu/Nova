@@ -6,6 +6,7 @@ const source = readFileSync("mod/remote-bridge.js", "utf8");
 
 test("remote commands use the existing audio player and acknowledge its actual outcome", async () => {
   const calls = [], replies = [], snapshots = [];
+  let heartbeats = 0;
   let failList = false;
   const audio = { async play(id) { calls.push(["play", id]); if (id === "broken") throw new Error("Micro coupé"); },
     async preview(id) { calls.push(["preview", id]); }, stopAll() { calls.push(["stop"]); },
@@ -20,7 +21,10 @@ test("remote commands use the existing audio player and acknowledge its actual o
   };
   const window = { NovaCordAudio: audio, __TAURI__: { core: { async invoke(command, args) {
     if (command === "get_shortcuts") return { bindings: [{ action: "sound:one", accelerator: "F8" }] };
-    if (command === "sync_soundboard") snapshots.push(args.board);
+    if (command === "sync_soundboard") {
+      if (args.board) snapshots.push(args.board);
+      else heartbeats++;
+    }
     if (command === "take_soundboard_upload") return [...new TextEncoder().encode("RIFFtest")];
     if (command === "complete_soundboard_command") replies.push(args);
   } } } };
@@ -31,6 +35,7 @@ test("remote commands use the existing audio player and acknowledge its actual o
     { action: "import", upload_id: "upload", name: "r%C3%A9action.wav" }]) {
     await window.NovaCordRemote.execute({ requestId: String(replies.length), ...command });
   }
+  assert.ok(heartbeats > 0, "unchanged state uses a heartbeat instead of retransmitting the catalog");
   assert.equal(replies.length, 7);
   assert.equal(replies[0].error, null);
   assert.equal(replies[1].error, "Micro coupé");

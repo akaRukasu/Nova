@@ -149,8 +149,16 @@
   async function captureUserMedia(constraints, role = "discord") {
     const video = constraints?.video;
     const camera = !!video && !video.mandatory?.chromeMediaSource && !["screen", "window", "browser", "application"].includes(video.mediaSource) && !video.displaySurface;
-    if (camera && role === "discord" && cameraChoice) {
-      constraints = { ...constraints, video: { ...(typeof video === "object" ? video : {}), deviceId: { exact: cameraChoice.id } } };
+    if (camera && role === "discord") {
+      for (const [track, request] of cameraTracks) {
+        if (request.role === "test") {
+          track.stop();
+          cameraTracks.delete(track);
+        }
+      }
+      if (cameraChoice) {
+        constraints = { ...constraints, video: { ...(typeof video === "object" ? video : {}), deviceId: { exact: cameraChoice.id } } };
+      }
     }
     const device = constraints?.video?.deviceId;
     const requestedDevice = typeof device === "string" ? device : device?.exact || device?.ideal;
@@ -195,7 +203,7 @@
     } catch (error) { captureError = error.name + " : " + error.message; throw error; }
   };
 
-  async function diagnostics() {
+  async function diagnostics({ includeIncoming = false } = {}) {
     const outgoing = [];
     for (const [sender, peer] of senders) {
       if (peer.connectionState === "closed" || !sender.track || sender.track.readyState !== "live") continue;
@@ -217,6 +225,24 @@
         }
       } catch {}
     }
+    const incomingVideo = [];
+    if (includeIncoming) {
+      await Promise.all([...peers].filter(peer => peer.connectionState !== "closed").map(async peer => {
+        try {
+          const stats = await peer.getStats();
+          for (const report of stats.values()) {
+            if (report.type !== "inbound-rtp" || (report.kind || report.mediaType) !== "video") continue;
+            incomingVideo.push({
+              codec: stats.get(report.codecId)?.mimeType,
+              width: report.frameWidth, height: report.frameHeight, frameRate: report.framesPerSecond,
+              bytesReceived: report.bytesReceived, packetsLost: report.packetsLost,
+              framesReceived: report.framesReceived, framesDecoded: report.framesDecoded,
+              framesDropped: report.framesDropped, freezeCount: report.freezeCount,
+            });
+          }
+        } catch {}
+      }));
+    }
     const store = window.Vencord?.Webpack?.Common?.MediaEngineStore;
     const read = method => { try { return store?.[method]?.() ?? null; } catch { return null; } };
     const name = (devices, id) => (devices || {})[id]?.name || Object.values(devices || {}).find(device => device.id === id)?.name || id;
@@ -230,7 +256,7 @@
         width: settings.width, height: settings.height, frameRate: settings.frameRate });
     }
     return { requested: { ...selected }, capture: capture?.readyState === "live" ? capture.getSettings() : null,
-      cameraError, captureError, outgoing, cameras, cameraChoice: cameraChoice ? { name: cameraChoice.name, forced: true } : null,
+      cameraError, captureError, outgoing, ...(includeIncoming ? { incomingVideo } : {}), cameras, cameraChoice: cameraChoice ? { name: cameraChoice.name, forced: true } : null,
       discord: { input: name(read("getInputDevices"), read("getInputDeviceId")),
         output: name(read("getOutputDevices"), read("getOutputDeviceId")),
         camera: name(read("getVideoDevices"), read("getVideoDeviceId")),

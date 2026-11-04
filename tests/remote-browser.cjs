@@ -66,7 +66,7 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await phone.$eval("#volume", (input) => { input.value = "35"; input.dispatchEvent(new Event("change")); });
     await pc.waitForFunction(() => document.querySelector("#volume").value === "35");
     assert.equal(await pc.$eval("#monitor-volume", input => input.value), "20", "Call volume must leave local volume unchanged");
-    await phone.tap("#stop");
+    await phone.tap("#stop-reading");
     await pc.waitForFunction(() => document.querySelector("#feedback").textContent.includes("Sons arrêtés"));
     mkdirSync("tests-output", { recursive: true });
     await pc.click('[data-close="remote"]');
@@ -87,6 +87,9 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await phone.waitForSelector('#online-grid .card');
     await phone.tap('button[aria-label="Écouter Myinstants : Myinstants mobile"]');
     await phone.waitForFunction(() => onlinePlayer.duration > 0 && previewSlug === 'fixture-phone');
+    await phone.tap('#stop-reading');
+    await phone.waitForFunction(() => previewSlug === '' && onlinePlayer.paused);
+    await pc.waitForFunction(() => document.querySelector('#feedback').textContent.includes('Sons arrêtés'));
     await phone.tap('button[aria-label="Jouer Myinstants : Myinstants mobile"]');
     await pc.waitForFunction(() => document.querySelector('#feedback').textContent.includes('fixture-phone'));
     await phone.waitForFunction(() => !document.querySelector('button[aria-label="Ajouter Myinstants : Myinstants mobile"]').disabled);

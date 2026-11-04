@@ -2,7 +2,7 @@
   "use strict";
   if (window.top !== window || location.hostname !== "discord.com" || window.NovaCordRemote) return;
   const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
-  let catalog = [], catalogAt = 0, syncJob;
+  let catalog = [], catalogAt = 0, syncJob, lastBoard, catalogSignature;
   function sync(force = false) {
     if (syncJob) return force ? syncJob.then(() => sync(true)) : syncJob;
     syncJob = publish(force).finally(() => { syncJob = null; });
@@ -13,18 +13,26 @@
     if (!audio || !window.__TAURI__?.core?.invoke) return;
     try {
       if (force || Date.now() - catalogAt > 3000) {
-        const bindings = await invoke("get_shortcuts").catch(() => ({ bindings: [] }));
+        const { bindings } = await invoke("get_shortcuts").catch(() => ({ bindings: [] }));
+        const shortcuts = new Map(bindings.map(binding => [binding.action, binding.accelerator]));
         const sounds = await audio.list();
-        catalog = sounds.slice(0, 5000).map((sound) => ({ ...sound,
+        const nextCatalog = sounds.slice(0, 5000).map((sound) => ({ ...sound,
           favorite: !!sound.favorite, category: sound.category || "", color: sound.color || "#7c6bff",
-          shortcut: bindings.bindings.find((binding) => binding.action === "sound:" + sound.id)?.accelerator || "",
+          shortcut: shortcuts.get("sound:" + sound.id) || "",
         }));
+        const nextSignature = JSON.stringify(nextCatalog);
+        if (nextSignature !== catalogSignature) { catalog = nextCatalog; catalogSignature = nextSignature; }
         catalogAt = Date.now();
       }
       const status = audio.status();
-      await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled,
-        active: status.active, volume: status.volume, monitor: status.monitor !== false, monitor_volume: status.monitorVolume ?? status.volume, error: status.error || "", last_playback: status.lastPlayback || "" } });
+      const board = { sounds: catalog, enabled: status.enabled, active: status.active,
+        volume: status.volume, monitor: status.monitor !== false, monitor_volume: status.monitorVolume ?? status.volume,
+        error: status.error || "", last_playback: status.lastPlayback || "" };
+      const unchanged = lastBoard && Object.keys(board).every(key => board[key] === lastBoard[key]);
+      await invoke("sync_soundboard", { board: unchanged ? null : board });
+      lastBoard = board;
     } catch (error) {
+      lastBoard = undefined;
       const status = audio.status();
       await invoke("sync_soundboard", { board: { sounds: catalog, enabled: status.enabled, active: status.active,
         volume: status.volume, monitor: status.monitor !== false, monitor_volume: status.monitorVolume ?? status.volume,
