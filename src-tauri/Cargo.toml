@@ -1,6 +1,6 @@
 [package]
 name = "novacord"
-version = "0.1.0"
+version = "0.4.5"
 description = "Client Discord léger pour Windows"
 edition = "2021"
 
@@ -11,6 +11,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", default-features = false, features = ["wry", "tray-icon", "image-png", "common-controls-v6", "compression"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+uuid = { version = "1", features = ["v4"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+local-ip-address = "0.6"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"

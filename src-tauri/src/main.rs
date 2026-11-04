@@ -1,6 +1,12 @@
 // Pas de console noire derrière la fenêtre en version finale.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod shortcuts;
+mod remote_server;
+mod soundboard;
+mod myinstants;
+use std::sync::{Arc, Mutex};
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -14,6 +20,10 @@ const START_URL: &str = "https://discord.com/app";
 
 /// Couche de mods injectée dans Discord avant ses propres scripts.
 const MOD_SCRIPT: &str = include_str!("../../mod/novacord.js");
+const VENCORD_SCRIPT: &str = include_str!("../../mod/vencord.bundle.js");
+const AUDIO_SCRIPT: &str = include_str!("../../mod/soundboard.js");
+const MEDIA_SCRIPT: &str = include_str!("../../mod/media.js");
+const REMOTE_SCRIPT: &str = include_str!("../../mod/remote-bridge.js");
 
 /// Options du moteur WebView2 (Chromium d'Edge déjà présent sur Windows).
 /// Les trois premières désactivations sont celles que Tauri met par défaut ;
@@ -146,10 +156,11 @@ fn open_mod_panel(app: &AppHandle) {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Afficher NovaCord", true, None::<&str>)?;
     let panel = MenuItem::with_id(app, "panel", "Paramètres NovaCord", true, None::<&str>)?;
+    let soundboard = MenuItem::with_id(app, "soundboard", "Soundboard et télécommande", true, None::<&str>)?;
     let reload = MenuItem::with_id(app, "reload", "Recharger", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &panel, &reload, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &soundboard, &panel, &reload, &sep, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("tray")
         .tooltip("NovaCord")
@@ -158,6 +169,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main(app),
             "panel" => open_mod_panel(app),
+            "soundboard" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { if let Err(error) = soundboard::show(&app) { eprintln!("{error}"); } });
+            },
             "reload" => {
                 if let Some(w) = app.get_webview_window(MAIN) {
                     let _ = w.eval("location.reload()");
@@ -198,7 +213,11 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
     .additional_browser_args(BROWSER_ARGS)
     // Indispensable pour glisser-déposer des fichiers dans Discord.
     .disable_drag_drop_handler()
+    .initialization_script(MEDIA_SCRIPT)
+    .initialization_script(AUDIO_SCRIPT)
+    .initialization_script(VENCORD_SCRIPT)
     .initialization_script(MOD_SCRIPT)
+    .initialization_script(REMOTE_SCRIPT)
     .on_navigation(|url| {
         if is_discord(url) {
             true
@@ -239,24 +258,51 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
 
 fn main() {
     let start_hidden = std::env::args().any(|a| a == "--minimized");
+    let smoke_soundboard = std::env::args().any(|a| a == "--smoke-soundboard");
 
     tauri::Builder::default()
+        .manage(Mutex::new(shortcuts::Shortcuts::default()))
+        .manage(Arc::new(remote_server::Service::new()))
+        .invoke_handler(tauri::generate_handler![shortcuts::get_shortcuts, shortcuts::set_shortcuts, shortcuts::set_shortcut_recording,
+            soundboard::open_soundboard, soundboard::sync_soundboard, soundboard::complete_soundboard_command, soundboard::take_soundboard_upload])
+        .plugin(tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| shortcuts::handle(app, shortcut, event.state()))
+            .build())
         // Une seule instance : relancer l'appli remet la fenêtre au premier plan.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app);
         }))
         .setup(move |app| {
+            shortcuts::init(app.handle())?;
             build_tray(app.handle())?;
             build_main_window(app.handle(), start_hidden)?;
+            if smoke_soundboard {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let result = soundboard::show(&handle);
+                    if let Err(error) = &result { eprintln!("Soundboard WebView2 smoke test: {error}"); }
+                    if result.is_err() { handle.exit(1); return; }
+                    tauri::async_runtime::spawn_blocking(move || {
+                        for _ in 0..160 {
+                            if handle.state::<Arc<remote_server::Service>>().has_sound("novacord-smoke.wav") {
+                                handle.exit(0); return;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        eprintln!("Soundboard smoke test: imported audio never appeared in the native catalog.");
+                        handle.exit(1);
+                    });
+                });
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
             // Fermer la fenêtre la range dans la zone de notification.
-            WindowEvent::CloseRequested { api, .. } => {
+            WindowEvent::CloseRequested { api, .. } if window.label() == MAIN => {
                 api.prevent_close();
                 hide_main(window.app_handle());
             }
-            WindowEvent::Resized(_) => {
+            WindowEvent::Resized(_) if window.label() == MAIN => {
                 if let Some(w) = window.app_handle().get_webview_window(MAIN) {
                     let minimized = w.is_minimized().unwrap_or(false);
                     set_low_memory(&w, minimized);
@@ -264,6 +310,9 @@ fn main() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("impossible de démarrer NovaCord");
+        .build(tauri::generate_context!())
+        .expect("impossible de démarrer NovaCord")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) { app.state::<Arc<remote_server::Service>>().shutdown(); }
+        });
 }

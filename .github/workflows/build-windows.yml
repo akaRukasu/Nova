@@ -2,14 +2,14 @@ name: Build NovaCord (Windows)
 
 on:
   push:
-    branches: [novacord]
+    branches: [novacord, 'codex/novacord-*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: novacord-build
+  group: novacord-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,7 +27,35 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Vendicated/Vencord
+          ref: 8d64c8be7e68616f8f116a6fff9480051aa2a0c5
+          path: .vencord
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+
+      - name: Build embedded Vencord
+        shell: bash
+        run: |
+          pnpm --dir .vencord install --frozen-lockfile
+          node scripts/prepare-vencord.mjs .vencord
+          git -C .vencord add -f browser/Vencord.ts browser/NovaCordNative.ts src/userplugins/novacordMedia.ts
+          git -C .vencord archive --format=zip --output=../Vencord-source.zip "$(git -C .vencord write-tree)"
+
+      - name: Check shortcuts and audio mixer
+        shell: bash
+        run: |
+          node --test tests/*.test.cjs
+          cargo test --manifest-path src-tauri/Cargo.toml
+          cargo build --manifest-path src-tauri/Cargo.toml --example soundboard_server
+          node tests/browser.cjs
+          node tests/native-input-browser.cjs
+          node tests/remote-browser.cjs
 
       - name: Build the installer
         shell: bash
@@ -41,18 +69,45 @@ jobs:
           cp src-tauri/target/release/novacord.exe NovaCord-portable.exe
           ls -l NovaCord-*.exe
 
+      - name: Open native windows and import real audio through IPC
+        shell: pwsh
+        run: |
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'novacord-native-smoke'
+          $process = Start-Process -FilePath './NovaCord-portable.exe' -ArgumentList '--smoke-soundboard' -PassThru
+          if (-not $process.WaitForExit(60000)) {
+            $process.Kill()
+            throw 'Native WebView2 smoke test timed out.'
+          }
+          if ($process.ExitCode -ne 0) { throw "Native WebView2 smoke test failed: $($process.ExitCode)" }
+          Write-Output 'Native WebView2 windows and real WAV import through HTTP, binary IPC, decoder and IndexedDB succeeded.'
+
       - uses: actions/upload-artifact@v4
         with:
           name: NovaCord-windows
-          path: NovaCord-*.exe
+          path: |
+            NovaCord-*.exe
+            Vencord-source.zip
+            mod/VENCORD-LICENSE.txt
+            mod/VENCORD-NOTICES.txt
+            src-tauri/Cargo.lock
+            tests-output/*.png
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: NovaCord-diagnostics
+          path: |
+            src-tauri/Cargo.lock
+            tests-output/*.png
 
       - name: Publish the "novacord-latest" release
+        if: github.ref == 'refs/heads/novacord'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete novacord-latest --yes --cleanup-tag || true
-          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe \
+          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe Vencord-source.zip mod/VENCORD-LICENSE.txt mod/VENCORD-NOTICES.txt \
             --target "${{ github.sha }}" \
             --title "NovaCord — build ${{ github.run_number }}" \
             --notes "Commit ${{ github.sha }}. Installe NovaCord-Setup.exe, ou lance directement NovaCord-portable.exe." \
