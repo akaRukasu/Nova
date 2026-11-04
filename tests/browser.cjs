@@ -44,10 +44,33 @@ const puppeteer = upstream("puppeteer-core");
       await page.evaluateOnNewDocument(readFileSync(path, "utf8"));
     }
     await page.goto("https://discord.com/app");
+    await page.evaluate(() => {
+      const original = window.Vencord;
+      const probe = window.cameraButtonProbe = { enabled: false, dispatched: 0, clicks: 0 };
+      window.Vencord = { Webpack: { Common: {
+        SelectedChannelStore: { getVoiceChannelId: () => "voice-test" },
+        MediaEngineStore: { isVideoEnabled: () => probe.enabled },
+        FluxDispatcher: { dispatch(action) { probe.dispatched++; probe.enabled = action.enabled; } },
+      } } };
+      const button = document.createElement("button");
+      button.id = "camera-button-probe";
+      button.setAttribute("aria-label", "Activer la caméra");
+      button.textContent = "Caméra";
+      button.onclick = () => { probe.clicks++; };
+      document.body.append(button);
+      probe.restore = () => { button.remove(); window.Vencord = original; delete window.cameraButtonProbe; };
+    });
+    await page.click("#camera-button-probe");
+    await page.waitForFunction(() => window.cameraButtonProbe.enabled);
+    assert.deepEqual(await page.evaluate(() => {
+      const { dispatched, clicks } = window.cameraButtonProbe;
+      window.cameraButtonProbe.restore();
+      return { dispatched, clicks };
+    }), { dispatched: 1, clicks: 1 });
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.1");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.2");
     assert.deepEqual(await page.evaluate(() => [...document.querySelector("#novacord-root").shadowRoot.querySelectorAll('.shortcuts select option')].filter(o => ["leaveCall", "toggleCamera"].includes(o.value)).map(o => o.value)), ["leaveCall", "toggleCamera"]);
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;

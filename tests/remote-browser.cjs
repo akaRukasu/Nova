@@ -66,6 +66,13 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await phone.$eval("#volume", (input) => { input.value = "35"; input.dispatchEvent(new Event("change")); });
     await pc.waitForFunction(() => document.querySelector("#volume").value === "35");
     assert.equal(await pc.$eval("#monitor-volume", input => input.value), "20", "Call volume must leave local volume unchanged");
+    await phone.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await phone.waitForFunction(() => {
+      const button = document.querySelector('#stop-reading');
+      const rect = button.getBoundingClientRect();
+      return scrollY > 150 && rect.top >= 0 && rect.bottom < innerHeight
+        && button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+    });
     await phone.tap("#stop-reading");
     await pc.waitForFunction(() => document.querySelector("#feedback").textContent.includes("Sons arrêtés"));
     mkdirSync("tests-output", { recursive: true });

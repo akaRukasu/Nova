@@ -26,7 +26,7 @@
   let recordingTimer;
   let cameraCommand = null;
 
-  async function toggleCallCamera(enabled) {
+  async function toggleCallCamera(enabled, nativeButton) {
     const common = window.Vencord?.Webpack?.Common;
     const store = common?.MediaEngineStore;
     if (!common?.SelectedChannelStore?.getVoiceChannelId()) throw new Error("Rejoins un appel avant d’activer la caméra.");
@@ -46,12 +46,35 @@
           : /^(désactiver|éteindre|turn off|disable|stop).*(caméra|camera|vidéo|video)/i;
         const button = [...document.querySelectorAll('button[aria-label], [role="button"][aria-label]')].find(button =>
           !button.disabled && button.getAttribute("aria-disabled") !== "true" && button.getClientRects().length && label.test(button.getAttribute("aria-label")));
-        if (button) button.click();
+        if (button && !nativeButton) button.click();
         if (!await waitForState()) throw new Error("Discord n’a pas confirmé le changement d’état de la caméra. Affiche le diagnostic média.");
       }
       cameraCommand.confirmed = true;
     } catch (error) { cameraCommand.error = String(error.message || error); throw error; }
   }
+
+  // Give Discord's own camera button the first attempt. Retry only if its state never changed.
+  let cameraClick = 0;
+  document.addEventListener("click", event => {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const button = event.target.closest('button[aria-label], [role="button"][aria-label]');
+    if (!button || button.disabled || button.getAttribute("aria-disabled") === "true") return;
+    const label = button.getAttribute("aria-label").trim();
+    const start = /^(activer|allumer|turn on|enable|start) (la |the |your )?(caméra|camera|vidéo|video)$/i.test(label);
+    const stop = /^(désactiver|éteindre|turn off|disable|stop) (la |the |your )?(caméra|camera|vidéo|video)$/i.test(label);
+    if (!start && !stop) return;
+    const attempt = ++cameraClick;
+    const common = window.Vencord?.Webpack?.Common;
+    const selected = common?.SelectedChannelStore;
+    const channel = selected?.getVoiceChannelId?.();
+    const store = common?.MediaEngineStore;
+    if (!channel || !store?.isVideoEnabled || store.isVideoEnabled() === start) return;
+    setTimeout(() => {
+      if (attempt === cameraClick && selected.getVoiceChannelId() === channel && store.isVideoEnabled() !== start) {
+        toggleCallCamera(start, true).catch(notifyError);
+      }
+    }, 1500);
+  }, true);
 
   function notifyError(error) {
     const message = String(error?.message || error);
@@ -1022,7 +1045,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.1" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.2" }),
     configurable: false,
     writable: false,
   });

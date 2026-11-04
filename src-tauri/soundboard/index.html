@@ -7,6 +7,9 @@
 .online-card .play{min-height:130px}.online-actions{display:flex;gap:6px;padding:0 10px 12px}.online-actions button{font-size:11px;padding:8px;flex:1}.online-card a{text-decoration:none}
 #grid .card{content-visibility:auto;contain-intrinsic-block-size:auto 170px}
 #stop-reading{background:#39222b;color:#ffd3da;border-color:#6e3747}
+@media(max-width:760px){
+  #stop-reading{position:sticky;top:calc(8px + env(safe-area-inset-top));z-index:5;min-height:44px}
+}
 </style></head><body>
 <section id="pair" class="pair-screen hidden"><div class="mark">N</div><h1>Ta soundboard,<br>dans ta poche.</h1><p class="muted">Dans NovaCord sur le PC, ouvre <b>Soundboard → Téléphone</b>, active la télécommande et scanne le QR code avec l’appareil photo de ton téléphone.</p><label class="form-label" for="pair-key">Ou colle la clé d’appairage</label><input id="pair-key" class="field" autocomplete="off" spellcheck="false" placeholder="Clé affichée dans le lien du PC"><button id="pair-submit" class="primary">Connecter mon téléphone</button><p id="pair-error" class="note"></p></section>
 <div id="app" class="hidden"><header><div class="mark">N</div><div class="brand">NovaCord<small>SOUND CONTROL</small></div><div class="spacer"></div><span id="connection" class="badge"><i class="dot"></i><span>Connexion au PC…</span></span><button id="enable" class="quiet">Activer le mixeur</button><button id="remote-button" class="quiet desktop-only">↗ Téléphone</button></header>
