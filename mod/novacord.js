@@ -98,7 +98,7 @@
       let card = button.parentElement;
       for (let depth = 0; card && depth < 4; depth++, card = card.parentElement) {
         if (card.querySelectorAll("button").length !== 1 || card.querySelector("video")) break;
-        if (!/(?:erreur|error)\s*:\s*2012\b/i.test(card.textContent)) continue;
+        if (!/(?:erreur|error)\s*:\s*2012\b/i.test(card.innerText)) continue;
         retriedButtons.add(button);
         recoveryAttempts++;
         lastRecovery = Date.now();
