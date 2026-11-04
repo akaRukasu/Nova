@@ -85,7 +85,9 @@ const puppeteer = createRequire(resolve(".vencord/package.json"))("puppeteer-cor
     await phone.tap('[data-filter="myinstants"]');
     await phone.type('#online-query', 'test'); await phone.tap('#online-search');
     await phone.waitForSelector('#online-grid .card');
-    await phone.tap('button[aria-label="Écouter Myinstants : Myinstants mobile"]');
+    const previewButton = 'button[aria-label="Écouter Myinstants : Myinstants mobile"]';
+    await phone.$eval(previewButton, button => button.scrollIntoView({ block: 'center' }));
+    await phone.tap(previewButton);
     await phone.waitForFunction(() => onlinePlayer.duration > 0 && previewSlug === 'fixture-phone');
     await phone.tap('#stop-reading');
     await phone.waitForFunction(() => previewSlug === '' && onlinePlayer.paused);
