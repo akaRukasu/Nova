@@ -29,6 +29,11 @@ const puppeteer = upstream("puppeteer-core");
       } else request.abort();
     });
     await page.evaluateOnNewDocument(() => {
+      const nativeInterval = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) => {
+        if (delay === 2500) window.testVideoRecovery = callback;
+        return nativeInterval(callback, delay, ...args);
+      };
       let bindings = [{ action: "panel", accelerator: "Ctrl+Alt+KeyN" }];
       window.__TAURI__ = { core: { invoke: async (command, args) => {
         if (command === "get_shortcuts") return { bindings, errors: [] };
@@ -89,7 +94,11 @@ const puppeteer = upstream("puppeteer-core");
       const restore = probe.restore;
       probe.restore = () => { fixture.remove(); restore(); };
     });
-    await page.waitForFunction(() => window.cameraButtonProbe.retries.length > 0);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      try { window.testVideoRecovery(); }
+      finally { delete document.hidden; }
+    });
     assert.deepEqual(await page.evaluate(() => {
       const { dispatched, clicks, retries } = window.cameraButtonProbe;
       window.cameraButtonProbe.restore();
