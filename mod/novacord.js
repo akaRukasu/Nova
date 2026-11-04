@@ -147,7 +147,7 @@
       id: "ecoMode",
       name: "Mode éco",
       description:
-        "Coupe les animations, transitions et flous d'arrière-plan. Soulage le processeur et la carte graphique.",
+        "Désactive les flous d’arrière-plan pour alléger le rendu.",
       default: true,
     },
     {
@@ -261,16 +261,6 @@
 
   const PLUGIN_CSS = {
     ecoMode: `
-      /* 0.01ms et non 0s : les événements de fin d'animation doivent
-         toujours se déclencher, sinon certaines fenêtres restent bloquées. */
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-delay: 0s !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        transition-delay: 0s !important;
-        scroll-behavior: auto !important;
-      }
       * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }`,
     hideNitro: `
       a[href="/store"], a[href="/shop"], a[href^="/discovery/quests"],
@@ -1045,7 +1035,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.2" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.3" }),
     configurable: false,
     writable: false,
   });

@@ -9,7 +9,7 @@ Au lieu d'embarquer son propre Chromium comme le client officiel (Electron), Nov
 - **Pas de Chromium embarqué** : le moteur WebView2 est partagé avec Windows et mis à jour par lui.
 - **Mémoire réduite en arrière-plan** : quand la fenêtre est réduite ou rangée dans la zone de notification, NovaCord demande à WebView2 de libérer un maximum de mémoire. Le vocal et les notifications continuent de fonctionner.
 - **Services d'Edge coupés** : traduction, shopping, collections, saisie automatique, enregistrement des mots de passe, SmartScreen, mises à jour de composants, requêtes de fond.
-- **Mode éco** (plugin) : animations, transitions et flous désactivés.
+- **Mode éco** (plugin) : flous d’arrière-plan désactivés.
 - **Anti-pistage** (plugin) : la télémétrie de Discord n'est plus envoyée.
 
 ## Myinstants intégré (0.4)
@@ -98,7 +98,7 @@ Ouvre le panneau avec **Ctrl + Alt + N**, ou clic droit sur l'icône de la zone 
 | Plugin | Par défaut | Effet |
 |---|---|---|
 | Anti-pistage | activé | Bloque `science`, `metrics` et Sentry |
-| Mode éco | activé | Coupe animations, transitions et flous |
+| Mode éco | activé | Désactive les flous d’arrière-plan |
 | Masquer les pubs Nitro | activé | Cache le bouton cadeau, l'onglet Nitro, la boutique et les quêtes |
 | Liens propres | activé | Retire `utm_`, `fbclid`, `si`… des liens envoyés |
 | Frappe invisible | désactivé | N'envoie plus l'indicateur « est en train d'écrire » |
