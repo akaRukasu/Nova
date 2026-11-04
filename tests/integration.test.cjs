@@ -166,11 +166,18 @@ test("screen audio and its clones stay separate from voice audio", async () => {
   }
   const systemAudio = new Track("audio");
   const screen = new Track("video");
-  const window = { MediaStreamTrack: Track };
+  screen.getSettings = () => ({ width: 1680, height: 720 });
+  const window = { MediaStreamTrack: Track, Vencord: { Settings: { plugins: { WebScreenShare: { resolution: "1080", frameRate: "60" } } } } };
   window.top = window;
   const navigator = { mediaDevices: { getDisplayMedia: async () => ({ getVideoTracks: () => [screen], getAudioTracks: () => [systemAudio] }) } };
   vm.runInNewContext(mediaScript, { window, navigator, location: { hostname: "discord.com" }, console });
+  const configured = window.NovaCordMedia.configureStreamOptions({ capture: {}, encode: {} });
   await navigator.mediaDevices.getDisplayMedia({ video: { height: 720, frameRate: 30 }, audio: true });
+  assert.equal(configured.encode.height, 720);
+  assert.equal(configured.encode.width, 1680);
+  assert.equal(configured.encode.framerate, 30);
+  assert.equal(window.NovaCordMedia.configureStreamOptions({ encode: {} }).encode.framerate, 30);
+  assert.equal((await window.NovaCordMedia.diagnostics()).requested.height, 720);
   assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio), true);
   assert.equal(window.NovaCordMedia.isScreenAudio(systemAudio.clone()), true);
   assert.equal(window.NovaCordMedia.isScreenAudio(new Track("audio")), false);

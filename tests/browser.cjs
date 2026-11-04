@@ -79,7 +79,7 @@ const puppeteer = upstream("puppeteer-core");
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.3");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.4");
     assert.deepEqual(await page.evaluate(() => [...document.querySelector("#novacord-root").shadowRoot.querySelectorAll('.shortcuts select option')].filter(o => ["leaveCall", "toggleCamera"].includes(o.value)).map(o => o.value)), ["leaveCall", "toggleCamera"]);
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;
@@ -243,6 +243,8 @@ const puppeteer = upstream("puppeteer-core");
       await videoSender.replaceTrack(screen);
       await wait(async () => videoSender.getParameters().encodings.some((e) => e.maxFramerate === 30) && [...(await videoSender.getStats()).values()].some((entry) => entry.type === "outbound-rtp" && entry.frameHeight === 720 && entry.frameWidth === 1280), "vidéo envoyée en 720p");
       const encoded = [...(await videoSender.getStats()).values()].find((entry) => entry.type === "outbound-rtp" && entry.kind === "video");
+      await wait(async () => [...(await receiverPeer.getStats()).values()].some(entry =>
+        entry.type === "inbound-rtp" && entry.kind === "video" && entry.frameWidth === 1280 && entry.frameHeight === 720 && entry.framesDecoded > 0), "vidéo 720p décodée par le destinataire");
       const parameters = videoSender.getParameters();
       const highest = parameters.encodings.reduce((a, b) => (a.scaleResolutionDownBy || 1) < (b.scaleResolutionDownBy || 1) ? a : b);
       clearInterval(drawTimer);

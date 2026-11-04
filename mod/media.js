@@ -10,7 +10,7 @@
   const senders = new Map();
   const peers = new Set();
   const listeners = new Set();
-  const screenTracks = new WeakSet();
+  const screenTracks = new WeakMap();
   const screenAudioTracks = new WeakSet();
   const previousStats = new Map();
   const cameraTracks = new Map();
@@ -47,11 +47,16 @@
     return Math.round(Math.min(24000000, Math.max(2000000, profile.height / 1080 * profile.frameRate / 60 * 10000000)));
   }
 
-  function configureStreamOptions(options) {
+  function configureStreamOptions(options, profile, source) {
+    if (!profile) {
+      const liveCapture = capture?.readyState === "live" ? capture : null;
+      profile = screenTracks.get(liveCapture) || quality();
+      source = liveCapture?.getSettings();
+    }
     streamOptions = options;
-    const profile = quality();
     selected = { ...profile };
-    const width = Math.round(profile.height * 16 / 9);
+    const aspect = source?.width && source?.height ? source.width / source.height : 16 / 9;
+    const width = Math.max(2, 2 * Math.round(profile.height * aspect / 2));
     const budget = bitrate(profile);
     Object.assign(options, { bitrateMin: 500000, bitrateMax: budget, bitrateTarget: Math.round(budget * 0.8) });
     for (const key of ["capture", "encode"]) {
@@ -66,11 +71,12 @@
 
   function screenParameters(sender, parameters) {
     if (!isScreen(sender.track) || !parameters.encodings?.length) return parameters;
-    const sourceHeight = sender.track.getSettings().height || selected.height;
+    const profile = screenTracks.get(sender.track) || selected;
+    const sourceHeight = sender.track.getSettings().height || profile.height;
     // Conserver les couches basses de Discord et régler la couche la plus haute.
     const top = parameters.encodings.reduce((a, b) => (a.scaleResolutionDownBy || 1) <= (b.scaleResolutionDownBy || 1) ? a : b);
-    Object.assign(top, { scaleResolutionDownBy: Math.max(1, sourceHeight / selected.height),
-      maxFramerate: selected.frameRate, maxBitrate: bitrate(selected) });
+    Object.assign(top, { scaleResolutionDownBy: Math.max(1, sourceHeight / profile.height),
+      maxFramerate: profile.frameRate, maxBitrate: bitrate(profile) });
     return parameters;
   }
 
@@ -139,7 +145,7 @@
     const clone = window.MediaStreamTrack.prototype.clone;
     window.MediaStreamTrack.prototype.clone = function () {
       const result = clone.call(this);
-      if (screenTracks.has(this)) screenTracks.add(result);
+      if (screenTracks.has(this)) screenTracks.set(result, screenTracks.get(this));
       if (screenAudioTracks.has(this)) screenAudioTracks.add(result);
       if (cameraTracks.has(this)) cameraTracks.set(result, cameraTracks.get(this));
       return result;
@@ -185,19 +191,24 @@
   if (getUserMedia) devices.getUserMedia = constraints => captureUserMedia(constraints, "discord");
 
   if (getDisplayMedia) devices.getDisplayMedia = async function (options = {}) {
-    const value = (constraint, fallback) => Number(typeof constraint === "object" ? constraint?.ideal ?? constraint?.max ?? fallback : constraint || fallback);
-    selected = { height: value(options.video?.height, quality().height), frameRate: value(options.video?.frameRate, quality().frameRate) };
-    if (streamOptions) configureStreamOptions(streamOptions);
+    const value = (constraint, fallback) => {
+      const requested = Number(typeof constraint === "object" ? constraint?.ideal ?? constraint?.max : constraint);
+      return Number.isFinite(requested) && requested > 0 ? requested : fallback;
+    };
+    const defaults = quality();
+    const profile = { height: value(options.video?.height, defaults.height), frameRate: value(options.video?.frameRate, defaults.frameRate) };
     captureError = "";
     try {
       const stream = await getDisplayMedia(options);
       for (const track of stream.getAudioTracks()) screenAudioTracks.add(track);
       for (const track of stream.getVideoTracks()) {
-        screenTracks.add(track);
+        screenTracks.set(track, profile);
         try {
-          await track.applyConstraints({ height: { ideal: selected.height, max: selected.height }, frameRate: { ideal: selected.frameRate, max: selected.frameRate } });
+          await track.applyConstraints({ height: { ideal: profile.height, max: profile.height }, frameRate: { ideal: profile.frameRate, max: profile.frameRate } });
         } catch (error) { captureError = error.message; }
         capture = track;
+        selected = profile;
+        if (streamOptions) configureStreamOptions(streamOptions, profile, track.getSettings());
       }
       return stream;
     } catch (error) { captureError = error.name + " : " + error.message; throw error; }
@@ -255,7 +266,7 @@
         enabled: track.enabled, muted: track.muted,
         width: settings.width, height: settings.height, frameRate: settings.frameRate });
     }
-    return { requested: { ...selected }, capture: capture?.readyState === "live" ? capture.getSettings() : null,
+    return { requested: { ...(capture?.readyState === "live" ? screenTracks.get(capture) : selected) }, capture: capture?.readyState === "live" ? capture.getSettings() : null,
       cameraError, captureError, outgoing, ...(includeIncoming ? { incomingVideo } : {}), cameras, cameraChoice: cameraChoice ? { name: cameraChoice.name, forced: true } : null,
       discord: { input: name(read("getInputDevices"), read("getInputDeviceId")),
         output: name(read("getOutputDevices"), read("getOutputDeviceId")),
