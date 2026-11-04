@@ -22,6 +22,7 @@ test('call shortcuts leave through Discord and toggle its camera state in both d
     location: { hostname: 'discord.com' }, navigator: {}, XMLHttpRequest: class {},
     CSSStyleSheet: class { replaceSync() {} }, document: { adoptedStyleSheets: [], readyState: 'loading', addEventListener() {}, querySelectorAll: () => blockCamera ? [] : [camera] },
     Date: class extends Date { static now() { return clock; } },
+    setInterval() {},
     setTimeout(callback, delay) { clock += delay; queueMicrotask(callback); }, console: { error: message => errors.push(message) },
   });
   await window.NovaCord.runShortcut('toggleCamera');

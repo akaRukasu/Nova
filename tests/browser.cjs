@@ -71,15 +71,34 @@ const puppeteer = upstream("puppeteer-core");
     });
     await page.click("#camera-button-probe");
     await page.waitForFunction(() => window.cameraButtonProbe.enabled);
+    await page.evaluate(() => {
+      const probe = window.cameraButtonProbe;
+      const fixture = document.createElement("section");
+      probe.retries = [];
+      for (const code of [2015, 2012]) {
+        const card = document.createElement("article");
+        const error = document.createElement("p");
+        error.textContent = "Erreur : " + code;
+        const retry = document.createElement("button");
+        retry.textContent = "Réessaie";
+        retry.onclick = () => { probe.retries.push(code); card.remove(); };
+        card.append(error, retry);
+        fixture.append(card);
+      }
+      document.body.append(fixture);
+      const restore = probe.restore;
+      probe.restore = () => { fixture.remove(); restore(); };
+    });
+    await page.waitForFunction(() => window.cameraButtonProbe.retries.length > 0);
     assert.deepEqual(await page.evaluate(() => {
-      const { dispatched, clicks } = window.cameraButtonProbe;
+      const { dispatched, clicks, retries } = window.cameraButtonProbe;
       window.cameraButtonProbe.restore();
-      return { dispatched, clicks };
-    }), { dispatched: 1, clicks: 1 });
+      return { dispatched, clicks, retries };
+    }), { dispatched: 1, clicks: 1, retries: [2012] });
     await page.evaluate(() => window.NovaCord.openPanel());
     await page.waitForFunction(() => document.querySelector("#novacord-root")?.shadowRoot.querySelector(".shortcuts select"));
     assert.equal(await page.evaluate(() => !!window.Vencord.Settings.plugins.FakeNitro.enabled), true);
-    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.4");
+    assert.equal(await page.evaluate(() => window.NovaCord.version), "0.4.5");
     assert.deepEqual(await page.evaluate(() => [...document.querySelector("#novacord-root").shadowRoot.querySelectorAll('.shortcuts select option')].filter(o => ["leaveCall", "toggleCamera"].includes(o.value)).map(o => o.value)), ["leaveCall", "toggleCamera"]);
     const clickText = (text) => page.evaluate((text) => {
       const root = document.querySelector("#novacord-root").shadowRoot;

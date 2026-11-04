@@ -76,6 +76,38 @@
     }, 1500);
   }, true);
 
+  // Retry Discord's viewer timeout without reconnecting the voice channel.
+  let recoveryChannel = null;
+  let recoveryAttempts = 0;
+  let lastRecovery = 0;
+  let retriedButtons = new WeakSet();
+  setInterval(() => {
+    const channel = window.Vencord?.Webpack?.Common?.SelectedChannelStore?.getVoiceChannelId?.() || null;
+    if (channel !== recoveryChannel) {
+      recoveryChannel = channel;
+      recoveryAttempts = 0;
+      lastRecovery = 0;
+      retriedButtons = new WeakSet();
+    }
+    if (!channel || document.hidden || recoveryAttempts >= 3 || Date.now() - lastRecovery < 20000) return;
+    for (const button of document.querySelectorAll('button')) {
+      if (button.disabled || button.getAttribute("aria-disabled") === "true" || retriedButtons.has(button)
+          || !/^(réessaie|réessayer|retry|try again)$/i.test(button.textContent.trim())
+          || !button.getClientRects().length) continue;
+      // The code and the retry button must belong to the same compact error card.
+      let card = button.parentElement;
+      for (let depth = 0; card && depth < 4; depth++, card = card.parentElement) {
+        if (card.querySelectorAll("button").length !== 1 || card.querySelector("video")) break;
+        if (!/(?:erreur|error)\s*:\s*2012\b/i.test(card.textContent)) continue;
+        retriedButtons.add(button);
+        recoveryAttempts++;
+        lastRecovery = Date.now();
+        button.click();
+        return;
+      }
+    }
+  }, 2500);
+
   function notifyError(error) {
     const message = String(error?.message || error);
     if (!document.body) return console.error(message);
@@ -840,7 +872,7 @@
       cameraReport, preview,
       el("button", { class: "btn secondary", onclick: async () => {
         diagnostic.hidden = false;
-        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, cameraCommand, audio: window.NovaCordAudio?.status(), media: await media.diagnostics({ includeIncoming: true }) }, null, 2);
+        diagnostic.value = JSON.stringify({ version: window.NovaCord?.version, cameraCommand, incomingRecovery: { attempts: recoveryAttempts }, audio: window.NovaCordAudio?.status(), media: await media.diagnostics({ includeIncoming: true }) }, null, 2);
         diagnostic.focus(); diagnostic.select();
       } }, "Afficher le diagnostic média"),
       el("div", { class: "hint" }, "Pendant l’appel, active la caméra et lance un son, puis affiche ce diagnostic. Copie son texte pour le dépannage."), diagnostic,
@@ -1035,7 +1067,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.4" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.5" }),
     configurable: false,
     writable: false,
   });

@@ -244,6 +244,10 @@
           for (const report of stats.values()) {
             if (report.type !== "inbound-rtp" || (report.kind || report.mediaType) !== "video") continue;
             incomingVideo.push({
+              ssrc: report.ssrc, mid: report.mid,
+              lastPacketAgeMs: Number.isFinite(report.lastPacketReceivedTimestamp)
+                ? Math.max(0, Math.round(report.timestamp - report.lastPacketReceivedTimestamp)) : undefined,
+              keyFramesDecoded: report.keyFramesDecoded, pliCount: report.pliCount,
               codec: stats.get(report.codecId)?.mimeType,
               width: report.frameWidth, height: report.frameHeight, frameRate: report.framesPerSecond,
               bytesReceived: report.bytesReceived, packetsLost: report.packetsLost,
