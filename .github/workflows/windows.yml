@@ -42,10 +42,24 @@ jobs:
       - name: Interroger YouTube Music (diagnostic)
         run: npm run diagnostic
 
+      - name: Tester le démarrage (interface affichée)
+        run: node scripts/smoke.mjs
+
       - name: Créer l'installateur Windows
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder --win --publish never
+
+      - name: Tester le démarrage de l'application empaquetée
+        shell: bash
+        run: NOVA_EXE="$PWD/release/win-unpacked/Nova.exe" node scripts/smoke.mjs
+
+      - name: Captures du test de démarrage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demarrage
+          path: windows/smoke-*.png
 
       - name: Publier
         shell: bash

@@ -201,7 +201,54 @@ async function createWindow() {
     window = null;
     app.quit();
   });
+  watchStartup(window);
   await window.loadFile(path.join(here, '../renderer/index.html'));
+}
+
+// MARK: - Démarrage surveillé : si l'interface n'apparaît pas, Nova dit pourquoi au lieu de rester vide.
+
+let uiReady = false;
+const startupProblems: string[] = [];
+
+function watchStartup(target: BrowserWindow) {
+  const contents = target.webContents;
+  const note = (text: string) => { startupProblems.push(text); if (startupProblems.length > 40) startupProblems.shift(); };
+  contents.on('console-message', (...args: any[]) => {
+    const details = args[0];
+    const level = details?.level ?? args[1];
+    const message = details?.message ?? args[2];
+    if (level === 'error' || level === 3) note(`Console : ${message}${details?.sourceId ? ` (${path.basename(String(details.sourceId))}:${details.lineNumber})` : ''}`);
+  });
+  contents.on('preload-error', (_event, preloadPath, error) => note(`Pont ${path.basename(preloadPath)} : ${error?.stack ?? error}`));
+  contents.on('did-fail-load', (_event, code, description, url) => note(`Chargement impossible (${code} ${description}) : ${url}`));
+  contents.on('render-process-gone', (_event, details) => note(`Affichage arrêté : ${details.reason} (code ${details.exitCode})`));
+  contents.on('did-finish-load', () => {
+    uiReady = false;
+    setTimeout(() => { if (!uiReady && !target.isDestroyed()) void reportStartup(target); }, 15_000);
+  });
+}
+
+async function reportStartup(target: BrowserWindow) {
+  const details = startupProblems.length ? startupProblems.join('\n') : 'Aucune erreur signalée : l’interface ne répond pas.';
+  const logFile = file('demarrage.log');
+  await fs.mkdir(dataDir(), { recursive: true }).catch(() => undefined);
+  await fs.writeFile(logFile, `${new Date().toISOString()}\n${details}\n`).catch(() => undefined);
+  const { response } = await dialog.showMessageBox(target, {
+    type: 'error',
+    title: 'Nova',
+    message: 'Nova n’arrive pas à afficher son interface',
+    detail: `${details.slice(0, 1800)}\n\nJournal : ${logFile}`,
+    buttons: ['Recharger', 'Repartir d’une bibliothèque vide (la tienne est gardée de côté)', 'Fermer'],
+    defaultId: 0,
+    noLink: true,
+  });
+  if (response === 1) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    await fs.rename(file('library.json'), file(`library-sauvegarde-${stamp}.json`)).catch(() => undefined);
+  }
+  if (response === 2) return app.quit();
+  startupProblems.length = 0;
+  target.webContents.reload();
 }
 
 function handle(channel: string, listener: (...args: any[]) => unknown) {
@@ -284,6 +331,7 @@ app.whenReady().then(async () => {
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
   handle('import:cancel', () => { importCancelled = true; });
+  handle('ui:ready', () => { uiReady = true; });
 
   // Bibliothèque de l'iPhone : association par QR code, puis envois automatiques sur le réseau local.
   await startSyncServer(dataDir(), (library: any, phone: string) => {

@@ -148,6 +148,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'yt:squareArtwork': (id) => yt.squareArtwork(id),
   'lyrics:get': (track, duration) => lyrics(track, duration),
   'stream:prefetch': () => undefined,
+  'ui:ready': () => undefined,
   'stream:invalidate': () => undefined,
   'stream:error': () => undefined,
 

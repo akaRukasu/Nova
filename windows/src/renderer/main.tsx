@@ -8,6 +8,8 @@ import './styles.css';
 /** Erreur d'affichage : un message lisible et un bouton pour recharger, plutôt qu'une fenêtre vide. */
 class Guard extends Component<{ children: ReactNode }, { error?: Error }> {
   state: { error?: Error } = {};
+  // Interface affichée : le processus principal arrête de surveiller le démarrage.
+  componentDidMount() { void window.nova?.invoke('ui:ready').catch(() => undefined); }
   static getDerivedStateFromError(error: Error) { return { error }; }
   componentDidCatch(error: Error) { console.error('Nova :', error); }
   render() {
