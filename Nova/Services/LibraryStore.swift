@@ -415,6 +415,8 @@ final class LibraryStore {
         var version = 1
         var exportedAt = Date()
         var library: Snapshot
+        /// Playlists partagées (collaboratives YouTube Music) créées ou rejointes.
+        var shared: [SharedPlaylists.Entry]?
     }
 
     /// Toute la bibliothèque (playlists, likes, historique, écoutes, albums et artistes suivis),
@@ -425,7 +427,7 @@ final class LibraryStore {
                                 addedTracks: addedTracks, savedDates: savedDates)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
-        return try? encoder.encode(ExportEnvelope(library: snapshot))
+        return try? encoder.encode(ExportEnvelope(library: snapshot, shared: SharedPlaylists.shared.entries))
     }
 
     // MARK: Disque

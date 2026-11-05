@@ -46,7 +46,8 @@ export const api = {
   accountLiked: () => call<Track[]>('account:liked'),
   accountPlaylists: () => call<Collection[]>('account:playlists'),
   setLike: (id: string, liked: boolean) => call<void>('account:like', id, liked),
-  createAccountPlaylist: (name: string, ids: string[]) => call<string | undefined>('account:createPlaylist', name, ids),
+  createAccountPlaylist: (name: string, ids: string[], privacy?: string) => call<string | undefined>('account:createPlaylist', name, ids, privacy),
+  openYouTube: (url: string) => call<void>('youtube:open', url),
   addToAccountPlaylist: (playlistId: string, ids: string[]) => call<void>('account:addToPlaylist', playlistId, ids),
 
   importLink: (link: string) => call<ImportedPlaylist[]>('import:link', link),

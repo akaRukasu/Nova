@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Collection, Track } from '../../shared/types';
 import { addToJam, jam } from '../lib/jam';
 import {
-  addToPlaylist, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
+  addToPlaylist, addToShared, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open } from '../lib/router';
@@ -39,6 +39,8 @@ export function playlistSubmenu(tracks: Track[]): MenuItem[] {
       if (name) { createPlaylist(name, tracks); notify(`Playlist « ${name} » créée`); }
     } },
     ...library.get().playlists.slice(0, 30).map((p) => ({ label: p.name, action: () => addToPlaylist(p.id, tracks) })),
+    ...((library.get().shared ?? []).length ? [{ label: '', separator: true }] : []),
+    ...(library.get().shared ?? []).map((s) => ({ label: `${s.title} (partagée)`, icon: 'jam', action: () => void addToShared(s, tracks) })),
   ];
 }
 

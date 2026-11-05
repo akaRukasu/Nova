@@ -1,6 +1,7 @@
 // Barre latérale, comme Apple Music pour Windows : recherche, rubriques, bibliothèque, playlists.
 import { useState } from 'react';
-import { account, createPlaylist, library, notify } from '../lib/library';
+import { account, createPlaylist, createShared, joinShared, library, notify, removeShared, sharedURL } from '../lib/library';
+import { api } from '../lib/api';
 import { currentRoute, open, root, router, type Route } from '../lib/router';
 import { useStore } from '../lib/store';
 import { Icon } from './icons';
@@ -62,6 +63,39 @@ export function Sidebar() {
           } },
         ])}><Icon name="plus" size={16} /></button>
       </div>
+      <div className="side-title">
+        Playlists partagées
+        <button className="icon-button" aria-label="Playlist partagée" onClick={(e) => showMenu(e, user.signedIn ? [
+          { label: 'Nouvelle playlist partagée…', icon: 'jam', action: async () => {
+            const name = await ask('Nouvelle playlist partagée', '', 'Créer');
+            if (!name) return;
+            const entry = await createShared(name).catch(() => undefined);
+            if (!entry) return notify('Création impossible : vérifie ta connexion au compte YouTube.');
+            open({ name: 'collection', collection: { id: `VL${entry.id}`, kind: 'playlist', title: entry.title } });
+            notify('Créée sur ton compte YouTube : active « Collaborer » dans YouTube Music pour inviter tes amis');
+          } },
+          { label: 'Rejoindre avec un lien d’invitation…', icon: 'share', action: async () => {
+            const link = await ask('Colle le lien d’invitation reçu', '', 'Rejoindre');
+            if (!link) return;
+            const entry = await joinShared(link);
+            if (!entry) return notify('Ce lien ne contient pas de playlist YouTube.');
+            notify('Accepte l’invitation dans la fenêtre YouTube Music : la playlist est dans tes playlists partagées');
+          } },
+        ] : [{ label: 'Connecte ton compte YouTube dans Réglages', icon: 'settings', action: () => root({ name: 'settings' }) }])}>
+          <Icon name="plus" size={16} />
+        </button>
+      </div>
+      <nav>
+        {(state.shared ?? []).map((s) => (
+          <div key={s.id} onContextMenu={(e) => showMenu(e, [
+            { label: 'Ouvrir dans YouTube Music', icon: 'share', action: () => void api.openYouTube(sharedURL(s.id)) },
+            { label: 'Retirer de Nova', icon: 'trash', danger: true, action: () => removeShared(s.id) },
+          ])}>
+            <Entry route={{ name: 'collection', collection: { id: `VL${s.id}`, kind: 'playlist', title: s.title, artwork: s.artwork } }}
+              icon="jam" label={s.title} active={route.name === 'collection' && route.collection.id === `VL${s.id}`} />
+          </div>
+        ))}
+      </nav>
       <nav className="side-playlists">
         {(state.smartPlaylists ?? []).map((p) => (
           <Entry key={p.id} route={{ name: 'smart', id: p.id }} icon="smart" label={p.name} active={is('smart', p.id)} />

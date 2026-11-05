@@ -1,7 +1,7 @@
 // Bibliothèque : historique, likes, playlists, réglages. Gardée sur le disque (écriture regroupée)
 // et synchronisée avec le compte YouTube (likes, playlists) quand on est connecté.
 import type {
-  Collection, LibraryState, Settings, SmartPlaylist, SmartRule, Track, UserPlaylist,
+  Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
 import { api, on } from './api';
@@ -186,6 +186,54 @@ export function moveInPlaylist(id: string, from: number, to: number) {
   }));
 }
 
+// MARK: Playlists partagées (collaboratives, via YouTube Music)
+
+export const sharedURL = (id: string) => `https://music.youtube.com/playlist?list=${id}`;
+
+export function sharedPlaylistID(text: string): string | undefined {
+  try {
+    return new URL(text.trim().slice(text.trim().indexOf('http'))).searchParams.get('list') ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Crée la playlist sur le compte YouTube (non répertoriée : le lien d'invitation fonctionne). */
+export async function createShared(title: string, tracks: Track[] = []): Promise<SharedPlaylist | undefined> {
+  const id = await api.createAccountPlaylist(title, tracks.map((t) => t.id), 'UNLISTED');
+  if (!id) return undefined;
+  const entry: SharedPlaylist = { id, title, artwork: tracks[0]?.artwork, isOwner: true };
+  update((state) => ({ ...state, shared: [entry, ...(state.shared ?? [])] }));
+  return entry;
+}
+
+/** Rejoindre : l'invitation s'accepte dans YouTube Music (fenêtre avec le compte), puis la playlist apparaît ici. */
+export async function joinShared(link: string): Promise<SharedPlaylist | undefined> {
+  const id = sharedPlaylistID(link);
+  if (!id) return undefined;
+  void api.openYouTube(link.trim().slice(link.trim().indexOf('http')));
+  if (library.get().shared?.some((s) => s.id === id)) return library.get().shared!.find((s) => s.id === id);
+  const page = await api.collection({ id: `VL${id}`, kind: 'playlist', title: '' }).catch(() => undefined);
+  const entry: SharedPlaylist = { id, title: page?.header.title || 'Playlist partagée', artwork: page?.header.artwork ?? page?.tracks[0]?.artwork, isOwner: false };
+  update((state) => ({ ...state, shared: [entry, ...(state.shared ?? [])] }));
+  return entry;
+}
+
+export function removeShared(id: string) {
+  update((state) => ({ ...state, shared: (state.shared ?? []).filter((s) => s.id !== id) }));
+}
+
+export async function addToShared(entry: SharedPlaylist, tracks: Track[]) {
+  try {
+    await api.addToAccountPlaylist(entry.id, tracks.map((t) => t.id));
+    notify(`Ajouté à « ${entry.title} » (visible chez tous les participants)`);
+  } catch {
+    notify('Ajout impossible : la collaboration est-elle activée sur cette playlist ?');
+  }
+}
+
+export const isShared = (collectionId: string) => (library.get().shared ?? []).some((s) => `VL${s.id}` === collectionId || s.id === collectionId);
+
 // MARK: Albums, playlists et artistes enregistrés
 
 export const isSaved = (id: string) => library.get().saved.some((c) => c.id === id);
@@ -312,6 +360,9 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
       added: dedupe([...added, ...(state.added ?? [])]),
       saved: [...state.saved, ...saved.filter((c) => !known.has(c.id))],
       searches: [...state.searches, ...((raw?.searches ?? []) as string[]).filter((s) => !state.searches.includes(s))].slice(0, 30),
+      shared: [...(state.shared ?? []), ...((raw?.shared ?? []) as any[])
+        .filter((s) => s?.id && !(state.shared ?? []).some((known) => known.id === s.id))
+        .map((s) => ({ id: s.id, title: s.title ?? 'Playlist partagée', artwork: s.artworkURL ?? undefined, isOwner: !!s.isOwner }))],
     };
   });
   return { playlists: phonePlaylists.length, tracks: songs().length };

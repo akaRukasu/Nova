@@ -120,7 +120,7 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
       try {
         const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const phone = String(request.headers['x-nova-device'] ?? 'iPhone');
-        const summary = onLibrary(parsed.library ?? parsed, phone);
+        const summary = onLibrary(parsed.library ? { ...parsed.library, shared: parsed.shared } : parsed, phone);
         pairing = { ...pairing, paired: true, phoneName: phone, lastSync: Date.now() };
         await savePairing();
         response.writeHead(200, { 'content-type': 'application/json' });

@@ -517,3 +517,8 @@ input[type='range']:hover::-webkit-slider-thumb { opacity: 1; }
 
 .player-error { display: flex; align-items: center; gap: 6px; max-width: 520px; font-size: 12px; color: #e5484d; cursor: pointer; }
 .player-error span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.shared-banner { display: flex; align-items: center; gap: 14px; background: var(--accent-soft); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+.shared-banner > div { flex: 1; }
+.shared-banner svg { color: var(--accent); flex-shrink: 0; }
+.shared-banner p { margin: 2px 0 0; }

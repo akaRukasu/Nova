@@ -517,9 +517,9 @@ export async function setLike(videoId: string, liked: boolean) {
   else await client.interact.removeRating(videoId);
 }
 
-export async function createAccountPlaylist(name: string, videoIds: string[]): Promise<string | undefined> {
+export async function createAccountPlaylist(name: string, videoIds: string[], privacy = 'PRIVATE'): Promise<string | undefined> {
   const client = await yt();
-  const created: any = await client.playlist.create(name, videoIds.slice(0, 200));
+  const created: any = await client.playlist.create(name, videoIds.slice(0, 200), privacy as any);
   const id: string | undefined = created?.playlist_id ?? created?.data?.playlistId;
   if (id && videoIds.length > 200) {
     for (let start = 200; start < videoIds.length; start += 200) {

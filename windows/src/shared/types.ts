@@ -89,6 +89,14 @@ export interface UserPlaylist {
   youtubeId?: string;
 }
 
+export interface SharedPlaylist {
+  /** Identifiant YouTube, sans « VL ». */
+  id: string;
+  title: string;
+  artwork?: string;
+  isOwner: boolean;
+}
+
 export interface TrackStats {
   playCount: number;
   lastPlayed?: number;
@@ -148,6 +156,8 @@ export interface LibraryState {
   liked: Track[];
   playlists: UserPlaylist[];
   smartPlaylists?: SmartPlaylist[];
+  /** Playlists collaboratives (YouTube Music) créées ou rejointes. */
+  shared?: SharedPlaylist[];
   /** Titres ajoutés à la bibliothèque sans playlist (bouton « + » de l'iPhone). */
   added?: Track[];
   saved: Collection[];

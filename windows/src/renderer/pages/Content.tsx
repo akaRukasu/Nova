@@ -4,7 +4,7 @@ import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
 import { ShelfView } from '../components/Shelf';
 import { api } from '../lib/api';
-import { isSaved, library, toggleSaved, upsertPlaylist, notify } from '../lib/library';
+import { isSaved, isShared, library, sharedURL, toggleSaved, upsertPlaylist, notify } from '../lib/library';
 import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { useStore } from '../lib/store';
@@ -46,7 +46,9 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
 
 export function CollectionPage({ collection }: { collection: Collection }) {
   useStore(library);
-  const { data, error, loading, reload } = useCached(`collection-${collection.id}`, () => api.collection(collection), 30 * 60_000);
+  // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
+  const shared = isShared(collection.id);
+  const { data, error, loading, reload } = useCached(`collection-${collection.id}`, () => api.collection(collection), shared ? 0 : 30 * 60_000);
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
   if (!data) return null;
@@ -75,6 +77,18 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           </div>
         </div>
       </div>
+      {shared && (
+        <div className="shared-banner">
+          <Icon name="jam" size={20} />
+          <div>
+            <strong>Playlist partagée</strong>
+            <p className="muted small">Pour inviter des amis : ouvre-la dans YouTube Music → « ⋯ » → « Collaborer », active la collaboration et envoie le lien
+              d’invitation. Eux : Nova → Playlists partagées → « Rejoindre avec un lien ». Chacun ajoute ensuite des titres depuis Nova.</p>
+          </div>
+          <button className="button secondary" onClick={() => void api.openYouTube(sharedURL(collection.id.replace(/^VL/, '')))}>Ouvrir dans YouTube Music</button>
+          <button className="button secondary" onClick={() => void reload(true)}>Actualiser</button>
+        </div>
+      )}
       <TrackList tracks={data.tracks} numbered={isAlbum} />
       {data.related.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
     </div>

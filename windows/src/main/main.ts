@@ -256,7 +256,14 @@ app.whenReady().then(async () => {
   handle('account:liked', () => yt.likedSongs());
   handle('account:playlists', () => yt.accountPlaylists());
   handle('account:like', (id: string, liked: boolean) => yt.setLike(id, liked));
-  handle('account:createPlaylist', (name: string, ids: string[]) => yt.createAccountPlaylist(name, ids));
+  handle('account:createPlaylist', (name: string, ids: string[], privacy?: string) => yt.createAccountPlaylist(name, ids, privacy));
+  // Page YouTube Music avec le compte de l'utilisateur (activer « Collaborer », accepter une invitation).
+  handle('youtube:open', (url: string) => {
+    if (!/^https:\/\/(music|www)\.youtube\.com\//.test(url)) return;
+    const page = new BrowserWindow({ width: 1100, height: 800, title: 'YouTube Music', autoHideMenuBar: true, webPreferences: { partition: loginPartition } });
+    page.webContents.setUserAgent(page.webContents.getUserAgent().replace(/ Electron\/\S+/, '').replace(/ nova-windows\/\S+/i, ''));
+    void page.loadURL(url);
+  });
   handle('account:addToPlaylist', (playlistId: string, ids: string[]) => yt.addToAccountPlaylist(playlistId, ids));
 
   // Import
