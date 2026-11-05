@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Observation
 
 /// Bibliothèque locale : historique, titres likés, playlists, pages enregistrées, recherches.
