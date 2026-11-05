@@ -1,0 +1,78 @@
+{
+  "name": "nova-windows",
+  "productName": "Nova",
+  "version": "0.4.0",
+  "description": "Nova pour Windows : le catalogue de YouTube Music, façon Apple Music.",
+  "main": "dist/main/main.js",
+  "private": true,
+  "scripts": {
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "diagnostic": "node scripts/diagnostic.mjs"
+  },
+  "dependencies": {
+    "youtubei.js": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "type": "module",
+  "author": {
+    "name": "Nova"
+  },
+  "homepage": "https://github.com/akaRukasu/Nova",
+  "build": {
+    "appId": "com.akarukasu.nova",
+    "productName": "Nova",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "build/icon.png"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Nova-Windows-Setup.${ext}",
+      "shortcutName": "Nova",
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "Nova-Windows-Portable.${ext}"
+    }
+  }
+}

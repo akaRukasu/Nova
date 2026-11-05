@@ -1,0 +1,63 @@
+name: Nova Windows
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier les types
+        run: npm run typecheck
+
+      - name: Compiler
+        run: npm run build
+
+      - name: Interroger YouTube Music (diagnostic)
+        run: npm run diagnostic
+
+      - name: Créer l'installateur Windows
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --win --publish never
+
+      - name: Publier
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la release
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          if [ "$GITHUB_REF_NAME" = "main" ]; then TAG="windows-latest"; else TAG="windows-preview-$BRANCH"; fi
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" release/Nova-Windows-Setup.exe release/Nova-Windows-Portable.exe \
+            --target "$GITHUB_SHA" \
+            --title "Nova pour Windows — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
+            --notes "Commit $GITHUB_SHA. Nova-Windows-Setup.exe : installateur. Nova-Windows-Portable.exe : version sans installation. Windows peut afficher « Windows a protégé votre ordinateur » (app non signée) : Informations complémentaires → Exécuter quand même." \
+            --prerelease

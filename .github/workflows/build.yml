@@ -2,6 +2,9 @@ name: Build IPA
 
 on:
   push:
+    paths-ignore:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
   workflow_dispatch:
 
 permissions:
