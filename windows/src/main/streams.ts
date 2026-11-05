@@ -5,6 +5,9 @@ import { protocol } from 'electron';
 import { stream, type Stream } from './yt.js';
 
 const cache = new Map<string, Stream>();
+/** Dernière raison d'échec par titre (affichée par l'interface). */
+const lastErrors = new Map<string, string>();
+export const streamError = (id: string) => lastErrors.get(id);
 const pending = new Map<string, Promise<Stream>>();
 let highQuality = true;
 // Extractions non urgentes (titre suivant) : une seule à la fois, pour ménager le processeur.
@@ -76,6 +79,7 @@ export function handleStreams() {
         }
         return new Response(upstream.body, { status: upstream.status, headers });
       } catch (error) {
+        lastErrors.set(id, error instanceof Error ? error.message : String(error));
         if (attempt === 2) return new Response(String(error), { status: 502 });
         invalidate(id);
       }

@@ -11,7 +11,7 @@ import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
 import { currentPairing, pairingLink, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
-import { handleStreams, invalidate, prefetch, registerScheme, setQuality } from './streams.js';
+import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import * as yt from './yt.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -227,6 +227,7 @@ app.whenReady().then(async () => {
   handle('lyrics:get', (track: Track, duration?: number) => lyrics(track, duration));
   handle('stream:prefetch', (id: string) => prefetch(id));
   handle('stream:invalidate', (id: string) => invalidate(id));
+  handle('stream:error', (id: string) => streamError(id));
 
   // Bibliothèque locale
   handle('library:load', () => loadLibrary());

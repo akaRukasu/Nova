@@ -34,6 +34,7 @@ export const api = {
   lyrics: (track: Track, duration?: number) => call<Lyrics | undefined>('lyrics:get', track, duration),
   prefetch: (id: string) => call<void>('stream:prefetch', id),
   invalidate: (id: string) => call<void>('stream:invalidate', id),
+  streamError: (id: string) => call<string | undefined>('stream:error', id),
 
   loadLibrary: () => call<LibraryState>('library:load'),
   saveLibrary: (state: LibraryState) => call<void>('library:save', state),

@@ -427,7 +427,15 @@ class Engine {
     }
     if (++this.recoveries > 3) {
       this.recoveries = 0;
-      set({ error: `« ${track.title} » ne peut pas être lu (${reason}).`, loading: false });
+      set({ error: `« ${track.title} » ne peut pas être lu (${reason}).`, loading: false, playing: false });
+      // Raison donnée par YouTube (contrôle anti-robot…), avec la solution.
+      void api.streamError(track.id).then((detail) => {
+        if (!detail || currentTrack()?.id !== track.id) return;
+        const robot = /robot|bot|sign in|connect/i.test(detail);
+        set({ error: robot
+          ? 'YouTube demande de confirmer que tu n’es pas un robot : connecte-toi à ton compte YouTube dans Réglages, puis relance le titre.'
+          : `« ${track.title} » : ${detail.replace(/^Error: /, '')}` });
+      });
       if (playerState.get().index + 1 < playerState.get().queue.length) this.next(false);
       return;
     }

@@ -94,6 +94,11 @@ export function PlayerBar() {
         <button className="icon-button" onClick={(e) => showMenu(e, trackMenu(track))} aria-label="Plus"><Icon name="more" size={18} strokeWidth={3} /></button>
       </div>
       <div className="center">
+        {state.error ? (
+          <div className="player-error" onClick={() => open({ name: 'settings' })}>
+            <Icon name="radio" size={16} /> <span>{state.error}</span>
+          </div>
+        ) : null}
         <Controls />
         <Progress compact />
       </div>
