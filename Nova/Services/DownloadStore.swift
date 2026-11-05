@@ -124,7 +124,7 @@ final class DownloadStore {
             if (try? FileManager.default.copyItem(at: cached, to: destination)) != nil { return true }
         }
         do {
-            let stream = try await StreamResolver.audioStream(for: track.id)
+            let stream = try await StreamResolver.audioStream(for: track.id, urgency: .background)
             guard stream.isM4A else { return false }
             try await ChunkedDownloader.download(stream.url, to: destination)
             return true

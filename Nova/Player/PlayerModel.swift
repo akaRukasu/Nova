@@ -60,6 +60,8 @@ final class PlayerModel {
     @ObservationIgnored private var recoveryCount = 0
     @ObservationIgnored private var recoveringSince: Date?
     @ObservationIgnored private var recoveryTrackID: String?
+    /// Reprise programmée (pause entre deux essais) : la surveillance n'en relance pas d'autre.
+    @ObservationIgnored private var recoveryPending = false
     @ObservationIgnored private var waitingSince: Date?
     @ObservationIgnored private var watchdog: Task<Void, Never>?
     /// Téléphone en veille : temps accordé par iOS pour charger le titre suivant (silence entre deux titres).
@@ -221,7 +223,7 @@ final class PlayerModel {
 
     /// Relance le titre en cours à la même position, avec un lien de flux neuf.
     private func recoverPlayback(reason: String) {
-        guard let track = current, !isLoading, !endHandled else { return }
+        guard let track = current, !isLoading, !endHandled, !recoveryPending else { return }
         waitingSince = nil
         if recoveryTrackID != track.id {
             recoveryTrackID = track.id
@@ -238,10 +240,18 @@ final class PlayerModel {
         recoveringSince = Date()
         let position = currentTime
         let usedLocalFile = (player.currentItem?.asset as? AVURLAsset)?.url.isFileURL == true
+        let attempt = recoveryCount
+        recoveryPending = true
         Task {
-            await StreamResolver.invalidate(track.id)
+            defer { recoveryPending = false }
+            // 1er essai : même lien (souvent une simple coupure réseau, sans nouvelle extraction coûteuse).
+            // Ensuite : lien neuf, après une pause pour ne pas enchaîner les extractions.
+            if attempt > 1 {
+                try? await Task.sleep(for: .seconds(4))
+                await StreamResolver.invalidate(track.id)
+            }
             // Fichier du cache illisible : retiré, le flux en ligne prend le relais.
-            if usedLocalFile, downloads.localURL(for: track.id) == nil { await AudioCache.shared.remove(track.id) }
+            if attempt > 1, usedLocalFile, downloads.localURL(for: track.id) == nil { await AudioCache.shared.remove(track.id) }
             guard current?.id == track.id else { return }
             load(resumeAt: position)
         }
@@ -674,17 +684,21 @@ final class PlayerModel {
     /// Prépare le titre suivant dans le cache pour un enchaînement instantané.
     /// Prépare les titres suivants : flux résolus tout de suite (démarrage instantané),
     /// fichier du prochain titre mis en cache après le démarrage du titre en cours.
+    /// Seulement le titre suivant (plus le processeur ne suit pas en arrière-plan), après un délai
+    /// pour ne pas concurrencer le démarrage du titre en cours, et jamais en double.
+    @ObservationIgnored private var prefetchTask: Task<Void, Never>?
+
     private func prefetchNext() {
-        let upcoming = queue.dropFirst(index + 1).prefix(2).filter { downloads.localURL(for: $0.id) == nil }
-        for (offset, next) in upcoming.enumerated() {
-            Task.detached(priority: .background) {
-                guard await !AudioCache.shared.contains(next.id),
-                      let stream = try? await StreamResolver.audioStream(for: next.id) else { return }
-                guard offset == 0, stream.isM4A else { return }
-                try? await Task.sleep(for: .seconds(20))
-                guard NetworkMonitor.shared.allowsCaching else { return }
-                await AudioCache.shared.store(remote: stream.url, id: next.id)
-            }
+        prefetchTask?.cancel()
+        guard let next = queue.dropFirst(index + 1).first, downloads.localURL(for: next.id) == nil else { return }
+        prefetchTask = Task.detached(priority: .background) {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, await !AudioCache.shared.contains(next.id),
+                  let stream = try? await StreamResolver.audioStream(for: next.id, urgency: .background) else { return }
+            guard stream.isM4A else { return }
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, NetworkMonitor.shared.allowsCaching else { return }
+            await AudioCache.shared.store(remote: stream.url, id: next.id)
         }
     }
 

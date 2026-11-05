@@ -11,12 +11,27 @@ enum StreamResolver {
 
     /// Flux déjà résolus : relancer un titre ne refait pas l'extraction (plusieurs requêtes).
     private static let cache = ResolvedCache()
+    private static let gate = ResolveGate()
 
-    static func audioStream(for videoID: String) async throws -> Resolved {
+    /// `background` : préparation du titre suivant, téléchargements. Ces extractions passent une par une.
+    enum Urgency: Sendable { case playback, background }
+
+    /// L'extraction exécute le code JavaScript de YouTube (JavaScriptCore) : c'est très gourmand.
+    /// iOS ferme une app en arrière-plan qui dépasse 80 % de processeur pendant une minute : on n'en
+    /// lance donc jamais deux pour le même titre, et une seule à la fois pour ce qui n'est pas urgent.
+    static func audioStream(for videoID: String, urgency: Urgency = .playback) async throws -> Resolved {
         if let hit = await cache.value(for: videoID) { return hit }
-        let resolved = try await resolve(videoID)
+        let resolved = try await gate.run(videoID, urgent: urgency == .playback) {
+            if let hit = await cache.value(for: videoID) { return hit }
+            return try await resolve(videoID)
+        }
         await cache.store(resolved, for: videoID)
         return resolved
+    }
+
+    /// Une extraction est-elle en cours (pour ne pas en empiler d'autres en arrière-plan) ?
+    static var isBusy: Bool {
+        get async { await gate.isBusy }
     }
 
     /// Lien refusé en cours de lecture (expiré, ou lié à l'ancien réseau) : on en redemandera un.
@@ -43,6 +58,44 @@ enum StreamResolver {
             return Resolved(url: playable.url, isM4A: false)
         }
         throw NovaError.noPlayableStream
+    }
+}
+
+/// Extractions en cours : une seule par titre, et une seule à la fois pour les non urgentes.
+private actor ResolveGate {
+    private var tasks: [String: Task<StreamResolver.Resolved, Error>] = [:]
+    private var backgroundRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    var isBusy: Bool { !tasks.isEmpty }
+
+    func run(_ id: String, urgent: Bool,
+             work: @escaping @Sendable () async throws -> StreamResolver.Resolved) async throws -> StreamResolver.Resolved {
+        if let running = tasks[id] { return try await running.value }
+        if !urgent {
+            await acquire()
+            // Pendant l'attente, le même titre a pu être lancé ailleurs.
+            if let running = tasks[id] {
+                release()
+                return try await running.value
+            }
+        }
+        let task = Task(priority: urgent ? .userInitiated : .utility) { try await work() }
+        tasks[id] = task
+        defer {
+            tasks[id] = nil
+            if !urgent { release() }
+        }
+        return try await task.value
+    }
+
+    private func acquire() async {
+        guard backgroundRunning else { backgroundRunning = true; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func release() {
+        if waiters.isEmpty { backgroundRunning = false } else { waiters.removeFirst().resume() }
     }
 }
 
