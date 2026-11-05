@@ -182,7 +182,6 @@ async function createWindow() {
     minHeight: 600,
     title: 'Nova',
     backgroundColor: dark ? '#1c1c1e' : '#f5f5f7',
-    ...(safeDisplay ? {} : { backgroundMaterial: 'mica' as const }),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#ffffff' : '#1c1c1e', height: 40 },
     icon: path.join(here, '../../build/icon.png'),
@@ -214,11 +213,28 @@ async function createWindow() {
 // MARK: - Démarrage surveillé : si l'interface n'apparaît pas, Nova dit pourquoi au lieu de rester vide.
 
 let uiReady = false;
+let windowCreatedAt = 0;
 const startupProblems: string[] = [];
+
+/** Journal de démarrage (demarrage.log, dans le dossier de Nova) : de quoi trouver la cause d'une fenêtre vide. */
+function log(text: string) {
+  const line = `${new Date().toISOString()} ${text}\n`;
+  void fs.mkdir(dataDir(), { recursive: true }).then(() => fs.appendFile(file('demarrage.log'), line)).catch(() => undefined);
+}
 
 function watchStartup(target: BrowserWindow) {
   const contents = target.webContents;
-  const note = (text: string) => { startupProblems.push(text); if (startupProblems.length > 40) startupProblems.shift(); };
+  windowCreatedAt = Date.now();
+  uiReady = false;
+  // Journal gardé court : au-delà de 200 Ko, l'ancien est mis de côté.
+  void fs.stat(file('demarrage.log')).then(async (s) => { if (s.size > 200_000) await fs.rename(file('demarrage.log'), file('demarrage.old.log')); }).catch(() => undefined);
+  const note = (text: string) => { startupProblems.push(text); if (startupProblems.length > 40) startupProblems.shift(); log(text); };
+  log(`--- Démarrage de Nova ${app.getVersion()} · affichage ${safeDisplay ? 'de secours' : 'normal'} · ${process.getSystemVersion()}`);
+  log(`Carte graphique : ${JSON.stringify(app.getGPUFeatureStatus())}`);
+  contents.on('did-finish-load', () => log('Page chargée'));
+  target.on('show', () => log('Fenêtre affichée'));
+  // Si rien n'est prêt au bout de 20 s (page qui ne se charge pas, interface qui ne démarre pas) : Nova le dit.
+  setTimeout(() => { if (!uiReady && !target.isDestroyed()) void reportStartup(target); }, 20_000);
   contents.on('console-message', (...args: any[]) => {
     const details = args[0];
     const level = details?.level ?? args[1];
@@ -232,11 +248,11 @@ function watchStartup(target: BrowserWindow) {
     // L'affichage a planté (mémoire, pilote graphique…) : on le relance plutôt que de laisser une fenêtre vide.
     if (details.reason !== 'clean-exit' && !target.isDestroyed()) setTimeout(() => !target.isDestroyed() && target.webContents.reload(), 1000);
   });
-  contents.on('did-finish-load', () => {
-    uiReady = false;
-    setTimeout(() => { if (!uiReady && !target.isDestroyed()) void reportStartup(target); }, 15_000);
-  });
 }
+
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'GPU') log(`Processus graphique arrêté : ${details.reason} (code ${details.exitCode})`);
+});
 
 /** L'interface est prête mais la fenêtre reste-t-elle uniforme (rien d'affiché) ? Alors : affichage de secours. */
 async function checkDisplay() {
@@ -255,6 +271,7 @@ async function checkDisplay() {
     }
     blank = colors.size <= 2;
   }
+  log(`Vérification de l'affichage : ${blank ? 'fenêtre uniforme' : 'contenu visible'}`);
   if (!blank) return;
   await fs.writeFile(safeDisplayFlag(), `Fenêtre vide détectée le ${new Date().toISOString()}\n`).catch(() => undefined);
   app.relaunch();
@@ -265,7 +282,7 @@ async function reportStartup(target: BrowserWindow) {
   const details = startupProblems.length ? startupProblems.join('\n') : 'Aucune erreur signalée : l’interface ne répond pas.';
   const logFile = file('demarrage.log');
   await fs.mkdir(dataDir(), { recursive: true }).catch(() => undefined);
-  await fs.writeFile(logFile, `${new Date().toISOString()}\n${details}\n`).catch(() => undefined);
+  log(`Interface toujours absente après 20 s.`);
   const { response } = await dialog.showMessageBox(target, {
     type: 'error',
     title: 'Nova',
@@ -291,11 +308,34 @@ function handle(channel: string, listener: (...args: any[]) => unknown) {
 app.on('second-instance', () => {
   // Nova relancé : si la fenêtre existante est vide ou plantée, elle est rechargée (ou recréée).
   if (!window || window.isDestroyed()) return void createWindow();
+  log(`Nova relancé alors qu'il est ouvert (interface prête : ${uiReady})`);
   if (window.webContents.isCrashed() || !uiReady) window.webContents.reload();
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+  // Relancé peu après l'ouverture : souvent parce que la fenêtre reste vide. On demande (fenêtre de Windows, toujours visible).
+  if (Date.now() - windowCreatedAt < 10 * 60_000) void askAboutBlankWindow(window);
 });
+
+async function askAboutBlankWindow(target: BrowserWindow) {
+  const { response } = await dialog.showMessageBox(target, {
+    type: 'question',
+    title: 'Nova',
+    message: 'La fenêtre de Nova reste vide ?',
+    detail: `Affichage de secours : Nova redémarre sans accélération graphique (un peu moins fluide, mais fiable).\nJournal : ${file('demarrage.log')}`,
+    buttons: ['Non, tout va bien', 'Recharger', 'Affichage de secours'],
+    defaultId: 2,
+    cancelId: 0,
+    noLink: true,
+  });
+  log(`Réponse à « fenêtre vide ? » : ${['non', 'recharger', 'secours'][response]}`);
+  if (response === 1 && !target.isDestroyed()) target.webContents.reload();
+  if (response === 2) {
+    await fs.writeFile(safeDisplayFlag(), `Demandé le ${new Date().toISOString()}\n`).catch(() => undefined);
+    app.relaunch();
+    app.exit(0);
+  }
+}
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.akarukasu.nova');
@@ -370,6 +410,7 @@ app.whenReady().then(async () => {
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;
+    log(`Interface prête en ${Date.now() - windowCreatedAt} ms`);
     setTimeout(() => void checkDisplay(), 2500);
   });
 
