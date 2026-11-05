@@ -45,6 +45,8 @@ function attach(element: HTMLVideoElement) {
   element.addEventListener('error', () => report('error'));
   element.addEventListener('loadedmetadata', () => { applyVolume(); report('loadedmetadata'); });
   element.addEventListener('volumechange', applyVolume);
+  // La page démarre parfois la lecture avant que ce script ne s'y accroche.
+  if (!element.paused) setTimeout(() => report('playing'), 0);
   element.addEventListener('timeupdate', () => {
     if (Date.now() - lastSent < 240) return;
     lastSent = Date.now();

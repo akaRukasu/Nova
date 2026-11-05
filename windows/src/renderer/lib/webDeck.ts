@@ -19,6 +19,8 @@ export class WebDeck extends EventTarget {
   private url = '';
   private loaded = false;
   private startAt = 0;
+  private started = false;
+  private lastType = '';
   private waiting: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(private readonly number: number) {
@@ -35,6 +37,7 @@ export class WebDeck extends EventTarget {
     this.time = 0;
     this.duration = NaN;
     this.ad = false;
+    this.started = false;
   }
 
   get currentTime() { return this.time; }
@@ -96,6 +99,12 @@ export class WebDeck extends EventTarget {
       if (first) this.dispatchEvent(new Event('loadedmetadata'));
     }
     if (payload.type === 'timeupdate' || payload.type === 'playing') this.time = payload.time;
+    // La position avance alors qu'on n'a pas vu le début de la lecture : elle a bien démarré.
+    if (payload.type === 'timeupdate' && !payload.paused && (this.waiting || this.lastType === 'pause' || !this.started)) {
+      payload = { ...payload, type: 'playing' };
+    }
+    this.lastType = payload.type;
+    if (payload.type === 'playing') this.started = true;
     if (payload.type === 'playing' && this.waiting) {
       clearTimeout(this.waiting.timer);
       this.waiting.resolve();
