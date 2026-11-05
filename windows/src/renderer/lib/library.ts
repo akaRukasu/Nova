@@ -64,6 +64,9 @@ export function updateSettings(change: Partial<Settings>) {
   const settings = library.get().settings;
   applyTheme(settings.theme);
   void api.applySettings(settings);
+  if (change.engine && change.engine !== 'auto') {
+    void import('./player').then(({ player }) => player.setMode(change.engine as 'direct' | 'web'));
+  }
 }
 
 // MARK: Écoutes

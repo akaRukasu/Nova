@@ -390,6 +390,15 @@ export function SettingsPage() {
             <input type="range" min={1} max={12} value={settings.crossfadeSeconds} onChange={(e) => updateSettings({ crossfadeSeconds: Number(e.target.value) })} />
           </label>
         )}
+        <label className="field">Moteur de lecture
+          <select value={settings.engine ?? 'auto'} onChange={(e) => updateSettings({ engine: e.target.value as typeof settings.engine })}>
+            <option value="auto">Automatique (recommandé)</option>
+            <option value="web">Lecteur officiel YouTube Music</option>
+            <option value="direct">Flux direct</option>
+          </select>
+          <span className="muted small">Si YouTube refuse la lecture directe (« confirme que tu n’es pas un robot »), Nova passe tout seul au lecteur officiel
+            de YouTube Music, avec ton compte. Sans YouTube Premium, ses publicités sont diffusées.</span>
+        </label>
         <label className="toggle-row"><input type="checkbox" checked={settings.autoplayRadio} onChange={(e) => updateSettings({ autoplayRadio: e.target.checked })} /> Lecture automatique (titres similaires à la fin de la file)</label>
         <label className="toggle-row"><input type="checkbox" checked={settings.recordHistory} onChange={(e) => updateSettings({ recordHistory: e.target.checked })} /> Historique d’écoute</label>
       </section>

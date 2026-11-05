@@ -1,9 +1,13 @@
 // Lecteur : file d'attente, aléatoire, répétition, AutoMix / fondu enchaîné (deux lecteurs audio),
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
-import { api } from './api';
-import { library, recordPlay, shuffle as shuffled, updateArtwork } from './library';
+import { api, on } from './api';
+import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
 import { Store } from './store';
+import { WebDeck } from './webDeck';
+
+type Deck = HTMLAudioElement | WebDeck;
+export type EngineMode = 'direct' | 'web';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -16,13 +20,17 @@ export interface PlayerState {
   repeat: RepeatMode;
   volume: number;
   transitioning: boolean;
+  /** Publicité de YouTube en cours (lecteur officiel, compte sans Premium). */
+  ad: boolean;
+  mode: EngineMode;
   sleepAt?: number;
   error?: string;
 }
 
 export const playerState = new Store<PlayerState>({
   queue: [], index: 0, playing: false, loading: false, shuffled: false, repeat: 'off',
-  volume: Number(localStorage.getItem('volume') ?? 0.8), transitioning: false,
+  volume: Number(localStorage.getItem('volume') ?? 0.8), transitioning: false, ad: false,
+  mode: (localStorage.getItem('engineMode') as EngineMode) ?? 'direct',
 });
 
 /** Position et durée, à part : elles changent quatre fois par seconde (seul le lecteur s'en sert). */
@@ -46,7 +54,7 @@ function rememberDuration(id: string, seconds: number) {
 }
 
 class Engine {
-  private decks = [new Audio(), new Audio()];
+  private decks: Deck[] = [];
   private active = 0;
   private unshuffled: Track[] | null = null;
   private fadeTimer: ReturnType<typeof setInterval> | undefined;
@@ -60,6 +68,23 @@ class Engine {
   followingJam = false;
 
   constructor() {
+    this.createDecks(playerState.get().mode);
+    // Surveillance : flux bloqué plus de 10 s → relancé au même endroit (lien neuf si besoin).
+    setInterval(() => {
+      if (this.stalledSince && playerState.get().playing && !(this.deck as WebDeck).ad && Date.now() - this.stalledSince > 10_000) {
+        this.recover('flux bloqué');
+      }
+    }, 2000);
+    this.setupMediaSession();
+    this.restoreSession();
+    window.addEventListener('beforeunload', () => this.saveSession());
+    setInterval(() => this.saveSession(), 15_000);
+  }
+
+  /** Lecture directe (flux audio) ou par le lecteur officiel de YouTube Music. */
+  private createDecks(mode: EngineMode) {
+    this.decks.forEach((deck) => { deck.pause(); deck.removeAttribute('src'); });
+    this.decks = mode === 'web' ? [new WebDeck(0), new WebDeck(1)] : [new Audio(), new Audio()];
     this.decks.forEach((deck, number) => {
       deck.preload = 'auto';
       deck.volume = playerState.get().volume;
@@ -77,15 +102,21 @@ class Engine {
         const track = currentTrack();
         if (track && !track.duration && !durations.get(track.id) && Number.isFinite(deck.duration)) setTime({ duration: deck.duration });
       });
+      deck.addEventListener('adchange', () => number === this.active && set({ ad: (deck as WebDeck).ad }));
     });
-    // Surveillance : flux bloqué plus de 10 s → relancé au même endroit (lien neuf si besoin).
-    setInterval(() => {
-      if (this.stalledSince && playerState.get().playing && Date.now() - this.stalledSince > 10_000) this.recover('flux bloqué');
-    }, 2000);
-    this.setupMediaSession();
-    this.restoreSession();
-    window.addEventListener('beforeunload', () => this.saveSession());
-    setInterval(() => this.saveSession(), 15_000);
+  }
+
+  /** Change de moteur et relance le titre en cours au même endroit. */
+  setMode(mode: EngineMode, restart = true) {
+    if (mode === playerState.get().mode && this.decks.length) return;
+    const wasPlaying = playerState.get().playing;
+    const position = timeState.get().time;
+    localStorage.setItem('engineMode', mode);
+    this.finishFade();
+    this.createDecks(mode);
+    this.active = 0;
+    set({ mode, ad: false });
+    if (restart && currentTrack()) this.load(position, !wasPlaying);
   }
 
   private get deck() {
@@ -401,7 +432,7 @@ class Engine {
     this.updateMediaSession();
   }
 
-  private fadingOut: HTMLAudioElement | null = null;
+  private fadingOut: Deck | null = null;
 
   private finishFade() {
     clearInterval(this.fadeTimer);
@@ -421,6 +452,25 @@ class Engine {
   private recover(reason: string) {
     const track = currentTrack();
     if (!track || this.endHandled) return;
+    // Lecture directe refusée par YouTube (contrôle anti-robot) : bascule sur le lecteur officiel.
+    if (playerState.get().mode === 'direct' && library.get().settings.engine !== 'direct' && !this.checkingRefusal) {
+      this.checkingRefusal = true;
+      void api.streamError(track.id).then((detail) => {
+        this.checkingRefusal = false;
+        if (detail && /robot|bot|refus|sign in|connect|login|403|unavailable/i.test(detail) && currentTrack()?.id === track.id) {
+          this.setMode('web');
+        } else {
+          this.retry(track, reason);
+        }
+      });
+      return;
+    }
+    this.retry(track, reason);
+  }
+
+  private checkingRefusal = false;
+
+  private retry(track: Track, reason: string) {
     if (this.recoveryFor !== track.id) {
       this.recoveryFor = track.id;
       this.recoveries = 0;
@@ -493,3 +543,14 @@ class Engine {
 }
 
 export const player = new Engine();
+// Accès pour les tests automatiques.
+(window as unknown as { novaPlayer: Engine }).novaPlayer = player;
+
+on('media:key', (action: string) => {
+  if (action === 'toggle') player.toggle();
+  if (action === 'next') player.next();
+  if (action === 'previous') player.previous();
+});
+on('webplayer:consent', (visible: boolean) => {
+  if (visible) notify('YouTube demande ton choix pour les cookies : réponds dans la fenêtre YouTube, la musique démarre ensuite.');
+});

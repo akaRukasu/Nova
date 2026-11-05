@@ -107,6 +107,8 @@ export interface Settings {
   ticketmasterKey: string;
   jamName: string;
   theme: 'system' | 'dark' | 'light';
+  /** Lecture : automatique (direct, puis lecteur officiel si YouTube refuse), direct, ou lecteur officiel. */
+  engine: 'auto' | 'direct' | 'web';
 }
 
 export const defaultSettings: Settings = {
@@ -120,6 +122,7 @@ export const defaultSettings: Settings = {
   ticketmasterKey: '',
   jamName: '',
   theme: 'system',
+  engine: 'auto',
 };
 
 export type SmartField = 'title' | 'artist' | 'album' | 'playCount' | 'lastPlayed' | 'liked';

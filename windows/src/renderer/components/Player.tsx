@@ -103,6 +103,7 @@ export function PlayerBar() {
         <Progress compact />
       </div>
       <div className="right">
+        {state.ad && <button className="badge" onClick={() => void window.nova.invoke('webplayer:show', 0)}>Publicité YouTube</button>}
         {state.transitioning && <span className="badge"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu'}</span>}
         <button className={`icon-button ${jamState.role !== 'none' ? 'accent' : ''}`} onClick={() => open({ name: 'jam' })} aria-label="Jam"><Icon name="jam" size={19} /></button>
         <button className={`icon-button ${state.sleepAt ? 'accent' : ''}`} onClick={(e) => showMenu(e, sleepMenu())} aria-label="Minuterie"><Icon name="moon" size={18} /></button>

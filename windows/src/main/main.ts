@@ -1,5 +1,5 @@
 // Nova pour Windows : processus principal.
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, session, shell } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +13,15 @@ import { currentPairing, pairingLink, startSyncServer, stopSyncServer, unpair } 
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import * as yt from './yt.js';
+import { destroyWebPlayers, setupWebPlayer, showWebPlayer, webCommand, webLoad } from './ytmPlayer.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = () => app.getPath('userData');
 const file = (name: string) => path.join(dataDir(), name);
 
 registerScheme();
+// Le lecteur officiel de YouTube Music démarre sans clic (fenêtre invisible).
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Une seule fenêtre de Nova à la fois.
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -192,6 +195,11 @@ async function createWindow() {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
+  // Fermer Nova ferme tout, y compris les lecteurs invisibles de YouTube Music.
+  window.on('closed', () => {
+    window = null;
+    app.quit();
+  });
   await window.loadFile(path.join(here, '../renderer/index.html'));
 }
 
@@ -303,11 +311,26 @@ app.whenReady().then(async () => {
 
   handle('shell:open', (url: string) => shell.openExternal(url));
 
+  // Lecteur officiel de YouTube Music (fenêtre invisible), quand la lecture directe est refusée.
+  setupWebPlayer(sendToUI, path.join(here, '../preload/ytmPreload.cjs'));
+  handle('webplayer:load', (deck: number, id: string, startAt: number, volume: number) => webLoad(deck, id, startAt, volume));
+  handle('webplayer:command', (deck: number, command: { type: string; value?: number }) => webCommand(deck, command));
+  handle('webplayer:show', (deck: number) => showWebPlayer(deck));
+
+  // Touches multimédias du clavier : Nova garde la main (même quand le lecteur officiel joue).
+  for (const [key, action] of [['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'previous']] as const) {
+    try { globalShortcut.register(key, () => sendToUI('media:key', action)); } catch { /* touche déjà prise */ }
+  }
+
   await createWindow();
 });
 
+app.on('before-quit', () => destroyWebPlayers());
+
 app.on('window-all-closed', () => {
   jam.stop();
+  destroyWebPlayers();
+  globalShortcut.unregisterAll();
   stopSyncServer();
   app.quit();
 });
