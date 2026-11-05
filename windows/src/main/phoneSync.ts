@@ -1,66 +1,117 @@
-// Réception de la bibliothèque de l'iPhone : petit serveur temporaire sur le réseau local,
-// protégé par un jeton à usage unique (dans le QR code affiché par Nova pour Windows).
+// Synchronisation avec Nova sur l'iPhone, sur le réseau local.
+// Association une fois (QR code) ; ensuite le PC reste à l'écoute tant que Nova est ouvert et
+// s'annonce en Bonjour (« _nova-sync._tcp ») : l'iPhone le retrouve et envoie ses changements seul.
+import { Bonjour, type Service } from 'bonjour-service';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
+import path from 'node:path';
 import { localAddresses } from './jam.js';
 
-let server: http.Server | null = null;
-let stopTimer: NodeJS.Timeout | null = null;
-
-export function stopReceiving() {
-  if (stopTimer) clearTimeout(stopTimer);
-  stopTimer = null;
-  server?.close();
-  server = null;
+export interface Pairing {
+  pcId: string;
+  token: string;
+  paired: boolean;
+  phoneName?: string;
+  lastSync?: number;
 }
 
-/** Démarre l'écoute ; renvoie le lien à mettre dans le QR code. */
-export function startReceiving(onLibrary: (library: unknown) => { playlists: number; tracks: number }): Promise<{ link: string; address: string }> {
-  stopReceiving();
-  const token = crypto.randomBytes(16).toString('hex');
-  return new Promise((resolve, reject) => {
-    server = http.createServer((request, response) => {
-      if (request.method !== 'POST' || !request.url?.startsWith('/sync')) {
-        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-        response.end('Nova pour Windows : scanne le QR code avec l’appareil photo de l’iPhone.');
-        return;
-      }
-      if (request.headers['x-nova-token'] !== token) {
-        response.writeHead(403);
-        response.end();
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let size = 0;
-      request.on('data', (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > 300_000_000) request.destroy();
-        else chunks.push(chunk);
-      });
-      request.on('end', () => {
-        try {
-          const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          const summary = onLibrary(parsed.library ?? parsed);
-          response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify(summary));
-          // Jeton à usage unique : le serveur s'arrête après le transfert.
-          setTimeout(stopReceiving, 1000);
-        } catch {
-          response.writeHead(400);
-          response.end();
-        }
-      });
+const PREFERRED_PORT = 47822;
+let server: http.Server | null = null;
+let bonjour: Bonjour | null = null;
+let service: Service | null = null;
+let port = 0;
+let pairing: Pairing;
+let pairingFile = '';
+let onLibrary: (library: unknown, phone: string) => { playlists: number; tracks: number } = () => ({ playlists: 0, tracks: 0 });
+
+async function savePairing() {
+  await fs.writeFile(pairingFile, JSON.stringify(pairing));
+}
+
+export function currentPairing(): Pairing {
+  return pairing;
+}
+
+export async function startSyncServer(dataDir: string, handler: typeof onLibrary) {
+  onLibrary = handler;
+  pairingFile = path.join(dataDir, 'pairing.json');
+  try {
+    pairing = JSON.parse(await fs.readFile(pairingFile, 'utf8'));
+  } catch {
+    pairing = { pcId: crypto.randomUUID(), token: crypto.randomBytes(16).toString('hex'), paired: false };
+    await fs.mkdir(dataDir, { recursive: true });
+    await savePairing();
+  }
+  server = http.createServer((request, response) => {
+    if (request.method === 'GET' && request.url?.startsWith('/status')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ app: 'nova-windows', pcId: pairing.pcId, name: os.hostname() }));
+      return;
+    }
+    if (request.method !== 'POST' || !request.url?.startsWith('/sync')) {
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Nova pour Windows');
+      return;
+    }
+    if (request.headers['x-nova-token'] !== pairing.token) {
+      response.writeHead(403);
+      response.end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 300_000_000) request.destroy();
+      else chunks.push(chunk);
     });
-    server.on('error', reject);
-    server.listen(0, '0.0.0.0', () => {
-      const port = (server!.address() as { port: number }).port;
-      const address = localAddresses()[0] ?? '127.0.0.1';
-      const target = `http://${address}:${port}/sync`;
-      const link = `nova://sync?u=${encodeURIComponent(target)}&t=${token}&n=${encodeURIComponent(os.hostname())}`;
-      // Le QR code reste valable 15 minutes.
-      stopTimer = setTimeout(stopReceiving, 15 * 60_000);
-      resolve({ link, address: `${address}:${port}` });
+    request.on('end', async () => {
+      try {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const phone = String(request.headers['x-nova-device'] ?? 'iPhone');
+        const summary = onLibrary(parsed.library ?? parsed, phone);
+        pairing = { ...pairing, paired: true, phoneName: phone, lastSync: Date.now() };
+        await savePairing();
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(summary));
+      } catch {
+        response.writeHead(400);
+        response.end();
+      }
     });
   });
+  // Port fixe si possible (l'iPhone le retrouve même sans Bonjour), sinon un port libre.
+  await new Promise<void>((resolve) => {
+    server!.once('error', () => server!.listen(0, '0.0.0.0', resolve));
+    server!.listen(PREFERRED_PORT, '0.0.0.0', resolve);
+  });
+  port = (server.address() as { port: number }).port;
+  try {
+    bonjour = new Bonjour();
+    service = bonjour.publish({ name: `Nova ${os.hostname()}`.slice(0, 60), type: 'nova-sync', port, txt: { id: pairing.pcId } });
+  } catch {
+    // Bonjour indisponible : l'adresse mémorisée par l'iPhone sert de secours.
+  }
+}
+
+/** Lien du QR code d'association (le jeton reste le même tant qu'on ne dissocie pas). */
+export function pairingLink(): { link: string; address: string } {
+  const address = localAddresses()[0] ?? '127.0.0.1';
+  const target = `http://${address}:${port}/sync`;
+  const query = new URLSearchParams({ u: target, t: pairing.token, n: os.hostname(), id: pairing.pcId });
+  return { link: `nova://sync?${query.toString()}`, address: `${address}:${port}` };
+}
+
+/** Dissocier : nouveau jeton, l'ancien iPhone ne peut plus envoyer. */
+export async function unpair() {
+  pairing = { pcId: pairing.pcId, token: crypto.randomBytes(16).toString('hex'), paired: false };
+  await savePairing();
+}
+
+export function stopSyncServer() {
+  service?.stop?.();
+  bonjour?.destroy();
+  server?.close();
 }

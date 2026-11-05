@@ -4,7 +4,7 @@ import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } 
 import { Icon } from '../components/icons';
 import { api, on } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
-import { account, library, mergeFromPhone, notify, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import { account, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
@@ -109,32 +109,26 @@ export function ImportPage() {
   );
 }
 
-/** Bibliothèque de l'iPhone : QR code à scanner (réseau local), ou fichier exporté depuis l'iPhone. */
+/** Bibliothèque de l'iPhone : association une fois par QR code, puis envois automatiques. */
 export function PhoneTransfer() {
+  const sync = useStore(phoneSync);
+  const [pairing, setPairing] = useState<{ link: string; address: string; paired: boolean; phoneName?: string; lastSync?: number }>();
   const [qr, setQr] = useState<string>();
-  const [link, setLink] = useState<string>();
-  const [address, setAddress] = useState<string>();
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<string>();
 
-  useEffect(() => {
-    const off = on('phone:library', (raw: unknown) => {
-      const summary = mergeFromPhone(raw);
-      setQr(undefined);
-      setResult(`Bibliothèque de l’iPhone importée : ${summary.playlists} playlists, ${summary.tracks} morceaux.`);
-      notify('Bibliothèque de l’iPhone importée');
-    });
-    return () => { off(); void api.stopReceiving(); };
-  }, []);
+  const refresh = async () => {
+    const found = await api.phonePairing();
+    setPairing(found);
+    return found;
+  };
+  useEffect(() => { void refresh(); }, [sync.lastSync]);
 
   const show = async () => {
     setError(undefined);
-    setResult(undefined);
     try {
-      const { link, address: where } = await api.receiveFromPhone();
-      setAddress(where);
-      setLink(link);
-      setQr(await QRCode.toDataURL(link, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
+      const found = await refresh();
+      setQr(await QRCode.toDataURL(found.link, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
     } catch (e) {
       setError(errorText(e));
     }
@@ -151,21 +145,33 @@ export function PhoneTransfer() {
     }
   };
 
+  const last = sync.lastSync ?? pairing?.lastSync;
+  const paired = pairing?.paired || !!sync.lastSync;
   return (
     <section className="phone-transfer">
       <div>
         <h3>Depuis l’iPhone</h3>
-        <p className="muted">Récupère tout ce que tu as dans Nova sur l’iPhone : playlists, titres likés, historique, albums et artistes suivis.
-          Le PC et l’iPhone doivent être sur le même Wi-Fi. Tu peux recommencer quand tu veux : rien n’est doublé.</p>
+        {paired ? (
+          <p className="muted">
+            <b className="success">Associé à {sync.phoneName ?? pairing?.phoneName ?? 'ton iPhone'}.</b> Les nouveaux titres, playlists et likes arrivent tout seuls
+            quand Nova est ouvert sur les deux appareils, sur le même Wi-Fi.
+            {last ? ` Dernière synchronisation : ${new Date(last).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}.` : ''}
+          </p>
+        ) : (
+          <p className="muted">Associe ton iPhone une fois : scanne le QR code avec l’appareil photo de l’iPhone et confirme dans Nova.
+            Ensuite, tout ce que tu ajoutes sur l’iPhone (playlists, titres likés, historique, albums et artistes suivis) arrive ici automatiquement,
+            sur le même Wi-Fi. Rien n’est doublé.</p>
+        )}
         <div className="row-buttons">
-          <button className="button" onClick={() => void show()}><Icon name="import" size={16} /> Afficher le QR code</button>
+          <button className="button" onClick={() => void show()}><Icon name="import" size={16} /> {paired ? 'Afficher le QR code' : 'Associer l’iPhone'}</button>
           <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
+          {paired && <button className="button secondary danger" onClick={() => void api.unpairPhone().then(refresh).then(() => setQr(undefined))}>Dissocier</button>}
         </div>
-        {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme « Envoyer » dans Nova. Si Windows le demande, autorise Nova sur le réseau privé. ({address})</p>}
+        {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme dans Nova. Si Windows le demande, autorise Nova sur le réseau privé. ({pairing?.address})</p>}
         {result && <p className="success">{result}</p>}
         {error && <p className="error">{error}</p>}
       </div>
-      {qr && <img className="qr" src={qr} data-link={link} alt="QR code à scanner avec l’iPhone" />}
+      {qr && <img className="qr" src={qr} data-link={pairing?.link} alt="QR code à scanner avec l’iPhone" />}
     </section>
   );
 }

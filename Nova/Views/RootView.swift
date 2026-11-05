@@ -71,16 +71,17 @@ struct RootView: View {
                                     set: { JamSession.shared.isPresented = $0 })) {
             JamView()
         }
-        .alert("Envoyer ta bibliothèque vers \(transfer?.computer ?? "ton PC") ?", isPresented: Binding(
+        .alert("Associer \(transfer?.computer ?? "ton PC") ?", isPresented: Binding(
             get: { transfer != nil && !transferring },
             set: { if !$0 && !transferring { transfer = nil } }
         )) {
-            Button("Envoyer") {
+            Button("Associer et envoyer") {
                 guard let request = transfer else { return }
                 transferring = true
                 Task {
                     do {
-                        transferMessage = try await LibraryTransfer.send(request, library: player.library)
+                        let sent = try await PCSync.shared.pair(request, library: player.library)
+                        transferMessage = sent + " Les prochains ajouts seront envoyés automatiquement."
                     } catch {
                         transferMessage = error.localizedDescription
                     }
@@ -90,7 +91,7 @@ struct RootView: View {
             }
             Button("Annuler", role: .cancel) { transfer = nil }
         } message: {
-            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers Nova pour Windows, sur ton Wi-Fi (\(transfer?.url.host ?? "")).")
+            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers Nova pour Windows, sur ton Wi-Fi (\(transfer?.url.host ?? "")). Ensuite, tes ajouts y seront envoyés automatiquement.")
         }
         .alert("Transfert vers Nova pour Windows", isPresented: Binding(
             get: { transferMessage != nil },
@@ -107,7 +108,11 @@ struct RootView: View {
                     .glassEffect(in: RoundedRectangle(cornerRadius: 20))
             }
         }
+        // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
+        .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .task { PCSync.shared.startHeartbeat(library: player.library) }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { try? await PCSync.shared.sync(library: player.library) } }
             if phase != .active {
                 player.saveSession(force: true)
                 player.library.flush()

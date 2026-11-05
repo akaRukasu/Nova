@@ -376,13 +376,22 @@ struct SettingsView: View {
             }
 
             Section {
+                if let computer = PCSync.shared.pairedComputer {
+                    LabeledContent("Associé à", value: computer)
+                    if let last = PCSync.shared.lastSync {
+                        LabeledContent("Dernier envoi", value: last.formatted(date: .abbreviated, time: .shortened))
+                    }
+                    Button("Envoyer maintenant") { Task { try? await PCSync.shared.sync(library: library, force: true) } }
+                        .disabled(PCSync.shared.isSyncing)
+                    Button("Dissocier", role: .destructive) { PCSync.shared.unpair() }
+                }
                 Button("Exporter ma bibliothèque") {
                     exportFile = Self.writeExport(library: library)
                 }
             } header: {
                 Text("Nova pour Windows")
             } footer: {
-                Text("Le plus simple : dans Nova pour Windows, ouvre Importer → « Depuis l'iPhone » et scanne le QR code avec l'appareil photo. Sinon, exporte ta bibliothèque et ouvre le fichier sur le PC.")
+                Text("Dans Nova pour Windows, ouvre Importer → « Depuis l'iPhone » et scanne le QR code avec l'appareil photo : ton iPhone est associé, et tes ajouts partent ensuite tout seuls vers le PC sur le même Wi-Fi. Sinon, exporte ta bibliothèque et ouvre le fichier sur le PC.")
             }
 
             Section {

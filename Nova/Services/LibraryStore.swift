@@ -435,8 +435,13 @@ final class LibraryStore {
     /// Enregistre la bibliothèque. Avec des dizaines de milliers de titres, l'écriture est lourde :
     /// elle est regroupée (une seule après une rafale de changements) et faite hors du fil principal.
     /// Sans ça, chaque titre écouté recalculait et réécrivait tout, et iOS fermait l'app en arrière-plan.
+    /// Augmente à chaque changement : Nova pour Windows n'est mis à jour que s'il y a du nouveau.
+    private(set) var revision = UserDefaults.standard.integer(forKey: "libraryRevision")
+
     private func save(rebuildingSongs: Bool = true) {
         if rebuildingSongs { rebuildSongs() }
+        revision += 1
+        UserDefaults.standard.set(revision, forKey: "libraryRevision")
         pendingWrite?.cancel()
         pendingWrite = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))

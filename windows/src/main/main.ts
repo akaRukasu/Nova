@@ -9,7 +9,7 @@ import { searchConcerts } from './concerts.js';
 import * as importer from './importer.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
-import { startReceiving, stopReceiving } from './phoneSync.js';
+import { currentPairing, pairingLink, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality } from './streams.js';
 import * as yt from './yt.js';
@@ -268,14 +268,15 @@ app.whenReady().then(async () => {
   handle('import:match', (wanted) => match(wanted));
   handle('import:cancel', () => { importCancelled = true; });
 
-  // Bibliothèque de l'iPhone (QR code sur le réseau local, ou fichier exporté)
-  handle('phone:receive', () => startReceiving((library: any) => {
-    sendToUI('phone:library', library);
+  // Bibliothèque de l'iPhone : association par QR code, puis envois automatiques sur le réseau local.
+  await startSyncServer(dataDir(), (library: any, phone: string) => {
+    sendToUI('phone:library', library, phone);
     const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
     const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
     return { playlists, tracks };
-  }));
-  handle('phone:stop', () => stopReceiving());
+  }).catch(() => undefined);
+  handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
+  handle('phone:unpair', () => unpair());
   handle('phone:openFile', async () => {
     const picked = await dialog.showOpenDialog(window!, {
       title: 'Ouvrir la bibliothèque exportée depuis l’iPhone',
@@ -306,5 +307,6 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   jam.stop();
+  stopSyncServer();
   app.quit();
 });

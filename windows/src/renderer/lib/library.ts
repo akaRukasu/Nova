@@ -4,7 +4,7 @@ import type {
   Collection, LibraryState, Settings, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
-import { api } from './api';
+import { api, on } from './api';
 import { Store } from './store';
 
 export const library = new Store<LibraryState>({
@@ -313,6 +313,22 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
   });
   return { playlists: phonePlaylists.length, tracks: songs().length };
 }
+
+export const phoneSync = new Store<{ lastSync?: number; phoneName?: string; newTracks?: number }>({});
+
+// Envois automatiques de l'iPhone : fusion silencieuse, avec un mot quand il y a du nouveau.
+on('phone:library', (raw: unknown, phone?: string) => {
+  const before = new Set(songs().map((t) => t.id));
+  const playlistsBefore = library.get().playlists.length;
+  mergeFromPhone(raw);
+  const fresh = songs().filter((t) => !before.has(t.id)).length;
+  const newPlaylists = library.get().playlists.length - playlistsBefore;
+  phoneSync.set({ lastSync: Date.now(), phoneName: phone, newTracks: fresh });
+  if (fresh || newPlaylists) {
+    notify([fresh && `${fresh} nouveau${fresh > 1 ? 'x' : ''} titre${fresh > 1 ? 's' : ''}`, newPlaylists > 0 && `${newPlaylists} playlist${newPlaylists > 1 ? 's' : ''}`]
+      .filter(Boolean).join(' et ') + ` reçu${fresh + newPlaylists > 1 ? 's' : ''} de ${phone || 'l’iPhone'}`);
+  }
+});
 
 // MARK: Morceaux (sans doublons)
 
