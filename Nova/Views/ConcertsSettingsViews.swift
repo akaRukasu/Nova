@@ -315,6 +315,21 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
 
 // MARK: - Réglages
 
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
+}
+
+/// Feuille de partage d'iOS (AirDrop, Mail, Fichiers…).
+struct ActivitySheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
 struct SettingsView: View {
     @Environment(AccountStore.self) private var account
     @AppStorage("audioQualityHigh") private var highQuality = true
@@ -331,12 +346,21 @@ struct SettingsView: View {
     @AppStorage("releaseWindowDays") private var releaseWindow = 30
     @State private var showAccount = false
     @State private var showImport = false
+    @State private var exportFile: URL?
+    @Environment(LibraryStore.self) private var library
     @State private var cacheSize: Int64 = 0
     @State private var confirmClear = false
 
     private let regions = [("FR", "France"), ("BE", "Belgique"), ("CH", "Suisse"), ("CA", "Canada"),
                            ("LU", "Luxembourg"), ("US", "États-Unis"), ("GB", "Royaume-Uni"), ("DE", "Allemagne"),
                            ("ES", "Espagne"), ("IT", "Italie"), ("MA", "Maroc"), ("SN", "Sénégal"), ("CI", "Côte d'Ivoire")]
+
+    /// Fichier « Nova - bibliothèque.json », à ouvrir dans Nova pour Windows.
+    static func writeExport(library: LibraryStore) -> URL? {
+        guard let data = library.exportData() else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Nova - bibliothèque.json")
+        return (try? data.write(to: url, options: .atomic)) != nil ? url : nil
+    }
 
     var body: some View {
         Form {
@@ -349,6 +373,16 @@ struct SettingsView: View {
                     }
                 }
                 Button("Importer depuis une autre plateforme") { showImport = true }
+            }
+
+            Section {
+                Button("Exporter ma bibliothèque") {
+                    exportFile = Self.writeExport(library: library)
+                }
+            } header: {
+                Text("Nova pour Windows")
+            } footer: {
+                Text("Le plus simple : dans Nova pour Windows, ouvre Importer → « Depuis l'iPhone » et scanne le QR code avec l'appareil photo. Sinon, exporte ta bibliothèque et ouvre le fichier sur le PC.")
             }
 
             Section {
@@ -442,6 +476,10 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+        }
+        .sheet(item: $exportFile) { file in
+            ActivitySheet(items: [file])
+                .presentationDetents([.medium, .large])
         }
         .navigationTitle("Réglages")
         .sheet(isPresented: $showAccount) { AccountSheet() }

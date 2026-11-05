@@ -4,6 +4,10 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Router.self) private var router
     @Environment(\.scenePhase) private var scenePhase
+    /// QR code « Importer depuis l'iPhone » de Nova pour Windows, scanné avec l'appareil photo.
+    @State private var transfer: LibraryTransfer.Request?
+    @State private var transferMessage: String?
+    @State private var transferring = false
 
     var body: some View {
         @Bindable var router = router
@@ -51,6 +55,11 @@ struct RootView: View {
         }
         // QR code d'un Jam scanné avec l'appareil photo (« nova://jam/CODE »).
         .onOpenURL { url in
+            if let request = LibraryTransfer.request(from: url) {
+                router.showPlayer = false
+                transfer = request
+                return
+            }
             guard url.host == "jam" else { return }
             router.showPlayer = false
             Task {
@@ -61,6 +70,42 @@ struct RootView: View {
         .sheet(isPresented: Binding(get: { showJam },
                                     set: { JamSession.shared.isPresented = $0 })) {
             JamView()
+        }
+        .alert("Envoyer ta bibliothèque vers \(transfer?.computer ?? "ton PC") ?", isPresented: Binding(
+            get: { transfer != nil && !transferring },
+            set: { if !$0 && !transferring { transfer = nil } }
+        )) {
+            Button("Envoyer") {
+                guard let request = transfer else { return }
+                transferring = true
+                Task {
+                    do {
+                        transferMessage = try await LibraryTransfer.send(request, library: player.library)
+                    } catch {
+                        transferMessage = error.localizedDescription
+                    }
+                    transferring = false
+                    transfer = nil
+                }
+            }
+            Button("Annuler", role: .cancel) { transfer = nil }
+        } message: {
+            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers Nova pour Windows, sur ton Wi-Fi (\(transfer?.url.host ?? "")).")
+        }
+        .alert("Transfert vers Nova pour Windows", isPresented: Binding(
+            get: { transferMessage != nil },
+            set: { if !$0 { transferMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(transferMessage ?? "")
+        }
+        .overlay {
+            if transferring {
+                ProgressView("Envoi de ta bibliothèque…")
+                    .padding(24)
+                    .glassEffect(in: RoundedRectangle(cornerRadius: 20))
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {

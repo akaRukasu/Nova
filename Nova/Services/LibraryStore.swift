@@ -408,6 +408,26 @@ final class LibraryStore {
         if changed { save(rebuildingSongs: false) }
     }
 
+    // MARK: Transfert (Nova pour Windows, sauvegarde)
+
+    private struct ExportEnvelope: Codable {
+        var format = "nova-library"
+        var version = 1
+        var exportedAt = Date()
+        var library: Snapshot
+    }
+
+    /// Toute la bibliothèque (playlists, likes, historique, écoutes, albums et artistes suivis),
+    /// au format lu par Nova pour Windows. Dates en millisecondes depuis 1970.
+    func exportData() -> Data? {
+        let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
+                                smartPlaylists: smartPlaylists, stats: stats,
+                                addedTracks: addedTracks, savedDates: savedDates)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        return try? encoder.encode(ExportEnvelope(library: snapshot))
+    }
+
     // MARK: Disque
 
     @ObservationIgnored private var pendingWrite: Task<Void, Never>?
