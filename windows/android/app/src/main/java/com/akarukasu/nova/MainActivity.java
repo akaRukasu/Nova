@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
+                if (NovaPlayerPlugin.instance != null && NovaPlayerPlugin.instance.dismissOverlay()) return;
                 if (bridge == null || bridge.getWebView() == null) {
                     moveTaskToBack(true);
                     return;

@@ -53,10 +53,22 @@ public class NovaPlayerPlugin extends Plugin {
     private final Map<Integer, Double> volumes = new HashMap<>();
     private String controlScript = "";
     private FrameLayout overlay;
+    private Runnable overlayClose;
     private PluginCall loginCall;
+    static NovaPlayerPlugin instance;
+
+    /** Bouton Retour : ferme la fenêtre YouTube ouverte (connexion, publicité, page), si elle l'est. */
+    boolean dismissOverlay() {
+        if (overlay == null) return false;
+        Runnable close = overlayClose;
+        hideOverlay();
+        if (close != null) close.run();
+        return true;
+    }
 
     @Override
     public void load() {
+        instance = this;
         controlScript = readAsset("nova-ytm.js");
         CookieManager.getInstance().setAcceptCookie(true);
         NovaPlaybackService.listener = action -> {
@@ -106,11 +118,12 @@ public class NovaPlayerPlugin extends Plugin {
                 inject(number);
                 // Page de consentement aux cookies (Europe) : montrée une fois, l'utilisateur choisit.
                 if (url.contains("consent.youtube.com") || url.contains("consent.google.com")) showDeck(number, "YouTube : choisis tes préférences de cookies");
-                else if (url.startsWith("https://music.youtube.com") && overlay != null && overlay.getTag() == view) hideOverlay();
+                else if (url.startsWith("https://music.youtube.com") && overlay != null && overlay.getTag() == view) dismissOverlay();
             }
         });
         // Invisible mais vivante : elle continue de jouer quand l'écran est éteint.
         view.setAlpha(0f);
+        view.setFocusable(false);
         ViewGroup root = getActivity().findViewById(android.R.id.content);
         root.addView(view, new FrameLayout.LayoutParams(2, 2));
         decks.put(number, view);
@@ -188,11 +201,13 @@ public class NovaPlayerPlugin extends Plugin {
         ViewGroup parent = (ViewGroup) view.getParent();
         if (parent != null) parent.removeView(view);
         view.setAlpha(1f);
+        view.setFocusable(true);
         presentOverlay(view, title, () -> {
             // Retour à l'état invisible, toujours en lecture.
             ViewGroup holder = (ViewGroup) view.getParent();
             if (holder != null) holder.removeView(view);
             view.setAlpha(0f);
+            view.setFocusable(false);
             ViewGroup root = getActivity().findViewById(android.R.id.content);
             root.addView(view, new FrameLayout.LayoutParams(2, 2));
         });
@@ -218,15 +233,13 @@ public class NovaPlayerPlugin extends Plugin {
         bar.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button close = new Button(context);
         close.setText("Fermer");
-        close.setOnClickListener(v -> {
-            hideOverlay();
-            if (onClose != null) onClose.run();
-        });
+        close.setOnClickListener(v -> dismissOverlay());
         bar.addView(close);
         column.addView(bar);
         column.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         frame.addView(column);
         overlay = frame;
+        overlayClose = onClose;
         ViewGroup root = getActivity().findViewById(android.R.id.content);
         root.addView(frame, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         close.requestFocus();
@@ -237,6 +250,7 @@ public class NovaPlayerPlugin extends Plugin {
         ViewGroup root = (ViewGroup) overlay.getParent();
         if (root != null) root.removeView(overlay);
         overlay = null;
+        overlayClose = null;
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -266,7 +280,7 @@ public class NovaPlayerPlugin extends Plugin {
                         result.put("cookie", cookies);
                         loginCall.resolve(result);
                         loginCall = null;
-                        hideOverlay();
+                        dismissOverlay();
                     }
                 }
             });
