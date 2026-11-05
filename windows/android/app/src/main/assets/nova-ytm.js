@@ -35,7 +35,18 @@
       report('timeupdate');
     });
   }
-  setInterval(function () { var found = document.querySelector('video'); if (found) attach(found); }, 300);
+  // Publicités : son coupé pendant qu'elles passent, et « Passer » pressé dès que YouTube le propose.
+  var skipButtons = '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[id^="skip-button"]';
+  var mutedForAd = false;
+  function handleAds() {
+    if (!video) return;
+    if (isAd()) {
+      if (!video.muted) { video.muted = true; mutedForAd = true; }
+      var skip = document.querySelector(skipButtons);
+      if (skip && skip.offsetParent !== null) skip.click();
+    } else if (mutedForAd) { video.muted = false; mutedForAd = false; }
+  }
+  setInterval(function () { var found = document.querySelector('video'); if (found) attach(found); handleAds(); }, 300);
   window.__nova = {
     expect: function (id, level) { expected = id || ''; if (level != null) volume = level; applyVolume(); },
     command: function (c) {

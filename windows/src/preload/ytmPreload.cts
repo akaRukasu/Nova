@@ -54,10 +54,27 @@ function attach(element: HTMLVideoElement) {
   });
 }
 
+// Publicités : son coupé pendant qu'elles passent, et « Passer » pressé dès que YouTube le propose.
+const skipButtons = '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[id^="skip-button"]';
+let mutedForAd = false;
+
+function handleAds() {
+  if (!video) return;
+  if (isAd()) {
+    if (!video.muted) { video.muted = true; mutedForAd = true; }
+    const skip = document.querySelector<HTMLElement>(skipButtons);
+    if (skip && skip.offsetParent !== null) skip.click();
+  } else if (mutedForAd) {
+    video.muted = false;
+    mutedForAd = false;
+  }
+}
+
 // L'élément vidéo apparaît (et peut être remplacé) au fil de la navigation dans la page.
 setInterval(() => {
   const found = document.querySelector('video');
   if (found) attach(found);
+  handleAds();
 }, 300);
 
 ipcRenderer.on('ytm:command', (_event, command: { type: string; value?: number; videoId?: string; volume?: number }) => {
