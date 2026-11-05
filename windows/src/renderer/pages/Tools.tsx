@@ -4,7 +4,8 @@ import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } 
 import { Icon } from '../components/icons';
 import { api, on } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
-import { account, library, notify, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import { account, library, mergeFromPhone, notify, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
 import { Empty, PageTitle } from './common';
@@ -59,6 +60,8 @@ export function ImportPage() {
   return (
     <div className="page narrow">
       <PageTitle>Importer</PageTitle>
+      <PhoneTransfer />
+      <h3 className="section-title">Depuis une autre plateforme</h3>
       <p className="muted">Copie le lien d’une playlist ou d’un album <b>Spotify</b>, <b>Deezer</b> (ou ton profil Deezer), <b>Apple Music</b> ou <b>YouTube</b>,
         ou ouvre un export (CSV d’Exportify, TuneMyMusic, Soundiiz ; TXT « Artiste - Titre » ; JSON Spotify). Une playlist du même nom est remplacée, sans doublons.</p>
       <form className="import-form" onSubmit={(e) => { e.preventDefault(); if (link.trim()) void load(() => api.importLink(link)); }}>
@@ -103,6 +106,67 @@ export function ImportPage() {
         </section>
       )}
     </div>
+  );
+}
+
+/** Bibliothèque de l'iPhone : QR code à scanner (réseau local), ou fichier exporté depuis l'iPhone. */
+export function PhoneTransfer() {
+  const [qr, setQr] = useState<string>();
+  const [link, setLink] = useState<string>();
+  const [address, setAddress] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [result, setResult] = useState<string>();
+
+  useEffect(() => {
+    const off = on('phone:library', (raw: unknown) => {
+      const summary = mergeFromPhone(raw);
+      setQr(undefined);
+      setResult(`Bibliothèque de l’iPhone importée : ${summary.playlists} playlists, ${summary.tracks} morceaux.`);
+      notify('Bibliothèque de l’iPhone importée');
+    });
+    return () => { off(); void api.stopReceiving(); };
+  }, []);
+
+  const show = async () => {
+    setError(undefined);
+    setResult(undefined);
+    try {
+      const { link, address: where } = await api.receiveFromPhone();
+      setAddress(where);
+      setLink(link);
+      setQr(await QRCode.toDataURL(link, { margin: 1, width: 240, errorCorrectionLevel: 'M' }));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+
+  const openFile = async () => {
+    try {
+      const raw = await api.openPhoneExport();
+      if (!raw) return;
+      const summary = mergeFromPhone(raw);
+      setResult(`Bibliothèque de l’iPhone importée : ${summary.playlists} playlists, ${summary.tracks} morceaux.`);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+
+  return (
+    <section className="phone-transfer">
+      <div>
+        <h3>Depuis l’iPhone</h3>
+        <p className="muted">Récupère tout ce que tu as dans Nova sur l’iPhone : playlists, titres likés, historique, albums et artistes suivis.
+          Le PC et l’iPhone doivent être sur le même Wi-Fi. Tu peux recommencer quand tu veux : rien n’est doublé.</p>
+        <div className="row-buttons">
+          <button className="button" onClick={() => void show()}><Icon name="import" size={16} /> Afficher le QR code</button>
+          <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
+        </div>
+        {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme « Envoyer » dans Nova. Si Windows le demande, autorise Nova sur le réseau privé. ({address})</p>}
+        {result && <p className="success">{result}</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
+      {qr && <img className="qr" src={qr} data-link={link} alt="QR code à scanner avec l’iPhone" />}
+    </section>
   );
 }
 

@@ -9,6 +9,7 @@ import { searchConcerts } from './concerts.js';
 import * as importer from './importer.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
+import { startReceiving, stopReceiving } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality } from './streams.js';
 import * as yt from './yt.js';
@@ -266,6 +267,25 @@ app.whenReady().then(async () => {
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
   handle('import:cancel', () => { importCancelled = true; });
+
+  // Bibliothèque de l'iPhone (QR code sur le réseau local, ou fichier exporté)
+  handle('phone:receive', () => startReceiving((library: any) => {
+    sendToUI('phone:library', library);
+    const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
+    const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
+    return { playlists, tracks };
+  }));
+  handle('phone:stop', () => stopReceiving());
+  handle('phone:openFile', async () => {
+    const picked = await dialog.showOpenDialog(window!, {
+      title: 'Ouvrir la bibliothèque exportée depuis l’iPhone',
+      filters: [{ name: 'Bibliothèque Nova', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (!picked.filePaths[0]) return null;
+    const parsed = JSON.parse(await fs.readFile(picked.filePaths[0], 'utf8'));
+    return parsed.library ?? parsed;
+  });
 
   // Concerts
   handle('concerts:search', (options) => searchConcerts(options));

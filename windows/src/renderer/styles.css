@@ -505,3 +505,12 @@ input[type='range']:hover::-webkit-slider-thumb { opacity: 1; }
 }
 
 .sentinel { display: grid; place-items: center; min-height: 40px; }
+
+/* MARK: Transfert depuis l'iPhone */
+
+.phone-transfer { display: flex; gap: 24px; align-items: center; background: var(--surface); border-radius: 14px; padding: 18px 20px; margin-bottom: 24px; }
+.phone-transfer > div { flex: 1; }
+.phone-transfer h3 { margin-bottom: 6px; }
+.qr { width: 200px; height: 200px; border-radius: 12px; background: #fff; padding: 8px; }
+.section-title { margin: 8px 0 4px; }
+.success { color: #30a46c; font-weight: 600; }

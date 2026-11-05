@@ -248,6 +248,72 @@ export function smartTracks(playlist: SmartPlaylist, state = library.get()): Tra
   return playlist.limit ? result.slice(0, playlist.limit) : result;
 }
 
+// MARK: Bibliothèque de l'iPhone
+
+/** Dates de l'iPhone : millisecondes depuis 1970 (export), ou secondes depuis 2001 (ancien format). */
+function phoneDate(value: unknown): number | undefined {
+  if (typeof value !== 'number') return undefined;
+  return value > 1e11 ? value : value * 1000 + 978_307_200_000;
+}
+
+function phoneTrack(raw: any): Track | undefined {
+  if (!raw?.id || !raw.title) return undefined;
+  const artwork: string | undefined = raw.artworkURL ?? raw.artwork ?? undefined;
+  return {
+    id: raw.id, title: raw.title, artist: raw.artist ?? '', album: raw.album ?? undefined, duration: raw.duration ?? undefined,
+    artwork, artistId: raw.artistID ?? raw.artistId ?? undefined, albumId: raw.albumID ?? raw.albumId ?? undefined,
+    square: /googleusercontent|ggpht/.test(artwork ?? ''),
+  };
+}
+
+const phoneTracks = (list: unknown) => (Array.isArray(list) ? list.map(phoneTrack).filter((t): t is Track => !!t) : []);
+
+/** Fusionne la bibliothèque reçue de l'iPhone : rien n'est perdu, rien n'est doublé (réimport possible). */
+export function mergeFromPhone(raw: any): { playlists: number; tracks: number } {
+  const phonePlaylists: UserPlaylist[] = (raw?.playlists ?? []).map((p: any) => ({
+    id: crypto.randomUUID(), name: String(p.name ?? 'Playlist'), tracks: dedupe(phoneTracks(p.tracks)),
+    created: phoneDate(p.createdAt) ?? Date.now(),
+  })).filter((p: UserPlaylist) => p.tracks.length);
+  const liked = phoneTracks(raw?.liked);
+  const recents = phoneTracks(raw?.recents);
+  const added = phoneTracks(raw?.addedTracks);
+  const saved: Collection[] = (raw?.saved ?? []).filter((c: any) => c?.id && c.title).map((c: any) => ({
+    id: c.id, kind: c.kind ?? 'playlist', title: c.title, subtitle: c.subtitle || undefined, artwork: c.artworkURL ?? c.artwork ?? undefined,
+  }));
+  update((state) => {
+    const stats = { ...state.stats };
+    for (const [id, value] of Object.entries<any>(raw?.stats ?? {})) {
+      const current = stats[id];
+      stats[id] = {
+        playCount: Math.max(current?.playCount ?? 0, value?.playCount ?? 0),
+        lastPlayed: Math.max(current?.lastPlayed ?? 0, phoneDate(value?.lastPlayed) ?? 0) || undefined,
+      };
+    }
+    // Playlists du même nom remplacées par celles de l'iPhone (le lien avec YouTube est gardé).
+    const byName = new Map(state.playlists.map((p) => [p.name.toLowerCase(), p]));
+    const merged = phonePlaylists.map((p) => {
+      const existing = byName.get(p.name.toLowerCase());
+      return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId } : p;
+    });
+    const replaced = new Set(merged.map((p) => p.id));
+    const lastPlayed = (t: Track) => stats[t.id]?.lastPlayed ?? 0;
+    const history = [...recents, ...state.recents].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i)
+      .sort((a, b) => lastPlayed(b) - lastPlayed(a)).slice(0, 1000);
+    const known = new Set(state.saved.map((c) => c.id));
+    return {
+      ...state,
+      stats,
+      liked: [...liked, ...state.liked].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i),
+      playlists: [...merged, ...state.playlists.filter((p) => !replaced.has(p.id))],
+      recents: history,
+      added: dedupe([...added, ...(state.added ?? [])]),
+      saved: [...state.saved, ...saved.filter((c) => !known.has(c.id))],
+      searches: [...state.searches, ...((raw?.searches ?? []) as string[]).filter((s) => !state.searches.includes(s))].slice(0, 30),
+    };
+  });
+  return { playlists: phonePlaylists.length, tracks: songs().length };
+}
+
 // MARK: Morceaux (sans doublons)
 
 export function dedupeKey(track: Track) {
@@ -267,13 +333,13 @@ export function dedupe(tracks: Track[]): Track[] {
   });
 }
 
-let songsCache: { source: unknown; liked: unknown; songs: Track[] } | null = null;
+let songsCache: { source: unknown; liked: unknown; added: unknown; songs: Track[] } | null = null;
 /** Tous les morceaux (likés et playlists), sans doublons, triés par titre. Recalculé seulement si besoin. */
 export function songs(state = library.get()): Track[] {
-  if (songsCache && songsCache.source === state.playlists && songsCache.liked === state.liked) return songsCache.songs;
-  const result = dedupe([...state.liked, ...state.playlists.flatMap((p) => p.tracks)])
+  if (songsCache && songsCache.source === state.playlists && songsCache.liked === state.liked && songsCache.added === state.added) return songsCache.songs;
+  const result = dedupe([...(state.added ?? []), ...state.liked, ...state.playlists.flatMap((p) => p.tracks)])
     .sort((a, b) => a.title.localeCompare(b.title, 'fr'));
-  songsCache = { source: state.playlists, liked: state.liked, songs: result };
+  songsCache = { source: state.playlists, liked: state.liked, added: state.added, songs: result };
   return result;
 }
 

@@ -55,6 +55,10 @@ export const api = {
   matchTrack: (wanted: ImportedTrack) => call<Track | undefined>('import:match', wanted),
   cancelImport: () => call<void>('import:cancel'),
 
+  receiveFromPhone: () => call<{ link: string; address: string }>('phone:receive'),
+  stopReceiving: () => call<void>('phone:stop'),
+  openPhoneExport: () => call<unknown>('phone:openFile'),
+
   concerts: (options: { artist?: string; city?: string; key: string }) => call<Concert[]>('concerts:search', options),
 
   jamHost: (name: string) => call<{ port: number; addresses: string[] }>('jam:host', name),

@@ -145,6 +145,8 @@ export interface LibraryState {
   liked: Track[];
   playlists: UserPlaylist[];
   smartPlaylists?: SmartPlaylist[];
+  /** Titres ajoutés à la bibliothèque sans playlist (bouton « + » de l'iPhone). */
+  added?: Track[];
   saved: Collection[];
   searches: string[];
   stats: Record<string, TrackStats>;
