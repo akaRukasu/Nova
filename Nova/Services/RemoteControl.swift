@@ -20,6 +20,28 @@ final class RemoteControl {
         var volume: Double
         var shuffled: Bool?
         var `repeat`: String?
+
+        enum CodingKeys: String, CodingKey { case name, track, queue, playing, loading, time, duration, volume, shuffled, `repeat` }
+
+        /// Tolérant : un champ manquant ou illisible (position non définie, titre incomplet) ne fait pas rejeter tout l'état.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            name = try? c.decodeIfPresent(String.self, forKey: .name)
+            track = try? c.decodeIfPresent(Track.self, forKey: .track)
+            queue = (try? c.decodeIfPresent([Lenient<Track>].self, forKey: .queue))?.compactMap(\.value) ?? []
+            playing = (try? c.decodeIfPresent(Bool.self, forKey: .playing)) ?? false
+            loading = try? c.decodeIfPresent(Bool.self, forKey: .loading)
+            time = (try? c.decodeIfPresent(Double.self, forKey: .time)) ?? 0
+            duration = (try? c.decodeIfPresent(Double.self, forKey: .duration)) ?? 0
+            volume = (try? c.decodeIfPresent(Double.self, forKey: .volume)) ?? 0.8
+            shuffled = try? c.decodeIfPresent(Bool.self, forKey: .shuffled)
+            `repeat` = try? c.decodeIfPresent(String.self, forKey: .repeat)
+        }
+    }
+
+    private struct Lenient<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: Decoder) throws { value = try? T(from: decoder) }
     }
 
     private(set) var isActive = false
@@ -35,18 +57,18 @@ final class RemoteControl {
     var deviceName: String { PCSync.shared.pairedComputer ?? state?.name ?? "PC" }
 
     /// Passe la lecture sur le PC : le titre en cours y reprend au même endroit.
-    func activate(player: PlayerModel, transfer: Bool = true) async {
+    func activate(player: PlayerModel, transfer: Bool = true, quiet: Bool = false) async {
         guard !isActive, !isConnecting else { return }
         isConnecting = true
         defer { isConnecting = false }
         guard let found = await PCSync.shared.locateComputer() else {
-            errorMessage = "\(deviceName) est introuvable : Nova doit être ouvert sur le PC, sur le même Wi-Fi."
+            if !quiet { errorMessage = "\(deviceName) est introuvable : Nova doit être ouvert sur le PC, sur le même Wi-Fi." }
             return
         }
         base = found.base
         token = found.token
         guard (await fetchState()) != nil else {
-            errorMessage = "\(deviceName) ne répond pas."
+            if !quiet { errorMessage = "\(deviceName) ne répond pas." }
             return
         }
         // Transfert : ce qui jouait sur l'iPhone continue sur le PC.
@@ -95,10 +117,37 @@ final class RemoteControl {
                     self.token = found.token
                 }
                 if let state = await self.fetchState(), state.playing {
-                    await self.activate(player: player, transfer: false)
+                    await self.activate(player: player, transfer: false, quiet: true)
                 }
             }
         }
+    }
+
+    /// L'utilisateur quitte Nova (écran verrouillé, autre app, centre de contrôle) sans rien jouer sur l'iPhone :
+    /// si le PC associé répond, Nova reste accroché à lui. Le centre de contrôle et l'écran verrouillé affichent alors
+    /// ce que joue le PC, même s'il démarre plus tard. Sans lecture sur le PC pendant 10 min, Nova rend la main.
+    func attachBeforeLeaving(player: PlayerModel) {
+        guard PCSync.shared.isPaired, !isActive, !isConnecting, !player.isPlaying,
+              !AVAudioSession.sharedInstance().isOtherAudioPlaying else { return }
+        // Le son silencieux démarre tant que Nova est encore au premier plan : iOS refuse de lancer l'audio d'une app
+        // déjà passée en arrière-plan. Il garde Nova actif le temps de joindre le PC.
+        appIsActive = false
+        SilentAudio.shared.start()
+        Task {
+            await activate(player: player, transfer: false, quiet: true)
+            if !isActive { SilentAudio.shared.stop() }
+            // Revenu dans Nova entre-temps (simple passage par l'état inactif) : on ne garde le lien que si le PC joue.
+            else if appIsActive { releaseIfIdle(player: player) }
+        }
+    }
+
+    @ObservationIgnored private var appIsActive = true
+
+    /// Retour dans Nova : si le PC ne joue pas, l'iPhone reprend la main (la lecture se fera ici).
+    func releaseIfIdle(player: PlayerModel) {
+        appIsActive = true
+        guard isActive, attachedAutomatically, state?.playing != true else { return }
+        Task { await deactivate(player: player, resumeHere: false) }
     }
 
     private func startPolling(player: PlayerModel) {
@@ -126,7 +175,8 @@ final class RemoteControl {
                         return
                     }
                 }
-                try? await Task.sleep(for: .seconds(1))
+                // Une fois par seconde pendant la lecture, moins souvent quand le PC est en pause (batterie).
+                try? await Task.sleep(for: .seconds(self.state?.playing == true ? 1 : 3))
             }
         }
     }
@@ -182,7 +232,9 @@ final class SilentAudio {
         try? AVAudioSession.sharedInstance().setActive(true)
         player = try? AVAudioPlayer(data: Self.silence())
         player?.numberOfLoops = -1
-        player?.volume = 0
+        // Le fichier ne contient que du silence : volume normal, pour qu'iOS considère bien Nova comme l'app en lecture.
+        player?.volume = 1
+        player?.prepareToPlay()
         player?.play()
     }
 

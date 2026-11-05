@@ -115,7 +115,11 @@ struct RootView: View {
             RemoteControl.shared.watchComputer(player: player)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) } }
+            if phase == .active {
+                Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) }
+                RemoteControl.shared.releaseIfIdle(player: player)
+            }
+            if phase == .inactive { RemoteControl.shared.attachBeforeLeaving(player: player) }
             if phase != .active {
                 player.saveSession(force: true)
                 player.library.flush()

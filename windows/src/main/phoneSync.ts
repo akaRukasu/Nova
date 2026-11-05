@@ -83,7 +83,7 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
       }
       if (request.method === 'GET') {
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify(remoteState ?? { name: os.hostname(), playing: false, queue: [] }));
+        response.end(JSON.stringify(remoteState ?? { name: os.hostname(), track: null, queue: [], playing: false, time: 0, duration: 0, volume: 0.8 }));
         return;
       }
       void readBody(request, 20_000_000).then((body) => {
