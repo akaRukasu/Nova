@@ -25,6 +25,31 @@ let port = 0;
 let pairing: Pairing;
 let pairingFile = '';
 let onLibrary: (library: unknown, phone: string) => { playlists: number; tracks: number } = () => ({ playlists: 0, tracks: 0 });
+// Télécommande depuis l'iPhone (comme Spotify Connect) : état de lecture et commandes.
+let remoteState: unknown = null;
+let onCommand: (command: unknown) => void = () => {};
+
+export function setRemoteState(state: unknown) {
+  remoteState = state;
+}
+
+export function setRemoteHandler(handler: (command: unknown) => void) {
+  onCommand = handler;
+}
+
+function readBody(request: http.IncomingMessage, limit: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) request.destroy(new Error('trop gros'));
+      else chunks.push(chunk);
+    });
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    request.on('error', reject);
+  });
+}
 
 async function savePairing() {
   await fs.writeFile(pairingFile, JSON.stringify(pairing));
@@ -48,6 +73,30 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
     if (request.method === 'GET' && request.url?.startsWith('/status')) {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ app: 'nova-windows', pcId: pairing.pcId, name: os.hostname() }));
+      return;
+    }
+    if (request.url?.startsWith('/remote/')) {
+      if (request.headers['x-nova-token'] !== pairing.token) {
+        response.writeHead(403);
+        response.end();
+        return;
+      }
+      if (request.method === 'GET') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(remoteState ?? { name: os.hostname(), playing: false, queue: [] }));
+        return;
+      }
+      void readBody(request, 20_000_000).then((body) => {
+        onCommand(JSON.parse(body));
+        // L'interface applique la commande puis publie le nouvel état : on le renvoie un instant après.
+        setTimeout(() => {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(remoteState ?? {}));
+        }, 250);
+      }).catch(() => {
+        response.writeHead(400);
+        response.end();
+      });
       return;
     }
     if (request.method !== 'POST' || !request.url?.startsWith('/sync')) {

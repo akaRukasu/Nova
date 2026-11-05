@@ -310,6 +310,10 @@ final class PlayerModel {
     /// Lance une liste à partir d'un index, puis complète la file avec la radio du titre.
     func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false) {
         guard !tracks.isEmpty else { return }
+        if RemoteControl.shared.isActive {
+            Task { await RemoteControl.shared.send(["action": "playTracks", "index": start, "shuffled": shuffled], tracks: tracks) }
+            return
+        }
         if shuffled {
             unshuffledQueue = tracks
             queue = tracks.shuffled()
@@ -350,6 +354,10 @@ final class PlayerModel {
     }
 
     func playNext(_ track: Track) {
+        if RemoteControl.shared.isActive {
+            Task { await RemoteControl.shared.send(["action": "playNext"], tracks: [track]) }
+            return
+        }
         guard current != nil else { play([track], startAt: 0); return }
         if let existing = queue.indices.first(where: { $0 > index && queue[$0].id == track.id }) {
             queue.remove(at: existing)
@@ -363,6 +371,10 @@ final class PlayerModel {
     }
 
     func enqueue(_ tracks: [Track]) {
+        if RemoteControl.shared.isActive {
+            Task { await RemoteControl.shared.send(["action": "enqueue"], tracks: tracks) }
+            return
+        }
         guard !tracks.isEmpty else { return }
         guard current != nil else { play(tracks); return }
         queue.append(contentsOf: tracks)
@@ -370,6 +382,7 @@ final class PlayerModel {
     }
 
     func toggleShuffle() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("shuffle") }
         guard let current else { return }
         if isShuffled {
             // Retour à l'ordre d'origine, en gardant les titres ajoutés depuis.
@@ -390,6 +403,7 @@ final class PlayerModel {
     }
 
     func cycleRepeat() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("repeat") }
         switch repeatMode {
         case .off: repeatMode = .all
         case .all: repeatMode = .one
@@ -424,6 +438,7 @@ final class PlayerModel {
     }
 
     func jump(to position: Int) {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("jump", value: Double(position - index - 1)) }
         guard queue.indices.contains(position) else { return }
         index = position
         load()
@@ -465,10 +480,12 @@ final class PlayerModel {
     }
 
     func togglePlay() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command(isPlaying ? "pause" : "play") }
         isPlaying ? pause() : resume()
     }
 
     func resume() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("play") }
         guard current != nil else { return }
         if player.currentItem == nil { load(resumeAt: currentTime); return }
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -478,6 +495,7 @@ final class PlayerModel {
     }
 
     func pause() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("pause") }
         finishTransition()
         player.pause()
         isPlaying = false
@@ -486,6 +504,7 @@ final class PlayerModel {
     }
 
     func next() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("next") }
         guard hasNext else {
             if repeatMode == .all, !queue.isEmpty {
                 index = 0
@@ -507,6 +526,7 @@ final class PlayerModel {
     }
 
     func previous() {
+        if RemoteControl.shared.isActive { return RemoteControl.shared.command("previous") }
         if currentTime > 3 || index == 0 {
             seek(to: 0)
         } else {
@@ -516,6 +536,10 @@ final class PlayerModel {
     }
 
     func seek(to seconds: TimeInterval) {
+        if RemoteControl.shared.isActive {
+            currentTime = seconds
+            return RemoteControl.shared.command("seek", value: seconds)
+        }
         // Revenir avant la fin réarme la détection de fin de titre.
         if seconds < (expectedDuration ?? .infinity) - 1 { endHandled = false }
         guard player.currentItem != nil else {
@@ -844,7 +868,50 @@ final class PlayerModel {
         .appendingPathComponent("session.json")
 
     /// Enregistre la file et la position pour les retrouver au prochain lancement.
+    // MARK: Télécommande (lecture sur le PC)
+
+    /// La lecture passe sur le PC : le lecteur local s'arrête, l'interface reflète désormais le PC.
+    func enterRemote() {
+        saveSession(force: true)
+        finishTransition()
+        loadTask?.cancel()
+        player.pause()
+        isLoading = false
+    }
+
+    /// État du PC affiché dans le lecteur (et sur l'écran verrouillé, dont les boutons pilotent le PC).
+    func mirrorRemote(_ state: RemoteControl.State) {
+        guard RemoteControl.shared.isActive else { return }
+        let newQueue = (state.track.map { [$0] } ?? []) + state.queue
+        if newQueue.map(\.id) != queue.map(\.id) {
+            queue = newQueue
+            index = 0
+        }
+        isPlaying = state.playing
+        isLoading = state.loading ?? false
+        currentTime = state.time
+        duration = state.duration
+        isShuffled = state.shuffled ?? false
+        repeatMode = state.repeat == "one" ? .one : state.repeat == "all" ? .all : .off
+        updateNowPlaying()
+    }
+
+    /// Retour sur l'iPhone ; si le PC jouait, la lecture reprend ici au même endroit.
+    func leaveRemote(resumeAt state: RemoteControl.State?) {
+        if let state, let track = state.track {
+            queue = [track] + state.queue
+            index = 0
+            player.replaceCurrentItem(with: nil)
+            load(resumeAt: state.time)
+        } else {
+            player.replaceCurrentItem(with: nil)
+            isPlaying = false
+            updateNowPlaying()
+        }
+    }
+
     func saveSession(force: Bool = false) {
+        if RemoteControl.shared.isActive { return }
         guard force || Date().timeIntervalSince(lastSessionSave) > 1 else { return }
         lastSessionSave = Date()
         let session = Session(queue: queue, index: index, time: currentTime,

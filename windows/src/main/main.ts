@@ -9,7 +9,7 @@ import { searchConcerts } from './concerts.js';
 import * as importer from './importer.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
-import { currentPairing, pairingLink, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
+import { currentPairing, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import * as yt from './yt.js';
@@ -286,6 +286,9 @@ app.whenReady().then(async () => {
   }).catch(() => undefined);
   handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
   handle('phone:unpair', () => unpair());
+  // Télécommande depuis l'iPhone : l'interface publie son état, reçoit les commandes.
+  handle('remote:state', (state: unknown) => setRemoteState(state));
+  setRemoteHandler((command) => sendToUI('remote:command', command));
   handle('phone:openFile', async () => {
     const picked = await dialog.showOpenDialog(window!, {
       title: 'Ouvrir la bibliothèque exportée depuis l’iPhone',

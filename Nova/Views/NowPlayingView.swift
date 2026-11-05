@@ -60,9 +60,18 @@ struct NowPlayingView: View {
             progress.padding(.top, 22)
             controls.padding(.top, 18)
             modes.padding(.top, 10)
-            VolumeSlider()
-                .frame(height: 34)
-                .padding(.top, 6)
+            Group {
+                if RemoteControl.shared.isActive {
+                    RemoteVolumeSlider()
+                } else {
+                    VolumeSlider()
+                }
+            }
+            .frame(height: 34)
+            .padding(.top, 6)
+
+            DevicePicker()
+                .padding(.top, 4)
 
             Spacer(minLength: 16)
 
@@ -487,6 +496,71 @@ private struct SyncedLyricsView: View {
             .onAppear {
                 if let current { proxy.scrollTo(current, anchor: UnitPoint(x: 0.5, y: 0.3)) }
             }
+        }
+    }
+}
+
+/// Choix de l'appareil qui joue, comme Spotify Connect : cet iPhone ou le PC associé (Nova pour Windows).
+struct DevicePicker: View {
+    @Environment(PlayerModel.self) private var player
+    private let remote = RemoteControl.shared
+
+    var body: some View {
+        if PCSync.shared.isPaired {
+            Menu {
+                Button {
+                    Task { await remote.deactivate(player: player) }
+                } label: {
+                    Label("Cet iPhone", systemImage: remote.isActive ? "iphone" : "checkmark")
+                }
+                Button {
+                    Task { await remote.activate(player: player) }
+                } label: {
+                    Label(remote.deviceName, systemImage: remote.isActive ? "checkmark" : "desktopcomputer")
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if remote.isConnecting {
+                        ProgressView().controlSize(.mini).tint(.white)
+                    } else {
+                        Image(systemName: remote.isActive ? "desktopcomputer" : "iphone")
+                    }
+                    Text(remote.isActive ? "En lecture sur \(remote.deviceName)" : "Sur cet iPhone")
+                        .lineLimit(1)
+                }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(remote.isActive ? Color.novaAccent : Color.white.opacity(0.7))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassEffect(in: Capsule())
+            }
+            .alert("Appareils", isPresented: Binding(get: { remote.errorMessage != nil },
+                                                     set: { if !$0 { remote.errorMessage = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(remote.errorMessage ?? "")
+            }
+        }
+    }
+}
+
+/// Volume du PC piloté depuis l'iPhone.
+struct RemoteVolumeSlider: View {
+    @State private var value: Double = RemoteControl.shared.state?.volume ?? 0.8
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill").font(.caption).foregroundStyle(.white.opacity(0.6))
+            Slider(value: $value, in: 0...1) { isEditing in
+                editing = isEditing
+                if !isEditing { RemoteControl.shared.command("volume", value: value) }
+            }
+            .tint(.white)
+            Image(systemName: "speaker.wave.3.fill").font(.caption).foregroundStyle(.white.opacity(0.6))
+        }
+        .onChange(of: RemoteControl.shared.state?.volume) { _, volume in
+            if !editing, let volume { value = volume }
         }
     }
 }

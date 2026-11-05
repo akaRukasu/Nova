@@ -12,7 +12,12 @@ struct MiniPlayerView: View {
                 Text(player.current?.title ?? "Rien en lecture")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                if let artist = player.current?.artist {
+                if RemoteControl.shared.isActive {
+                    Label("Sur \(RemoteControl.shared.deviceName)", systemImage: "desktopcomputer")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.novaAccent)
+                        .lineLimit(1)
+                } else if let artist = player.current?.artist {
                     Text(artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)

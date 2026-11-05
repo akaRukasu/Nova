@@ -160,6 +160,16 @@ final class PCSync {
 
     // MARK: Trouver le PC
 
+    /// Adresse actuelle du PC associé (sans « /sync ») et son code, pour la télécommande.
+    func locateComputer() async -> (base: URL, token: String)? {
+        guard let request = state?.request, let url = await locate(request),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        components.path = ""
+        guard let base = components.url else { return nil }
+        if state?.request.url != url { state?.request.url = url; persist() }
+        return (base, request.token)
+    }
+
     private func locate(_ request: LibraryTransfer.Request) async -> URL? {
         if await answers(request.url, pcId: request.pcId) { return request.url }
         guard let pcId = request.pcId, let found = await browse(pcId: pcId) else { return nil }
