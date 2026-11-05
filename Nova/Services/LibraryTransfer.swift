@@ -49,7 +49,7 @@ enum LibraryTransfer {
     @MainActor
     static func send(_ request: Request, library: LibraryStore) async throws -> String {
         guard isLocal(request.url) else { throw TransferError.notLocal }
-        guard let body = library.exportData() else { throw TransferError.refused(0) }
+        guard let body = await library.exportDataInBackground() else { throw TransferError.refused(0) }
         var urlRequest = URLRequest(url: request.url, timeoutInterval: 60)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -75,6 +75,7 @@ final class PCSync {
     private struct State: Codable {
         var request: LibraryTransfer.Request
         var lastRevision = -1
+        var lastHistoryRevision: Int?
         var lastSync: Date?
     }
 
@@ -132,16 +133,18 @@ final class PCSync {
         guard isPaired, heartbeat == nil else { return }
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
-                _ = try? await self?.sync(library: library)
+                _ = try? await self?.sync(library: library, includeHistory: true)
                 try? await Task.sleep(for: .seconds(600))
             }
         }
     }
 
     @discardableResult
-    func sync(library: LibraryStore, force: Bool = false) async throws -> String? {
+    func sync(library: LibraryStore, force: Bool = false, includeHistory: Bool = false) async throws -> String? {
         guard var current = state, !isSyncing else { return nil }
-        guard force || library.revision != current.lastRevision else { return nil }
+        let contentChanged = library.revision != current.lastRevision
+        let historyChanged = includeHistory && library.historyRevision != current.lastHistoryRevision
+        guard force || contentChanged || historyChanged else { return nil }
         isSyncing = true
         defer { isSyncing = false }
         guard let url = await locate(current.request) else {
@@ -151,6 +154,7 @@ final class PCSync {
         current.request.url = url
         let message = try await LibraryTransfer.send(current.request, library: library)
         current.lastRevision = library.revision
+        current.lastHistoryRevision = library.historyRevision
         current.lastSync = Date()
         state = current
         lastSync = current.lastSync

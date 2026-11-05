@@ -430,6 +430,19 @@ final class LibraryStore {
         return try? encoder.encode(ExportEnvelope(library: snapshot, shared: SharedPlaylists.shared.entries))
     }
 
+    /// Même contenu, encodé hors du fil principal (envois automatiques vers le PC).
+    func exportDataInBackground() async -> Data? {
+        let envelope = ExportEnvelope(library: Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved,
+                                                        searches: searches, smartPlaylists: smartPlaylists, stats: stats,
+                                                        addedTracks: addedTracks, savedDates: savedDates),
+                                      shared: SharedPlaylists.shared.entries)
+        return await Task.detached(priority: .utility) {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .millisecondsSince1970
+            return try? encoder.encode(envelope)
+        }.value
+    }
+
     // MARK: Disque
 
     @ObservationIgnored private var pendingWrite: Task<Void, Never>?
@@ -437,13 +450,21 @@ final class LibraryStore {
     /// Enregistre la bibliothèque. Avec des dizaines de milliers de titres, l'écriture est lourde :
     /// elle est regroupée (une seule après une rafale de changements) et faite hors du fil principal.
     /// Sans ça, chaque titre écouté recalculait et réécrivait tout, et iOS fermait l'app en arrière-plan.
-    /// Augmente à chaque changement : Nova pour Windows n'est mis à jour que s'il y a du nouveau.
+    /// Augmente quand le contenu change (playlists, likes, ajouts) : envoi rapide vers Nova pour Windows.
     private(set) var revision = UserDefaults.standard.integer(forKey: "libraryRevision")
+    /// Augmente à chaque écoute (historique, statistiques) : envoyé avec les vérifications régulières,
+    /// pas après chaque titre (la bibliothèque complète peut peser plusieurs Mo).
+    private(set) var historyRevision = UserDefaults.standard.integer(forKey: "libraryHistoryRevision")
 
     private func save(rebuildingSongs: Bool = true) {
-        if rebuildingSongs { rebuildSongs() }
-        revision += 1
-        UserDefaults.standard.set(revision, forKey: "libraryRevision")
+        if rebuildingSongs {
+            rebuildSongs()
+            revision += 1
+            UserDefaults.standard.set(revision, forKey: "libraryRevision")
+        } else {
+            historyRevision += 1
+            UserDefaults.standard.set(historyRevision, forKey: "libraryHistoryRevision")
+        }
         pendingWrite?.cancel()
         pendingWrite = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))

@@ -112,7 +112,7 @@ struct RootView: View {
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
         .task { PCSync.shared.startHeartbeat(library: player.library) }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { try? await PCSync.shared.sync(library: player.library) } }
+            if phase == .active { Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) } }
             if phase != .active {
                 player.saveSession(force: true)
                 player.library.flush()

@@ -31,6 +31,8 @@ jobs:
             Nova/Services/DiscoverySources.swift \
             Nova/Services/ArtworkResolver.swift \
             Nova/Services/LyricsService.swift \
+            Nova/Services/LibraryStore.swift \
+            Nova/Services/SharedPlaylists.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
 

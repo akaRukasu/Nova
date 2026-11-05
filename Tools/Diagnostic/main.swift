@@ -378,4 +378,28 @@ await step("Humeurs et genres : page complète") {
     }
 }
 
+// MARK: - Format envoyé à Nova pour Windows (synchronisation automatique)
+
+await step("Export de la bibliothèque pour le PC") {
+    let data: Data? = await MainActor.run {
+        let library = LibraryStore()
+        let track = Track(id: "abc123", title: "Titre test", artist: "Artiste", album: "Album", duration: 200,
+                          artworkURL: URL(string: "https://lh3.googleusercontent.com/x=w544-h544"), artistID: "UCx", albumID: "MPREbx")
+        _ = library.createPlaylist(name: "Playlist test", tracks: [track])
+        _ = library.toggleLike(track)
+        library.recordPlay(track, addToHistory: true)
+        return library.exportData()
+    }
+    guard let data, let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let lib = json["library"] as? [String: Any] else { throw NovaError.emptyPage }
+    print("  enveloppe : \(json.keys.sorted().joined(separator: ", ")) ; \(data.count) octets")
+    print("  bibliothèque : \(lib.keys.sorted().joined(separator: ", "))")
+    if let playlist = (lib["playlists"] as? [[String: Any]])?.first {
+        print("  playlist : \(playlist.keys.sorted().joined(separator: ", ")) · createdAt=\(playlist["createdAt"] ?? "-")")
+        if let first = (playlist["tracks"] as? [[String: Any]])?.first { print("  titre : \(first)") }
+    }
+    if let stats = lib["stats"] as? [String: Any] { print("  stats : \(stats)") }
+    print("  likés : \((lib["liked"] as? [Any])?.count ?? 0) · historique : \((lib["recents"] as? [Any])?.count ?? 0)")
+}
+
 print("\nTerminé.")
