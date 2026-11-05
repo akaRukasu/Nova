@@ -446,7 +446,9 @@ struct PlayShuffleButtons: View {
     var body: some View {
         HStack(spacing: 12) {
             Button(action: play) {
+                // Icône et texte en blanc : sinon l'icône prend la couleur du bouton et devient invisible.
                 Label("Lecture", systemImage: "play.fill")
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glassProminent)

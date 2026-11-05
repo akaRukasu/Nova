@@ -97,6 +97,7 @@ struct ArtistView: View {
                 player.play(artist, shuffled: true)
             } label: {
                 Label("Aléatoire", systemImage: "shuffle")
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glassProminent)

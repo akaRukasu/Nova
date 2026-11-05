@@ -1,6 +1,7 @@
 name: Nova
 options:
   bundleIdPrefix: com.akarukasu
+  developmentLanguage: fr
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
@@ -23,6 +24,10 @@ targets:
       path: Nova/Info.plist
       properties:
         CFBundleDisplayName: Nova
+        # App en français : les boutons fournis par iOS (« Modifier », « OK »…) aussi.
+        CFBundleDevelopmentRegion: fr
+        CFBundleLocalizations: [fr]
+        CFBundleAllowMixedLocalizations: true
         CFBundleShortVersionString: "0.4.0"
         CFBundleVersion: "4"
         LSApplicationCategoryType: public.app-category.music
