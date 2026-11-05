@@ -620,6 +620,7 @@ struct LibraryPlaylistsView: View {
                     Label("Playlists de mon compte YouTube", systemImage: "person.crop.circle")
                 }
             }
+            SharedPlaylistsSection()
             ForEach(library.smartPlaylists) { smart in
                 NavigationLink(value: Route.smartPlaylist(smart.id)) {
                     HStack(spacing: 12) {
@@ -664,6 +665,119 @@ struct LibraryPlaylistsView: View {
         .navigationTitle("Playlists")
         .sheet(isPresented: $showSmartEditor) {
             SmartPlaylistEditor(playlist: SmartPlaylist(name: "Playlist intelligente"))
+        }
+    }
+}
+
+/// Playlists collaboratives (YouTube Music) : créer, rejoindre, inviter.
+struct SharedPlaylistsSection: View {
+    @Environment(AccountStore.self) private var account
+    @Environment(\.openURL) private var openURL
+    private let shared = SharedPlaylists.shared
+    @State private var askName = false
+    @State private var askLink = false
+    @State private var name = ""
+    @State private var link = ""
+    @State private var guide: SharedPlaylists.Entry?
+    @State private var message: String?
+
+    var body: some View {
+        Section {
+            if account.isSignedIn {
+                Button { name = ""; askName = true } label: {
+                    Label("Nouvelle playlist partagée…", systemImage: "person.2.badge.plus")
+                }
+                Button { link = ""; askLink = true } label: {
+                    Label("Rejoindre avec un lien d'invitation…", systemImage: "link")
+                }
+                ForEach(shared.entries) { entry in
+                    NavigationLink(value: Route.collection(entry.collection)) {
+                        CollectionRow(collection: entry.collection)
+                    }
+                    .contextMenu {
+                        Button("Inviter des amis", systemImage: "person.badge.plus") { guide = entry }
+                        Button("Ouvrir dans YouTube Music", systemImage: "arrow.up.forward.app") { openURL(entry.youtubeURL) }
+                        Button("Retirer de Nova", systemImage: "minus.circle", role: .destructive) { shared.remove(entry) }
+                    }
+                }
+            } else {
+                Text("Connecte ton compte YouTube (Réglages) pour créer des playlists partagées avec tes amis.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Playlists partagées")
+        }
+        .alert("Nouvelle playlist partagée", isPresented: $askName) {
+            TextField("Nom", text: $name)
+            Button("Créer") {
+                let title = name.trimmingCharacters(in: .whitespaces)
+                guard !title.isEmpty else { return }
+                Task {
+                    do { guide = try await shared.create(title: title) } catch { message = "Création impossible : \(error.localizedDescription)" }
+                }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text("Elle est créée sur ton compte YouTube ; tu invites ensuite tes amis depuis YouTube Music.")
+        }
+        .alert("Rejoindre une playlist partagée", isPresented: $askLink) {
+            TextField("Lien d'invitation", text: $link)
+            Button("Rejoindre") {
+                guard let id = SharedPlaylists.playlistID(in: link), let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    message = "Ce lien ne contient pas de playlist YouTube."
+                    return
+                }
+                // L'invitation s'accepte dans YouTube Music ; Nova ajoute ensuite la playlist à la liste.
+                openURL(url)
+                Task { await shared.add(id: id) }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text("Colle le lien reçu de ton ami : YouTube Music s'ouvre, accepte l'invitation, puis reviens dans Nova.")
+        }
+        .alert("Playlists partagées", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(message ?? "")
+        }
+        .sheet(item: $guide) { entry in
+            SharedPlaylistGuide(entry: entry)
+                .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+/// Inviter des amis : la collaboration s'active une fois dans YouTube Music.
+struct SharedPlaylistGuide: View {
+    let entry: SharedPlaylists.Entry
+    @Environment(\.openURL) private var openURL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Label("Ouvre la playlist dans YouTube Music.", systemImage: "1.circle.fill")
+                    Label("Touche « ⋯ » puis « Collaborer », et active la collaboration.", systemImage: "2.circle.fill")
+                    Label("Copie le lien d'invitation et envoie-le à tes amis.", systemImage: "3.circle.fill")
+                    Label("Eux : Nova → Bibliothèque → Playlists → « Rejoindre avec un lien d'invitation ».", systemImage: "4.circle.fill")
+                } footer: {
+                    Text("Ensuite, chacun ajoute des titres depuis Nova (menu « … » d'un titre → Ajouter à une playlist) ; la playlist se met à jour chez tout le monde.")
+                }
+                Section {
+                    Button {
+                        openURL(entry.youtubeURL)
+                    } label: {
+                        Label("Ouvrir dans YouTube Music", systemImage: "arrow.up.forward.app")
+                    }
+                }
+            }
+            .navigationTitle(entry.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("OK") { dismiss() } }
+            }
         }
     }
 }

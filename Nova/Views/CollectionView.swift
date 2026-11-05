@@ -178,7 +178,9 @@ struct CollectionView: View {
         do {
             let client = self.client
             let id = collection.id
-            try await loadCached("collection-\(id)", freshFor: 1800,
+            // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
+            let shared = SharedPlaylists.shared.entries.contains { "VL" + $0.id == id }
+            try await loadCached("collection-\(id)", freshFor: shared ? 0 : 1800,
                                  fetch: { try await client.collection(id) }) { loaded in
                 content = loaded
                 tracks = loaded.tracks

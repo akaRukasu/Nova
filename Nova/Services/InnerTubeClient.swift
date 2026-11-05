@@ -236,6 +236,15 @@ struct InnerTubeClient {
         ])
     }
 
+    /// Crée une playlist sur le compte YouTube (non répertoriée : le lien d'invitation fonctionne).
+    func createAccountPlaylist(title: String, videoIDs: [String] = []) async throws -> String {
+        var body: [String: Any] = ["title": title, "privacyStatus": "UNLISTED"]
+        if !videoIDs.isEmpty { body["videoIds"] = Array(videoIDs.prefix(200)) }
+        let json = try await post("playlist/create", body: body)
+        guard let id = json["playlistId"] as? String else { throw NovaError.emptyPage }
+        return id
+    }
+
     // MARK: - Transport
 
     enum ContinuationStyle: CaseIterable { case query, body }

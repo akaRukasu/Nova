@@ -400,6 +400,15 @@ struct AddToPlaylistMenu: View {
             ForEach(library.playlists) { playlist in
                 Button(playlist.name) { library.add(tracks, to: playlist.id) }
             }
+            if !SharedPlaylists.shared.entries.isEmpty {
+                Section("Playlists partagées") {
+                    ForEach(SharedPlaylists.shared.entries) { entry in
+                        Button(entry.title, systemImage: "person.2") {
+                            Task { try? await SharedPlaylists.shared.add(tracks, to: entry) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
