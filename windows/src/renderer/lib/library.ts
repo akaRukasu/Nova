@@ -32,9 +32,32 @@ export function notify(message: string) {
 }
 
 export async function loadLibrary() {
-  library.set(await api.loadLibrary());
+  library.set(sanitize(await api.loadLibrary()));
   applyTheme(library.get().settings.theme);
-  await refreshAccount();
+  // Le compte YouTube (likes, playlists) arrive après coup : l'interface s'affiche sans l'attendre,
+  // même si YouTube est lent ou ne répond pas.
+  void refreshAccount();
+}
+
+/** Bibliothèque relue au démarrage : un élément abîmé (synchronisation interrompue…) est écarté au lieu de tout bloquer. */
+function sanitize(state: LibraryState): LibraryState {
+  const isTrack = (t: any): t is Track => !!t && typeof t.id === 'string' && typeof t.title === 'string';
+  const tracks = (list: unknown): Track[] => (Array.isArray(list) ? list.filter(isTrack) : [])
+    .map((t) => ({ ...t, artist: typeof t.artist === 'string' ? t.artist : '' }));
+  const list = <T,>(value: unknown, keep: (item: any) => boolean): T[] => (Array.isArray(value) ? value.filter(keep) : []);
+  return {
+    ...state,
+    recents: tracks(state.recents),
+    liked: tracks(state.liked),
+    added: tracks(state.added),
+    playlists: list<any>(state.playlists, (p) => p && typeof p.id === 'string')
+      .map((p) => ({ ...p, name: typeof p.name === 'string' ? p.name : 'Playlist', tracks: tracks(p.tracks) })),
+    smartPlaylists: list(state.smartPlaylists, (p) => p && typeof p.id === 'string' && Array.isArray(p.rules)),
+    shared: list(state.shared, (s) => s && typeof s.id === 'string' && typeof s.title === 'string'),
+    saved: list(state.saved, (c) => c && typeof c.id === 'string' && typeof c.title === 'string'),
+    searches: list(state.searches, (s) => typeof s === 'string'),
+    stats: state.stats && typeof state.stats === 'object' ? state.stats : {},
+  };
 }
 
 export async function refreshAccount() {

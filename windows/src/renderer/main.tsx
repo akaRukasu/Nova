@@ -1,7 +1,29 @@
+import { Component, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { loadLibrary } from './lib/library';
 import './lib/remote';
 import './styles.css';
 
-void loadLibrary().finally(() => createRoot(document.getElementById('root')!).render(<App />));
+/** Erreur d'affichage : un message lisible et un bouton pour recharger, plutôt qu'une fenêtre vide. */
+class Guard extends Component<{ children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error) { console.error('Nova :', error); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="crash">
+        <h2>Nova a rencontré un problème d’affichage</h2>
+        <p className="muted">Envoie une capture de ce message pour qu’il soit corrigé.</p>
+        <pre>{String(this.state.error?.stack ?? this.state.error).slice(0, 1500)}</pre>
+        <button className="button" onClick={() => location.reload()}>Recharger</button>
+      </div>
+    );
+  }
+}
+
+const root = createRoot(document.getElementById('root')!);
+void loadLibrary()
+  .catch((error) => console.error('Nova : bibliothèque illisible', error))
+  .finally(() => root.render(<Guard><App /></Guard>));

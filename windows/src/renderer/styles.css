@@ -627,3 +627,7 @@ html.android .player-bar { padding-bottom: calc(8px + var(--bottom-inset)); }
 html.android .np-titlebar { margin-top: var(--top-inset); }
 html.android .now-playing { padding-bottom: var(--bottom-inset); }
 html.android.tv main { padding-top: 16px; }
+
+/* Erreur d'affichage (au lieu d'une fenêtre vide) */
+.crash { padding: 60px 48px; max-width: 900px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; user-select: text; }
+.crash pre { white-space: pre-wrap; font-size: 12px; background: var(--surface); padding: 14px; border-radius: 10px; max-height: 50vh; overflow: auto; width: 100%; }
