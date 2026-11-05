@@ -37,6 +37,8 @@ jobs:
         run: npm run typecheck
 
       - name: Compiler
+        env:
+          VITE_NOVA_BUILD: ${{ github.run_number }}
         run: npm run build
 
       - name: Interroger YouTube Music (diagnostic)

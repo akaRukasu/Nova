@@ -1,5 +1,6 @@
 // Nova pour Windows : processus principal.
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, session, shell } from 'electron';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +24,13 @@ const file = (name: string) => path.join(dataDir(), name);
 registerScheme();
 // Le lecteur officiel de YouTube Music démarre sans clic (fenêtre invisible).
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// Une seule fenêtre de Nova à la fois.
-if (!app.requestSingleInstanceLock()) app.quit();
+// Une seule fenêtre de Nova à la fois : une deuxième ouverture s'arrête tout de suite et réveille la première.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+
+// Affichage de secours (sans accélération graphique) : activé tout seul si la fenêtre restait vide.
+const safeDisplayFlag = () => file('affichage-secours');
+const safeDisplay = existsSync(safeDisplayFlag());
+if (safeDisplay) app.disableHardwareAcceleration();
 
 let window: BrowserWindow | null = null;
 const sendToUI = (channel: string, ...args: unknown[]) => window?.webContents.send(channel, ...args);
@@ -176,7 +182,7 @@ async function createWindow() {
     minHeight: 600,
     title: 'Nova',
     backgroundColor: dark ? '#1c1c1e' : '#f5f5f7',
-    backgroundMaterial: 'mica',
+    ...(safeDisplay ? {} : { backgroundMaterial: 'mica' as const }),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#ffffff' : '#1c1c1e', height: 40 },
     icon: path.join(here, '../../build/icon.png'),
@@ -221,11 +227,38 @@ function watchStartup(target: BrowserWindow) {
   });
   contents.on('preload-error', (_event, preloadPath, error) => note(`Pont ${path.basename(preloadPath)} : ${error?.stack ?? error}`));
   contents.on('did-fail-load', (_event, code, description, url) => note(`Chargement impossible (${code} ${description}) : ${url}`));
-  contents.on('render-process-gone', (_event, details) => note(`Affichage arrêté : ${details.reason} (code ${details.exitCode})`));
+  contents.on('render-process-gone', (_event, details) => {
+    note(`Affichage arrêté : ${details.reason} (code ${details.exitCode})`);
+    // L'affichage a planté (mémoire, pilote graphique…) : on le relance plutôt que de laisser une fenêtre vide.
+    if (details.reason !== 'clean-exit' && !target.isDestroyed()) setTimeout(() => !target.isDestroyed() && target.webContents.reload(), 1000);
+  });
   contents.on('did-finish-load', () => {
     uiReady = false;
     setTimeout(() => { if (!uiReady && !target.isDestroyed()) void reportStartup(target); }, 15_000);
   });
+}
+
+/** L'interface est prête mais la fenêtre reste-t-elle uniforme (rien d'affiché) ? Alors : affichage de secours. */
+async function checkDisplay() {
+  if (!window || window.isDestroyed() || !window.isVisible() || window.isMinimized() || safeDisplay) return;
+  const image = await window.webContents.capturePage().catch(() => undefined);
+  let blank = !image || image.isEmpty();
+  if (image && !blank) {
+    const { width, height } = image.getSize();
+    const bitmap = image.toBitmap();
+    const colors = new Set<number>();
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const i = (Math.floor(((y + 0.5) / 16) * height) * width + Math.floor(((x + 0.5) / 16) * width)) * 4;
+        colors.add((bitmap[i] >> 4) << 8 | (bitmap[i + 1] >> 4) << 4 | bitmap[i + 2] >> 4);
+      }
+    }
+    blank = colors.size <= 2;
+  }
+  if (!blank) return;
+  await fs.writeFile(safeDisplayFlag(), `Fenêtre vide détectée le ${new Date().toISOString()}\n`).catch(() => undefined);
+  app.relaunch();
+  app.exit(0);
 }
 
 async function reportStartup(target: BrowserWindow) {
@@ -256,8 +289,12 @@ function handle(channel: string, listener: (...args: any[]) => unknown) {
 }
 
 app.on('second-instance', () => {
-  if (window?.isMinimized()) window.restore();
-  window?.focus();
+  // Nova relancé : si la fenêtre existante est vide ou plantée, elle est rechargée (ou recréée).
+  if (!window || window.isDestroyed()) return void createWindow();
+  if (window.webContents.isCrashed() || !uiReady) window.webContents.reload();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
 });
 
 app.whenReady().then(async () => {
@@ -331,7 +368,10 @@ app.whenReady().then(async () => {
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
   handle('import:cancel', () => { importCancelled = true; });
-  handle('ui:ready', () => { uiReady = true; });
+  handle('ui:ready', () => {
+    uiReady = true;
+    setTimeout(() => void checkDisplay(), 2500);
+  });
 
   // Bibliothèque de l'iPhone : association par QR code, puis envois automatiques sur le réseau local.
   await startSyncServer(dataDir(), (library: any, phone: string) => {

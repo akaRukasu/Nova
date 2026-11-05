@@ -7,7 +7,13 @@
     <title>Nova</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Visible avant même le démarrage de l'interface : si cet écran n'apparaît pas, c'est l'affichage de Windows qui est en cause. -->
+      <div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font-family:'Segoe UI',sans-serif;color:#98989d">
+        <div style="font-size:22px;font-weight:600;color:#fa2e54">Nova démarre…</div>
+        <div style="font-size:12px">build %VITE_NOVA_BUILD%</div>
+      </div>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>
