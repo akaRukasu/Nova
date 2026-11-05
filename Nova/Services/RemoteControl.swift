@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 
@@ -34,7 +35,7 @@ final class RemoteControl {
     var deviceName: String { PCSync.shared.pairedComputer ?? state?.name ?? "PC" }
 
     /// Passe la lecture sur le PC : le titre en cours y reprend au même endroit.
-    func activate(player: PlayerModel) async {
+    func activate(player: PlayerModel, transfer: Bool = true) async {
         guard !isActive, !isConnecting else { return }
         isConnecting = true
         defer { isConnecting = false }
@@ -54,7 +55,9 @@ final class RemoteControl {
         let wasPlaying = player.isPlaying
         player.enterRemote()
         isActive = true
-        if !upcoming.isEmpty, wasPlaying {
+        attachedAutomatically = !transfer
+        SilentAudio.shared.start()
+        if transfer, !upcoming.isEmpty, wasPlaying {
             await send(["action": "playTracks", "index": 0], tracks: upcoming)
             if position > 2 { await send(["action": "seek", "value": position]) }
         }
@@ -69,8 +72,33 @@ final class RemoteControl {
         poller?.cancel()
         poller = nil
         isActive = false
+        SilentAudio.shared.stop()
         player.leaveRemote(resumeAt: resumeHere && last?.playing == true ? last : nil)
         state = nil
+    }
+
+    /// Mode activé tout seul parce que le PC jouait (et non choisi dans « Appareils »).
+    private(set) var attachedAutomatically = false
+    @ObservationIgnored private var idleSince: Date?
+    @ObservationIgnored private var watcher: Task<Void, Never>?
+
+    /// Tant que Nova est ouvert sur l'iPhone : si le PC associé joue et que l'iPhone ne joue rien,
+    /// l'iPhone affiche la lecture du PC (centre de contrôle, écran verrouillé) et la pilote.
+    func watchComputer(player: PlayerModel) {
+        guard watcher == nil else { return }
+        watcher = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, PCSync.shared.isPaired, !self.isActive, !self.isConnecting, !player.isPlaying else { continue }
+                if self.base == nil, let found = await PCSync.shared.locateComputer() {
+                    self.base = found.base
+                    self.token = found.token
+                }
+                if let state = await self.fetchState(), state.playing {
+                    await self.activate(player: player, transfer: false)
+                }
+            }
+        }
     }
 
     private func startPolling(player: PlayerModel) {
@@ -81,6 +109,15 @@ final class RemoteControl {
                 if let fresh = await self.fetchState() {
                     self.failures = 0
                     player.mirrorRemote(fresh)
+                    // Activé tout seul et le PC ne joue plus depuis 10 min : on rend la main (batterie).
+                    if self.attachedAutomatically {
+                        if fresh.playing { self.idleSince = nil } else if self.idleSince == nil { self.idleSince = Date() }
+                        if let idle = self.idleSince, Date().timeIntervalSince(idle) > 600 {
+                            self.idleSince = nil
+                            await self.deactivate(player: player, resumeHere: false)
+                            return
+                        }
+                    }
                 } else {
                     self.failures += 1
                     if self.failures >= 5 {
@@ -129,5 +166,43 @@ final class RemoteControl {
         var body: [String: Any] = ["action": action]
         if let value { body["value"] = value }
         Task { await send(body) }
+    }
+}
+
+/// Son silencieux joué pendant que le PC est piloté : iOS n'affiche les commandes de lecture
+/// (centre de contrôle, écran verrouillé) que pour une app qui joue du son. Les boutons pilotent le PC.
+@MainActor
+final class SilentAudio {
+    static let shared = SilentAudio()
+    private var player: AVAudioPlayer?
+
+    func start() {
+        guard player == nil else { return }
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: .longFormAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player = try? AVAudioPlayer(data: Self.silence())
+        player?.numberOfLoops = -1
+        player?.volume = 0
+        player?.play()
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+    }
+
+    /// Une seconde de silence (WAV 8 kHz, 16 bits, mono), créée en mémoire.
+    private static func silence() -> Data {
+        let rate: UInt32 = 8000, samples = rate
+        var data = Data()
+        func append<T>(_ value: T) { withUnsafeBytes(of: value) { data.append(contentsOf: $0) } }
+        data.append(contentsOf: Array("RIFF".utf8)); append(UInt32(36 + samples * 2).littleEndian)
+        data.append(contentsOf: Array("WAVEfmt ".utf8)); append(UInt32(16).littleEndian)
+        append(UInt16(1).littleEndian); append(UInt16(1).littleEndian)
+        append(rate.littleEndian); append((rate * 2).littleEndian)
+        append(UInt16(2).littleEndian); append(UInt16(16).littleEndian)
+        data.append(contentsOf: Array("data".utf8)); append(UInt32(samples * 2).littleEndian)
+        data.append(Data(count: Int(samples * 2)))
+        return data
     }
 }

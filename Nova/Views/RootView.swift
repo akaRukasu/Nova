@@ -110,7 +110,10 @@ struct RootView: View {
         }
         // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
-        .task { PCSync.shared.startHeartbeat(library: player.library) }
+        .task {
+            PCSync.shared.startHeartbeat(library: player.library)
+            RemoteControl.shared.watchComputer(player: player)
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) } }
             if phase != .active {

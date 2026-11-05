@@ -883,9 +883,15 @@ final class PlayerModel {
     func mirrorRemote(_ state: RemoteControl.State) {
         guard RemoteControl.shared.isActive else { return }
         let newQueue = (state.track.map { [$0] } ?? []) + state.queue
+        let trackChanged = newQueue.first?.id != current?.id
         if newQueue.map(\.id) != queue.map(\.id) {
             queue = newQueue
             index = 0
+        }
+        // Pochette du titre du PC sur l'écran verrouillé et dans le centre de contrôle.
+        if trackChanged, let track = newQueue.first {
+            artwork = nil
+            loadArtwork(for: track)
         }
         isPlaying = state.playing
         isLoading = state.loading ?? false
