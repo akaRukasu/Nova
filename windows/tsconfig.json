@@ -6,9 +6,17 @@
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "types": [],
     "noEmit": true
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*"]
+  "include": [
+    "src/renderer/**/*",
+    "src/shared/**/*",
+    "src/android/**/*"
+  ]
 }

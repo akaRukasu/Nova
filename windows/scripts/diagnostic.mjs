@@ -1,4 +1,5 @@
 // Diagnostic de Nova pour Windows : interroge vraiment YouTube Music (et LRCLIB, Deezer) avec le code de l'app.
+import '../dist/main/evalNode.js';
 import * as yt from '../dist/main/yt.js';
 import { lyrics } from '../dist/main/lyrics.js';
 import { match } from '../dist/main/matcher.js';

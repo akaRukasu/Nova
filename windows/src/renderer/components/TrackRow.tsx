@@ -1,5 +1,6 @@
 // Ligne de titre : pochette, titre, artiste, album, durée ; double-clic pour lire, clic droit pour le menu.
 import type { Track } from '../../shared/types';
+import { isAndroid } from '../lib/api';
 import { isLiked, toggleLike } from '../lib/library';
 import { playerState } from '../lib/player';
 import { open } from '../lib/router';
@@ -24,7 +25,8 @@ export function TrackRow({ track, index, onPlay, showArtwork = true, showAlbum =
   const current = state.queue[state.index]?.id === track.id;
   const liked = isLiked(track.id);
   return (
-    <div className={`track-row ${current ? 'current' : ''}`} onDoubleClick={onPlay}
+    <div className={`track-row ${current ? 'current' : ''}`} onDoubleClick={isAndroid ? undefined : onPlay}
+      onClick={isAndroid ? (e) => { if (!(e.target as HTMLElement).closest('button, .link')) onPlay(); } : undefined}
       onContextMenu={(e) => showMenu(e, trackMenu(track, extraMenu))}>
       {rank != null && <span className={`rank ${rank < 3 ? 'top' : ''}`}>{rank + 1}</span>}
       {showArtwork ? (

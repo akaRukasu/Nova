@@ -12,6 +12,7 @@ import { lyrics } from './lyrics.js';
 import { currentPairing, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
+import './evalNode.js';
 import * as yt from './yt.js';
 import { destroyWebPlayers, setupWebPlayer, showWebPlayer, webCommand, webLoad } from './ytmPlayer.js';
 

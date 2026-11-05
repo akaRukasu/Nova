@@ -1,6 +1,5 @@
 // Accès à YouTube Music (bibliothèque youtubei.js), traduit dans les modèles de Nova.
-import vm from 'node:vm';
-import { Innertube, Platform, UniversalCache } from 'youtubei.js';
+import { Innertube, UniversalCache } from 'youtubei.js';
 import type {
   BrowseLink, Category, Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track,
 } from '../shared/types.js';
@@ -8,17 +7,9 @@ import type {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Node = any;
 
-// Le déchiffrement des liens audio exécute un extrait du lecteur de YouTube. Il tourne dans un
-// bac à sable (sans accès aux fichiers ni au réseau), avec une limite de temps.
-Platform.shim.eval = (data, env) => {
-  const args = [env.n, env.sp, env.sig].map((value) => JSON.stringify(value ?? ''));
-  const code = `${data.output}\nprocess(${args.join(', ')});`;
-  return vm.runInNewContext(code, { URL, URLSearchParams }, { timeout: 4000 }) as Record<string, unknown>;
-};
-
 let client: Innertube | null = null;
 let creating: Promise<Innertube> | null = null;
-let options = { lang: 'fr', location: 'FR', cookie: undefined as string | undefined, cacheDir: '' };
+let options = { lang: 'fr', location: 'FR', cookie: undefined as string | undefined, cacheDir: '', retrievePlayer: true };
 
 export function configure(next: Partial<typeof options>) {
   options = { ...options, ...next };
@@ -33,7 +24,7 @@ export async function yt(): Promise<Innertube> {
       lang: options.lang,
       location: options.location,
       cookie: options.cookie,
-      retrieve_player: true,
+      retrieve_player: options.retrievePlayer,
       generate_session_locally: true,
       cache: options.cacheDir ? new UniversalCache(true, options.cacheDir) : undefined,
     }).then((created) => {

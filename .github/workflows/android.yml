@@ -1,0 +1,92 @@
+name: Nova Android
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: windows
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier les types
+        run: npm run typecheck
+
+      - name: Compiler l'interface Android
+        run: npm run build:android
+
+      - name: Copier l'interface dans le projet Android
+        run: npx cap sync android
+
+      # Même clé à chaque construction : les nouvelles versions s'installent par-dessus l'ancienne.
+      # Le secret NOVA_ANDROID_KEYSTORE (keystore en base64) est prioritaire ; sinon une clé est créée une fois et gardée en cache.
+      - name: Restaurer la clé de signature
+        uses: actions/cache@v4
+        with:
+          path: windows/android/nova-release.jks
+          key: nova-android-keystore-v1
+      - name: Préparer la clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.NOVA_ANDROID_KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then echo "$KEYSTORE_B64" | base64 -d > android/nova-release.jks; fi
+          if [ ! -f android/nova-release.jks ]; then
+            keytool -genkeypair -v -keystore android/nova-release.jks -alias nova -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass nova-android -keypass nova-android -dname "CN=Nova, O=Nova, C=FR"
+          fi
+          echo "NOVA_KEYSTORE=$PWD/android/nova-release.jks" >> "$GITHUB_ENV"
+
+      - name: Construire l'APK
+        working-directory: windows/android
+        env:
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.NOVA_ANDROID_KEYSTORE_PASSWORD || 'nova-android' }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../Nova-Android.apk
+          ls -la ../Nova-Android.apk
+
+      - name: Publier
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME//\//-}"
+          if [ "$GITHUB_REF_NAME" = "main" ]; then TAG="android-latest"; else TAG="android-preview-$BRANCH"; fi
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" Nova-Android.apk \
+            --target "$GITHUB_SHA" \
+            --title "Nova pour Android et Android TV — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
+            --notes "Commit $GITHUB_SHA. Nova-Android.apk : téléphone, tablette et Android TV (même fichier). Installation : ouvre le fichier sur l'appareil et autorise « Installer des applications inconnues » pour ton navigateur ou ton gestionnaire de fichiers. Sur Android TV : installe-le avec une app comme « Downloader » ou depuis une clé USB." \
+            --prerelease

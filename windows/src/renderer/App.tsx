@@ -1,9 +1,10 @@
 // Fenêtre de Nova : barre latérale, page en cours, barre de lecture, lecteur plein écran.
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from './components/icons';
-import { Overlays } from './components/menus';
+import { dismissOverlay, Overlays } from './components/menus';
 import { NowPlaying, PlayerBar, nowPlayingOpen } from './components/Player';
 import { Sidebar } from './components/Sidebar';
+import { isAndroid } from './lib/api';
 import { player } from './lib/player';
 import { back, currentRoute, forward, router, type Route } from './lib/router';
 import { useStore } from './lib/store';
@@ -42,6 +43,27 @@ function Page({ route }: { route: Route }) {
 export function App() {
   const nav = useStore(router);
   const route = currentRoute();
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => setDrawer(false), [nav.position]);
+
+  // Android : bouton Retour (lecteur plein écran, menu, page précédente) et touches multimédia de la télécommande.
+  useEffect(() => {
+    if (!isAndroid) return;
+    (window as any).__novaBack = () => {
+      if (dismissOverlay()) return true;
+      if (nowPlayingOpen.get()) { nowPlayingOpen.set(false); return true; }
+      if (document.querySelector('.app.drawer-open')) { setDrawer(false); return true; }
+      if (router.get().position > 0) { back(); return true; }
+      return false;
+    };
+    const onMedia = (e: KeyboardEvent) => {
+      if (e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause') { e.preventDefault(); player.toggle(); }
+      if (e.key === 'MediaTrackNext' || e.key === 'MediaFastForward') { e.preventDefault(); player.next(); }
+      if (e.key === 'MediaTrackPrevious' || e.key === 'MediaRewind') { e.preventDefault(); player.previous(); }
+    };
+    window.addEventListener('keydown', onMedia);
+    return () => window.removeEventListener('keydown', onMedia);
+  }, []);
 
   // Raccourcis : espace (lecture/pause), Alt+← / Alt+→ (navigation), Ctrl+→ / Ctrl+← (titre suivant/précédent).
   useEffect(() => {
@@ -67,12 +89,14 @@ export function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app ${drawer ? 'drawer-open' : ''}`}>
       <div className="titlebar">
+        <button className="icon-button menu-button" onClick={() => setDrawer(!drawer)} aria-label="Menu"><Icon name="list" size={20} /></button>
         <button className="icon-button" disabled={nav.position === 0} onClick={back} aria-label="Retour"><Icon name="back" size={18} /></button>
         <button className="icon-button" disabled={nav.position >= nav.stack.length - 1} onClick={forward} aria-label="Avancer"><Icon name="forward" size={18} /></button>
       </div>
       <Sidebar />
+      <div className="drawer-scrim" onClick={() => setDrawer(false)} />
       <main key={nav.position}><Page route={route} /></main>
       <PlayerBar />
       <NowPlaying />

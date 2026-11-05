@@ -22,10 +22,17 @@ export interface MenuItem {
 const menu = new Store<{ x: number; y: number; items: MenuItem[] } | null>(null);
 const prompt = new Store<{ title: string; value: string; confirm: string; resolve: (value: string | null) => void } | null>(null);
 
-export function showMenu(event: { clientX: number; clientY: number; preventDefault?: () => void; stopPropagation?: () => void }, items: MenuItem[]) {
+export function showMenu(event: { clientX: number; clientY: number; currentTarget?: EventTarget | null; preventDefault?: () => void; stopPropagation?: () => void }, items: MenuItem[]) {
   event.preventDefault?.();
   event.stopPropagation?.();
-  menu.set({ x: event.clientX, y: event.clientY, items });
+  let { clientX: x, clientY: y } = event;
+  // Ouvert au clavier ou à la télécommande : sous le bouton plutôt qu'en haut à gauche.
+  if (!x && !y && event.currentTarget instanceof HTMLElement) {
+    const box = event.currentTarget.getBoundingClientRect();
+    x = box.left;
+    y = box.bottom;
+  }
+  menu.set({ x, y, items });
 }
 
 export function ask(title: string, value = '', confirm = 'OK'): Promise<string | null> {
@@ -85,9 +92,20 @@ function MenuList({ items, close }: { items: MenuItem[]; close: () => void }) {
   return (
     <div className="menu-list" role="menu">
       {items.map((item, i) => item.separator ? <div key={i} className="menu-separator" /> : (
-        <div key={i} className={`menu-item ${item.danger ? 'danger' : ''}`} role="menuitem"
+        <div key={i} className={`menu-item ${item.danger ? 'danger' : ''}`} role="menuitem" tabIndex={0}
           onMouseEnter={() => setOpenSub(item.submenu ? i : null)}
-          onClick={() => { if (item.action) { item.action(); close(); } }}>
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || (e.key === 'ArrowRight' && item.submenu)) {
+              e.preventDefault();
+              if (item.submenu) { setOpenSub(i); requestAnimationFrame(() => (e.currentTarget.querySelector('.submenu .menu-item') as HTMLElement | null)?.focus()); }
+              else e.currentTarget.click();
+            }
+          }}
+          onClick={(e) => {
+            if (item.action) { item.action(); close(); }
+            else if (item.submenu && !(e.target as HTMLElement).closest('.submenu')) setOpenSub(openSub === i ? null : i);
+          }}>
           {item.icon && <Icon name={item.icon} size={16} />}
           <span>{item.label}</span>
           {item.submenu && <Icon name="forward" size={14} className="menu-arrow" />}
@@ -96,6 +114,14 @@ function MenuList({ items, close }: { items: MenuItem[]; close: () => void }) {
       ))}
     </div>
   );
+}
+
+/** Ferme le menu ou la boîte de dialogue ouverts (bouton Retour d'Android). */
+export function dismissOverlay(): boolean {
+  if (menu.get()) { menu.set(null); return true; }
+  const question = prompt.get();
+  if (question) { question.resolve(null); prompt.set(null); return true; }
+  return false;
 }
 
 export function Overlays() {
@@ -108,13 +134,16 @@ export function Overlays() {
   useEffect(() => {
     if (!current) return;
     const close = () => menu.set(null);
+    // Flèches, Tab et Entrée naviguent dans le menu (clavier, télécommande Android TV) ; les autres touches le ferment.
+    const onKey = (e: KeyboardEvent) => { if (!/^(Arrow|Tab$|Enter$|Shift$)/.test(e.key)) close(); };
     window.addEventListener('mousedown', close);
     window.addEventListener('blur', close);
-    window.addEventListener('keydown', close);
+    window.addEventListener('keydown', onKey);
+    requestAnimationFrame(() => (ref.current?.querySelector('.menu-item') as HTMLElement | null)?.focus({ preventScroll: true }));
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('blur', close);
-      window.removeEventListener('keydown', close);
+      window.removeEventListener('keydown', onKey);
     };
   }, [current]);
 

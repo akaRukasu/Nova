@@ -43,7 +43,8 @@ export function Card({ item, width = 176, onPlay }: { item: Item; width?: number
   const round = collection.kind === 'artist';
   return (
     <div className={`card ${round ? 'round' : ''}`} style={{ width }} onContextMenu={(e) => showMenu(e, collectionMenu(collection))}>
-      <div className="card-art" role="button" onClick={() => open(routeFor(collection))}>
+      <div className="card-art" role="button" tabIndex={0} onClick={() => open(routeFor(collection))}
+        onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(routeFor(collection)); }}>
         <Artwork url={collection.artwork} size={width} radius={10} round={round} />
         {!round && (
           <button className="card-play" onClick={(e) => { e.stopPropagation(); void playCollection(collection); }} aria-label="Lire">

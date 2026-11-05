@@ -1,7 +1,7 @@
 // Lecteur : file d'attente, aléatoire, répétition, AutoMix / fondu enchaîné (deux lecteurs audio),
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
-import { api, on } from './api';
+import { api, isAndroid, on } from './api';
 import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
 import { Store } from './store';
 import { WebDeck } from './webDeck';
@@ -30,7 +30,7 @@ export interface PlayerState {
 export const playerState = new Store<PlayerState>({
   queue: [], index: 0, playing: false, loading: false, shuffled: false, repeat: 'off',
   volume: Number(localStorage.getItem('volume') ?? 0.8), transitioning: false, ad: false,
-  mode: (localStorage.getItem('engineMode') as EngineMode) ?? 'direct',
+  mode: isAndroid ? 'web' : (localStorage.getItem('engineMode') as EngineMode) ?? 'direct',
 });
 
 /** Position et durée, à part : elles changent quatre fois par seconde (seul le lecteur s'en sert). */
@@ -108,6 +108,7 @@ class Engine {
 
   /** Change de moteur et relance le titre en cours au même endroit. */
   setMode(mode: EngineMode, restart = true) {
+    if (isAndroid) mode = 'web';
     if (mode === playerState.get().mode && this.decks.length) return;
     const wasPlaying = playerState.get().playing;
     const position = timeState.get().time;

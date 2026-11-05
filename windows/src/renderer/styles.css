@@ -522,3 +522,88 @@ input[type='range']:hover::-webkit-slider-thumb { opacity: 1; }
 .shared-banner > div { flex: 1; }
 .shared-banner svg { color: var(--accent); flex-shrink: 0; }
 .shared-banner p { margin: 2px 0 0; }
+
+/* MARK: Android (téléphone) et petites fenêtres : menu en tiroir, barre de lecture compacte */
+
+.menu-button, .drawer-scrim { display: none; }
+.menu-item:focus { outline: none; }
+.menu-item:focus-visible { background: var(--accent); color: #fff; }
+
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .titlebar { left: 0; right: 0; background: var(--bg); padding: 0 6px; }
+  .menu-button { display: inline-grid; }
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(300px, 84vw); z-index: 40; padding-bottom: 16px;
+    background: var(--surface); transform: translateX(-102%); transition: transform 0.22s ease-out;
+  }
+  .drawer-open .sidebar { transform: none; box-shadow: var(--shadow); }
+  .drawer-open .drawer-scrim { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(0, 0, 0, 0.4); }
+  main { padding-top: 44px; }
+  .page { padding: 4px 14px 32px; }
+  .page h1 { font-size: 26px; }
+
+  .track-row, .track-row:has(.row-index), .track-row:has(.rank) { grid-template-columns: auto minmax(0, 1fr) 36px; gap: 10px; }
+  .track-row:has(.rank) { grid-template-columns: auto auto minmax(0, 1fr) 36px; }
+  .row-album, .row-duration, .row-like:not(.on) { display: none; }
+  .row-like.on { display: none; }
+  .row-more { opacity: 1; }
+
+  .player-bar { grid-column: 1; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 8px 10px; }
+  .player-bar .center .progress, .player-bar .right, .player-bar .now .icon-button, .player-bar .now .row-like { display: none; }
+  .player-bar .center { flex-direction: row; }
+  .player-bar .controls { gap: 6px; }
+  .player-bar .controls .mode { display: none; }
+  .now-art .artwork { width: 44px !important; height: 44px !important; }
+
+  .now-playing { overflow-y: auto; }
+  .np-body { flex-direction: column; gap: 18px; padding: 6px 20px 28px; align-items: stretch; }
+  .np-left, .np-body.lyrics .np-left, .np-body.queue .np-left { width: 100%; }
+  .np-art .artwork { width: min(82vw, 46vh) !important; height: min(82vw, 46vh) !important; }
+  .np-body.lyrics .np-art, .np-body.queue .np-art { display: none; }
+  .np-right { max-width: none; min-height: 50vh; }
+  .lyrics .line { font-size: 24px; }
+  .controls.large { gap: 26px; }
+
+  .menu-list { max-height: 80vh; overflow-y: auto; min-width: 220px; }
+  .submenu { position: static; box-shadow: none; border: 0; padding-left: 12px; max-height: none; }
+  .context-menu { left: 8px !important; right: 8px; }
+  .modal { width: calc(100vw - 32px); }
+  .toast { left: 50%; bottom: 90px; }
+  .phone-transfer { flex-direction: column; align-items: stretch; }
+}
+
+/* Écrans tactiles : pas de survol, les commandes restent visibles. */
+@media (hover: none) {
+  .row-more, .card-play { opacity: 1; }
+  .scroll-buttons { display: none; }
+}
+
+/* MARK: Android TV : plus grand, lisible à distance, focus bien visible pour la télécommande */
+
+html.tv { font-size: 125%; }
+html.tv body { font-size: 16px; }
+html.tv :focus { outline: none; }
+html.tv :focus-visible, html.tv .menu-item:focus {
+  outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 10px;
+}
+html.tv .track-row:focus-within { background: var(--hover); }
+html.tv .track-row:focus-within .row-more, html.tv .track-row:focus-within .row-like { opacity: 1; }
+html.tv .card-art:focus-visible { transform: scale(1.04); transition: transform 0.15s; }
+html.tv .app { grid-template-columns: 290px 1fr; }
+html.tv .page { padding: 16px 48px 64px; }
+html.tv .titlebar { display: none; }
+html.tv main { padding-top: 16px; }
+
+/* Android : la page passe sous les barres système (bord à bord), on garde le contenu à l'écart. */
+html.android {
+  --top-inset: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --bottom-inset: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+}
+html.android .titlebar { top: var(--top-inset); }
+html.android main { padding-top: calc(44px + var(--top-inset)); }
+html.android .sidebar { padding-top: calc(12px + var(--top-inset)); }
+html.android .player-bar { padding-bottom: calc(8px + var(--bottom-inset)); }
+html.android .np-titlebar { margin-top: var(--top-inset); }
+html.android .now-playing { padding-bottom: var(--bottom-inset); }
+html.android.tv main { padding-top: 16px; }

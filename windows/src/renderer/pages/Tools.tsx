@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } from '../../shared/types';
 import { Icon } from '../components/icons';
-import { api, on } from '../lib/api';
+import { api, isAndroid, on } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import QRCode from 'qrcode';
@@ -122,7 +122,7 @@ export function PhoneTransfer() {
     setPairing(found);
     return found;
   };
-  useEffect(() => { void refresh(); }, [sync.lastSync]);
+  useEffect(() => { if (!isAndroid) void refresh().catch(() => undefined); }, [sync.lastSync]);
 
   const show = async () => {
     setError(undefined);
@@ -147,6 +147,20 @@ export function PhoneTransfer() {
 
   const last = sync.lastSync ?? pairing?.lastSync;
   const paired = pairing?.paired || !!sync.lastSync;
+  if (isAndroid) return (
+    <section className="phone-transfer">
+      <div>
+        <h3>Depuis l’iPhone</h3>
+        <p className="muted">Ta bibliothèque YouTube (titres likés, playlists) est déjà là une fois ton compte connecté dans Réglages.
+          Pour le reste (playlists Nova, historique) : sur l’iPhone, Nova → Réglages → « Exporter ma bibliothèque », puis ouvre le fichier ici.</p>
+        <div className="row-buttons">
+          <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
+        </div>
+        {result && <p className="success">{result}</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
+    </section>
+  );
   return (
     <section className="phone-transfer">
       <div>
@@ -390,7 +404,7 @@ export function SettingsPage() {
             <input type="range" min={1} max={12} value={settings.crossfadeSeconds} onChange={(e) => updateSettings({ crossfadeSeconds: Number(e.target.value) })} />
           </label>
         )}
-        <label className="field">Moteur de lecture
+        {!isAndroid && <label className="field">Moteur de lecture
           <select value={settings.engine ?? 'auto'} onChange={(e) => updateSettings({ engine: e.target.value as typeof settings.engine })}>
             <option value="auto">Automatique (recommandé)</option>
             <option value="web">Lecteur officiel YouTube Music</option>
@@ -398,7 +412,7 @@ export function SettingsPage() {
           </select>
           <span className="muted small">Si YouTube refuse la lecture directe (« confirme que tu n’es pas un robot »), Nova passe tout seul au lecteur officiel
             de YouTube Music, avec ton compte. Sans YouTube Premium, ses publicités sont diffusées.</span>
-        </label>
+        </label>}
         <label className="toggle-row"><input type="checkbox" checked={settings.autoplayRadio} onChange={(e) => updateSettings({ autoplayRadio: e.target.checked })} /> Lecture automatique (titres similaires à la fin de la file)</label>
         <label className="toggle-row"><input type="checkbox" checked={settings.recordHistory} onChange={(e) => updateSettings({ recordHistory: e.target.checked })} /> Historique d’écoute</label>
       </section>

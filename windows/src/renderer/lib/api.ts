@@ -9,11 +9,14 @@ declare global {
     nova: {
       invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
       on: (channel: string, listener: (...args: any[]) => void) => () => void;
+      platform?: 'android';
     };
   }
 }
 
 const call = <T,>(channel: string, ...args: unknown[]) => window.nova.invoke<T>(channel, ...args);
+/** Nova pour Android (téléphone et Android TV) : même interface, lecteur officiel de YouTube Music. */
+export const isAndroid = window.nova?.platform === 'android';
 export const on = (channel: string, listener: (...args: any[]) => void) => window.nova.on(channel, listener);
 
 export type SearchScope = 'all' | 'song' | 'video' | 'album' | 'artist' | 'playlist';

@@ -1,0 +1,12 @@
+{
+  "appId": "com.akarukasu.nova",
+  "appName": "Nova",
+  "webDir": "dist/android",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#1c1c1e"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}
