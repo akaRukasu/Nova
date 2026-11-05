@@ -228,9 +228,26 @@ export function shelvesFrom(sections: any[] | undefined, prefix = 's'): Shelf[] 
         break;
       }
       case 'ItemSection':
-      case 'SectionList':
-        (node.contents ?? []).forEach(visit);
+      case 'SectionList': {
+        const children: Node[] = node.contents ?? [];
+        // Recherche « Tout » : YouTube renvoie parfois une liste à plat ; on la range par type.
+        const flat = children.filter((c) => c?.type === 'MusicResponsiveListItem' || c?.type === 'MusicTwoRowItem');
+        if (flat.length) {
+          const titles: Record<string, string> = { song: 'Titres', video: 'Vidéos', album: 'Albums', artist: 'Artistes', playlist: 'Playlists' };
+          const groups = new Map<string, Item[]>();
+          for (const child of flat) {
+            const item = itemFrom(child);
+            if (!item) continue;
+            const kind = item.type === 'track' ? (child.item_type === 'video' ? 'video' : 'song') : item.type === 'collection' ? item.collection.kind : 'other';
+            groups.set(kind, [...(groups.get(kind) ?? []), item]);
+          }
+          for (const [kind, items] of groups) {
+            shelves.push({ id: `${prefix}${shelves.length}`, title: titles[kind] ?? '', items, layout: items[0].type === 'track' ? 'list' : 'cards' });
+          }
+        }
+        children.filter((c) => !flat.includes(c)).forEach(visit);
         break;
+      }
       default:
         break;
     }
@@ -280,7 +297,13 @@ export async function home(): Promise<Page> {
 
 export async function homeMore(): Promise<Page> {
   if (!homeFeed?.has_continuation) return { shelves: [], continuation: false };
-  homeFeed = await homeFeed.getContinuation();
+  try {
+    homeFeed = await homeFeed.getContinuation();
+  } catch {
+    // Fin de l'accueil : YouTube Music n'a plus rien à proposer.
+    homeFeed = null;
+    return { shelves: [], continuation: false };
+  }
   return { shelves: shelvesFrom(homeFeed.sections, `home-${Date.now()}-`), continuation: !!homeFeed.has_continuation };
 }
 
@@ -324,8 +347,18 @@ export async function artist(id: string): Promise<{ header: PageHeader; shelves:
 
 export async function artistAllSongs(id: string): Promise<Track[]> {
   const page: any = await (await yt()).music.getArtist(id);
-  const shelf: any = await page.getAllSongs?.();
-  return (shelf?.contents ?? []).map(trackFrom).filter(Boolean) as Track[];
+  try {
+    const shelf: any = await page.getAllSongs?.();
+    const tracks = (shelf?.contents ?? []).map(trackFrom).filter(Boolean) as Track[];
+    if (tracks.length) return tracks;
+  } catch {
+    // La bibliothèque cherche l'intitulé anglais (« Top songs ») : on passe par le lien de la liste.
+  }
+  const list = shelvesFrom(page.sections, 'all-').find((s) => s.layout === 'list');
+  if (list?.more?.browseId.startsWith('VL')) {
+    return (await collection({ id: list.more.browseId, kind: 'playlist', title: '' }, 500)).tracks;
+  }
+  return (list?.items ?? []).flatMap((i) => (i.type === 'track' ? [i.track] : []));
 }
 
 export async function collection(target: Collection, limit = 1500): Promise<CollectionPage> {
@@ -376,7 +409,28 @@ export async function plainLyrics(videoId: string): Promise<{ text: string; sour
 }
 
 /** Vraie pochette carrée d'un titre qui n'a qu'une miniature vidéo (version audio, album). */
+const artworkKey = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/\b(official|clip|video|lyrics?|audio|visualizer)\b/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+
 export async function squareArtwork(videoId: string): Promise<string | undefined> {
+  const found = await squareFromPanel(videoId);
+  if (found) return found;
+  // Dernier essai, comme sur l'iPhone : le même titre du même artiste parmi les titres de la recherche.
+  const panel: any = await (await yt()).music.getUpNext(videoId, true).catch(() => null);
+  const self = ((panel?.contents ?? []).map(trackFrom).filter(Boolean) as Track[]).find((t) => t.id === videoId);
+  if (!self?.artist) return undefined;
+  const names = self.artist.replace(/\s*(-\s*topic|vevo|official|officiel)\s*$/i, '').split(/\s*(?:,|&| et | x | feat\.?)\s*/i).filter(Boolean);
+  let title = self.title.replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/\s+(feat\.?|ft\.?|avec)\s+.*$/i, '');
+  const parts = title.split(' - ');
+  if (parts.length > 1 && names.some((n) => artworkKey(parts[0]).includes(artworkKey(n)))) title = parts.slice(1).join(' - ');
+  const shelves = await search(`${title} ${names[0] ?? ''}`, 'song').catch(() => [] as Shelf[]);
+  const wanted = artworkKey(title);
+  const match = shelves.flatMap((s) => s.items).find((i) => i.type === 'track' && i.track.square && artworkKey(i.track.title) === wanted
+    && names.some((n) => artworkKey(i.track.artist).includes(artworkKey(n)) || artworkKey(n).includes(artworkKey(i.track.artist))));
+  return match?.type === 'track' ? match.track.artwork : undefined;
+}
+
+async function squareFromPanel(videoId: string): Promise<string | undefined> {
   const panel: any = await (await yt()).music.getUpNext(videoId, false);
   for (const node of panel.contents ?? []) {
     if (node.type === 'PlaylistPanelVideoWrapper') {
@@ -417,11 +471,18 @@ export async function stream(videoId: string, highQuality: boolean): Promise<Str
       duration: format.approx_duration_ms ? Number(format.approx_duration_ms) / 1000 : info.basic_info?.duration,
     };
   };
-  try {
-    return await pick(await client.music.getInfo(videoId));
-  } catch {
-    return await pick(await client.getBasicInfo(videoId));
+  // Les clients par défaut de la bibliothèque, l'un après l'autre ; la raison du refus est gardée.
+  const reasons: string[] = [];
+  for (const load of [() => client.music.getInfo(videoId), () => client.getInfo(videoId), () => client.getBasicInfo(videoId)]) {
+    try {
+      const info: any = await load();
+      if (info.streaming_data) return await pick(info);
+      reasons.push(info.playability_status?.reason ?? info.playability_status?.status ?? 'pas de flux');
+    } catch (error) {
+      reasons.push(error instanceof Error ? error.message : String(error));
+    }
   }
+  throw new Error(`Lecture refusée par YouTube : ${[...new Set(reasons)].join(' / ')}`);
 }
 
 // MARK: - Compte
