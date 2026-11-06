@@ -444,6 +444,7 @@ async function squareFromPanel(videoId: string): Promise<string | undefined> {
 export interface Stream {
   url: string;
   mime: string;
+  bitrate?: number;
   expires: number;
   duration?: number;
 }
@@ -451,13 +452,20 @@ export interface Stream {
 export async function stream(videoId: string, highQuality: boolean): Promise<Stream> {
   const client = await yt();
   const pick = async (info: any) => {
-    const format = info.chooseFormat({ type: 'audio', quality: highQuality ? 'best' : 'bestefficiency', format: 'mp4' })
+    // Haute qualité : le flux audio au plus haut débit, quel que soit son format — en général l'Opus (~160 kbit/s,
+    // meilleur que l'AAC à 128 kbit/s), 256 kbit/s avec YouTube Premium. Économie : le plus léger.
+    const audio = ((info.streaming_data?.adaptive_formats ?? []) as any[])
+      .filter((f) => f.has_audio && !f.has_video && (f.bitrate ?? 0) > 0)
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+    const format = (highQuality ? audio[0] : audio[audio.length - 1])
+      ?? info.chooseFormat({ type: 'audio', quality: highQuality ? 'best' : 'bestefficiency', format: 'mp4' })
       ?? info.chooseFormat({ type: 'audio', quality: 'best' });
     const url = await format.decipher(client.session.player);
     const expires = Number(new URL(url).searchParams.get('expire') ?? 0) * 1000 || Date.now() + 3 * 3600_000;
     return {
       url,
       mime: (format.mime_type ?? 'audio/mp4').split(';')[0],
+      bitrate: format.bitrate as number | undefined,
       expires,
       duration: format.approx_duration_ms ? Number(format.approx_duration_ms) / 1000 : info.basic_info?.duration,
     };

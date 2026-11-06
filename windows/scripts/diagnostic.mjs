@@ -89,7 +89,7 @@ if (song) {
   });
   await step('Flux audio (déchiffrement + premiers octets)', async () => {
     const stream = await yt.stream(song.id, true);
-    console.log(`  ${stream.mime} · expire ${new Date(stream.expires).toISOString()} · durée ${stream.duration}`);
+    console.log(`  ${stream.mime}${stream.bitrate ? ` · ${Math.round(stream.bitrate / 1000)} kbit/s` : ''} · expire ${new Date(stream.expires).toISOString()} · durée ${stream.duration}`);
     const response = await fetch(stream.url, { headers: { range: 'bytes=0-65535' } });
     const bytes = (await response.arrayBuffer()).byteLength;
     console.log(`  HTTP ${response.status} · ${bytes} octets`);

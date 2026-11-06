@@ -415,6 +415,8 @@ export function SettingsPage() {
           <select value={settings.highQuality ? 'high' : 'low'} onChange={(e) => updateSettings({ highQuality: e.target.value === 'high' })}>
             <option value="high">Haute</option><option value="low">Économie de données</option>
           </select>
+          <span className="muted small">Haute : le meilleur flux de YouTube Music, en général l’Opus (environ 160 kbit/s, plus fin que l’AAC
+            à 128 kbit/s), 256 kbit/s avec YouTube Premium. Avec le lecteur officiel, la qualité est celle choisie dans les réglages de YouTube Music.</span>
         </label>
         <label className="field">Transitions entre les titres
           <select value={settings.transition} onChange={(e) => updateSettings({ transition: e.target.value as typeof settings.transition })}>
