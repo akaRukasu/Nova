@@ -91,9 +91,9 @@ struct RootView: View {
             }
             Button("Annuler", role: .cancel) { transfer = nil }
         } message: {
-            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers Nova pour Windows, sur ton Wi-Fi (\(transfer?.url.host ?? "")). Ensuite, tes ajouts y seront envoyés automatiquement.")
+            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers \(transfer?.computer ?? "Nova") (PC ou Android), sur ton Wi-Fi (\(transfer?.url.host ?? "")). Ensuite, tes ajouts y seront envoyés automatiquement.")
         }
-        .alert("Transfert vers Nova pour Windows", isPresented: Binding(
+        .alert("Transfert vers Nova (PC ou Android)", isPresented: Binding(
             get: { transferMessage != nil },
             set: { if !$0 { transferMessage = nil } }
         )) {

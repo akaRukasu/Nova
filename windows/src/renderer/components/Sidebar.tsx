@@ -1,7 +1,7 @@
 // Barre latérale, comme Apple Music pour Windows : recherche, rubriques, bibliothèque, playlists.
 import { useState } from 'react';
 import { account, createPlaylist, createShared, joinShared, library, notify, removeShared, sharedURL } from '../lib/library';
-import { api, isAndroid } from '../lib/api';
+import { api } from '../lib/api';
 import { currentRoute, open, root, router, type Route } from '../lib/router';
 import { useStore } from '../lib/store';
 import { Icon } from './icons';
@@ -38,7 +38,7 @@ export function Sidebar() {
         <Entry route={{ name: 'explore' }} icon="grid" label="Nouveautés" active={is('explore')} />
         <Entry route={{ name: 'mix', kind: 'discovery' }} icon="sparkles" label="Mes mix" active={is('mix')} />
         <Entry route={{ name: 'concerts' }} icon="ticket" label="Concerts" active={is('concerts')} />
-        {!isAndroid && <Entry route={{ name: 'jam' }} icon="jam" label="Jam" active={is('jam')} />}
+        <Entry route={{ name: 'jam' }} icon="jam" label="Jam" active={is('jam')} />
       </nav>
       <div className="side-title">Bibliothèque</div>
       <nav>

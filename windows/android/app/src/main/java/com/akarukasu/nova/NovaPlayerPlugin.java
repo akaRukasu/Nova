@@ -56,6 +56,8 @@ public class NovaPlayerPlugin extends Plugin {
     private Runnable overlayClose;
     private PluginCall loginCall;
     static NovaPlayerPlugin instance;
+    /** Réseau local : synchronisation et télécommande depuis l'iPhone, Jam. */
+    private NovaLink link;
 
     /** Bouton Retour : ferme la fenêtre YouTube ouverte (connexion, publicité, page), si elle l'est. */
     boolean dismissOverlay() {
@@ -70,6 +72,13 @@ public class NovaPlayerPlugin extends Plugin {
     public void load() {
         instance = this;
         controlScript = readAsset("nova-ytm.js");
+        link = new NovaLink(getContext(), (channel, args) -> {
+            JSObject data = new JSObject();
+            data.put("channel", channel);
+            data.put("args", args);
+            notifyListeners("relay", data);
+        });
+        link.start();
         CookieManager.getInstance().setAcceptCookie(true);
         NovaPlaybackService.listener = action -> {
             JSObject data = new JSObject();
@@ -318,6 +327,70 @@ public class NovaPlayerPlugin extends Plugin {
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(call.getString("url", "")));
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try { getContext().startActivity(intent); } catch (Exception ignored) { }
+        call.resolve();
+    }
+
+    // MARK: Réseau local (iPhone, Jam)
+
+    @PluginMethod
+    public void syncInfo(PluginCall call) {
+        try { call.resolve(JSObject.fromJSONObject(link.info())); } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    @PluginMethod
+    public void unpair(PluginCall call) {
+        link.unpair();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setRemoteState(PluginCall call) {
+        link.setRemoteState(call.getString("state", null));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jamHost(PluginCall call) {
+        try { call.resolve(JSObject.fromJSONObject(link.jamHost(call.getString("name", "Nova")))); } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    @PluginMethod
+    public void jamBroadcast(PluginCall call) {
+        link.jamBroadcast(call.getString("message", "{}"));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jamBrowse(PluginCall call) {
+        link.jamBrowse();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jamStopBrowsing(PluginCall call) {
+        link.jamStopBrowsing();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jamJoin(PluginCall call) {
+        try {
+            link.jamJoin(call.getString("address", ""), call.getInt("port", 0), call.getString("name", "Invité"));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Le Jam ne répond pas.");
+        }
+    }
+
+    @PluginMethod
+    public void jamToHost(PluginCall call) {
+        link.jamToHost(call.getString("message", "{}"));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void jamStop(PluginCall call) {
+        link.jamStop();
         call.resolve();
     }
 

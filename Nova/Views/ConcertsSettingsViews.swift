@@ -390,9 +390,9 @@ struct SettingsView: View {
                     exportFile = Self.writeExport(library: library)
                 }
             } header: {
-                Text("Nova pour Windows")
+                Text("Nova sur PC ou Android")
             } footer: {
-                Text("Dans Nova pour Windows, ouvre Importer → « Depuis l'iPhone » et scanne le QR code avec l'appareil photo : ton iPhone est associé, et tes ajouts partent ensuite tout seuls vers le PC sur le même Wi-Fi. Sinon, exporte ta bibliothèque et ouvre le fichier sur le PC.")
+                Text("Dans Nova sur PC (Windows) ou sur Android, ouvre Importer → « Depuis l'iPhone » et scanne le QR code avec l'appareil photo : ton iPhone est associé, tes ajouts partent ensuite tout seuls vers cet appareil sur le même Wi-Fi, et tu peux y envoyer la lecture depuis le lecteur (Appareils). Sinon, exporte ta bibliothèque et ouvre le fichier sur l'autre appareil.")
             }
 
             Section {

@@ -134,7 +134,7 @@ export function PhoneTransfer() {
     setPairing(found);
     return found;
   };
-  useEffect(() => { if (!isAndroid) void refresh().catch(() => undefined); }, [sync.lastSync]);
+  useEffect(() => { void refresh().catch(() => undefined); }, [sync.lastSync]);
 
   const show = async () => {
     setError(undefined);
@@ -159,20 +159,6 @@ export function PhoneTransfer() {
 
   const last = sync.lastSync ?? pairing?.lastSync;
   const paired = pairing?.paired || !!sync.lastSync;
-  if (isAndroid) return (
-    <section className="phone-transfer">
-      <div>
-        <h3>Depuis l’iPhone</h3>
-        <p className="muted">Ta bibliothèque YouTube (titres likés, playlists) est déjà là une fois ton compte connecté dans Réglages.
-          Pour le reste (playlists Nova, historique) : sur l’iPhone, Nova → Réglages → « Exporter ma bibliothèque », puis ouvre le fichier ici.</p>
-        <div className="row-buttons">
-          <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
-        </div>
-        {result && <p className="success">{result}</p>}
-        {error && <p className="error">{error}</p>}
-      </div>
-    </section>
-  );
   return (
     <section className="phone-transfer">
       <div>
@@ -203,7 +189,7 @@ export function PhoneTransfer() {
           <p className="muted small">L’iPhone ne trouve pas ce PC (partage de connexion, autre réseau) ?{' '}
             <button className="link" disabled={allowing} onClick={() => void allowNetwork()}>Autoriser Nova sur tous les réseaux</button></p>
         ))}
-        {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme dans Nova. Si Windows le demande, autorise Nova sur le réseau privé. ({pairing?.address})</p>}
+        {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme dans Nova.{isAndroid ? '' : ' Si Windows le demande, autorise Nova sur le réseau privé.'} ({pairing?.address})</p>}
         {result && <p className="success">{result}</p>}
         {error && <p className="error">{error}</p>}
       </div>
@@ -325,7 +311,7 @@ export function JamPage() {
       {state.role === 'none' && (
         <>
           <p className="muted">Écoutez ensemble : lance un Jam, tes amis sur le même réseau (Wi-Fi) le voient dans Nova, ajoutent leurs titres à la file
-            et peuvent écouter en même temps. Le Jam de l’iPhone utilise une technologie d’Apple : il ne se mélange pas avec celui de Windows.</p>
+            et peuvent écouter en même temps. Le Jam de l’iPhone utilise une technologie d’Apple : il ne se mélange pas avec celui du PC et d’Android.</p>
           <label className="field">Ton prénom
             <input value={settings.jamName} placeholder="Visible par les autres" onChange={(e) => updateSettings({ jamName: e.target.value })} />
           </label>
@@ -338,7 +324,7 @@ export function JamPage() {
               <button className="button secondary" disabled={state.connecting} onClick={() => void joinJam(nearby)}>Rejoindre</button>
             </div>
           ))}
-          <p className="muted small">La première fois, Windows demande d’autoriser Nova sur le réseau privé : accepte pour que tes amis te trouvent.</p>
+          {!isAndroid && <p className="muted small">La première fois, Windows demande d’autoriser Nova sur le réseau privé : accepte pour que tes amis te trouvent.</p>}
         </>
       )}
       {state.role === 'host' && (
@@ -460,7 +446,7 @@ export function SettingsPage() {
         </label>
         <label className="field">Apparence
           <select value={settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as typeof settings.theme })}>
-            <option value="system">Comme Windows</option><option value="dark">Sombre</option><option value="light">Clair</option>
+            <option value="system">{isAndroid ? 'Comme le système' : 'Comme Windows'}</option><option value="dark">Sombre</option><option value="light">Clair</option>
           </select>
         </label>
       </section>
@@ -472,7 +458,7 @@ export function SettingsPage() {
       </section>
       <section>
         <h3>À propos</h3>
-        <p className="muted">Nova pour Windows 0.4 · catalogue YouTube Music · paroles LRCLIB · concerts Ticketmaster.</p>
+        <p className="muted">Nova pour {isAndroid ? 'Android' : 'Windows'} 0.4 · catalogue YouTube Music · paroles LRCLIB · concerts Ticketmaster.</p>
       </section>
     </div>
   );

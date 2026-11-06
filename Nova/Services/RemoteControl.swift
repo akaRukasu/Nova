@@ -62,7 +62,7 @@ final class RemoteControl {
         isConnecting = true
         defer { isConnecting = false }
         guard let found = await PCSync.shared.locateComputer() else {
-            if !quiet { errorMessage = "\(deviceName) est introuvable. Nova doit être ouvert sur le PC, connecté au même Wi-Fi ou au partage de connexion de cet iPhone. En partage de connexion, Windows bloque souvent l'iPhone : sur le PC, Importer → Depuis l'iPhone → « Autoriser Nova sur tous les réseaux »." }
+            if !quiet { errorMessage = "\(deviceName) est introuvable. Nova doit y être ouvert, connecté au même Wi-Fi ou au partage de connexion de cet iPhone. Sur un PC en partage de connexion, Windows bloque souvent l'iPhone : sur le PC, Importer → Depuis l'iPhone → « Autoriser Nova sur tous les réseaux »." }
             return
         }
         base = found.base

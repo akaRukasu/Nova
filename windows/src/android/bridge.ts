@@ -21,6 +21,17 @@ interface NovaPlayer {
   openPage(options: { url: string }): Promise<void>;
   openExternal(options: { url: string }): Promise<void>;
   isTV(): Promise<{ tv: boolean }>;
+  syncInfo(): Promise<{ pcId: string; token: string; port: number; address: string; name: string; paired: boolean; phoneName?: string; lastSync?: number }>;
+  unpair(): Promise<void>;
+  setRemoteState(options: { state: string }): Promise<void>;
+  jamHost(options: { name: string }): Promise<{ port: number; addresses: string[] }>;
+  jamBroadcast(options: { message: string }): Promise<void>;
+  jamBrowse(): Promise<void>;
+  jamStopBrowsing(): Promise<void>;
+  jamJoin(options: { address: string; port: number; name: string }): Promise<void>;
+  jamToHost(options: { message: string }): Promise<void>;
+  jamStop(): Promise<void>;
+  addListener(event: 'relay', listener: (data: { channel: string; args: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'event', listener: (data: { deck: number; payload: unknown }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'media', listener: (data: { action: string }) => void): Promise<PluginListenerHandle>;
 }
@@ -193,7 +204,24 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
     const parsed = JSON.parse(file.text);
     return parsed.library ? { ...parsed.library, shared: parsed.shared } : parsed;
   },
-  'phone:pairing': () => { throw new Error('La synchronisation avec l’iPhone se fait sur le PC.'); },
+  // iPhone associé (QR code) : il envoie sa bibliothèque et pilote la lecture, comme avec le PC.
+  'phone:pairing': async () => {
+    const info = await native.syncInfo();
+    const query = new URLSearchParams({ u: `http://${info.address}:${info.port}/sync`, t: info.token, n: info.name, id: info.pcId });
+    return { link: `nova://sync?${query.toString()}`, address: `${info.address}:${info.port}`, paired: info.paired, phoneName: info.phoneName, lastSync: info.lastSync };
+  },
+  'phone:unpair': () => native.unpair(),
+  'phone:network': () => ({ publicNetworks: [], allowed: true }),
+  'phone:allowNetwork': () => true,
+
+  // Jam sur le réseau local (même protocole que sur PC).
+  'jam:host': (name) => native.jamHost({ name }),
+  'jam:broadcast': (message) => native.jamBroadcast({ message: JSON.stringify(message) }),
+  'jam:browse': () => native.jamBrowse(),
+  'jam:stopBrowsing': () => native.jamStopBrowsing(),
+  'jam:join': (address, port, name) => native.jamJoin({ address, port, name }),
+  'jam:toHost': (message) => native.jamToHost({ message: JSON.stringify(message) }),
+  'jam:stop': () => native.jamStop(),
 
   'concerts:search': (options) => searchConcerts(options),
   'shell:open': (url) => native.openExternal({ url }),
@@ -205,6 +233,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
 
   // État de lecture publié chaque seconde : notification multimédia et écran verrouillé d'Android.
   'remote:state': (state) => {
+    void native.setRemoteState({ state: JSON.stringify(state) }).catch(() => undefined);
     const key = `${state?.track?.id}|${state?.playing}`;
     if (!state?.track || key === lastMedia) return;
     lastMedia = key;
@@ -212,8 +241,8 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   },
 };
 
-const unsupported = (channel: string) => () => {
-  throw new Error(channel.startsWith('jam:') ? 'Le Jam n’est pas encore disponible sur Android.' : 'Indisponible sur Android.');
+const unsupported = (_channel: string) => () => {
+  throw new Error('Indisponible sur Android.');
 };
 
 window.nova = {
@@ -231,6 +260,10 @@ localStorage.setItem('engineMode', 'web');
 
 void native.addListener('event', ({ deck, payload }) => emit('webplayer:event', deck, payload)).catch(() => undefined);
 native.addListener('media', ({ action }) => emit('media:key', action === 'play' || action === 'pause' ? 'toggle' : action)).catch(() => undefined);
+// Messages du réseau local (iPhone, Jam) : mêmes canaux que sur PC.
+native.addListener('relay', ({ channel, args }) => {
+  try { emit(channel, ...JSON.parse(args)); } catch { /* message illisible */ }
+}).catch(() => undefined);
 
 export async function prepare() {
   if (!Capacitor.isNativePlatform()) return;
