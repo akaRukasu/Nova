@@ -62,6 +62,8 @@ export const api = {
 
   phonePairing: () => call<{ link: string; address: string; paired: boolean; phoneName?: string; lastSync?: number }>('phone:pairing'),
   unpairPhone: () => call<void>('phone:unpair'),
+  phoneNetwork: () => call<{ publicNetworks: string[]; allowed: boolean }>('phone:network'),
+  allowPhoneNetwork: () => call<boolean>('phone:allowNetwork'),
   openPhoneExport: () => call<unknown>('phone:openFile'),
 
   concerts: (options: { artist?: string; city?: string; key: string }) => call<Concert[]>('concerts:search', options),

@@ -116,6 +116,18 @@ export function PhoneTransfer() {
   const [qr, setQr] = useState<string>();
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<string>();
+  const [network, setNetwork] = useState<{ publicNetworks: string[]; allowed: boolean }>();
+  const [allowing, setAllowing] = useState(false);
+  useEffect(() => { if (!isAndroid) void api.phoneNetwork().then(setNetwork).catch(() => undefined); }, []);
+
+  const allowNetwork = async () => {
+    setAllowing(true);
+    const ok = await api.allowPhoneNetwork().catch(() => false);
+    setAllowing(false);
+    setNetwork(await api.phoneNetwork().catch(() => network));
+    if (ok) setResult('Nova est autorisé sur tous les réseaux : l’iPhone peut le joindre, même en partage de connexion.');
+    else setError('Autorisation non accordée (Windows demande la confirmation de l’administrateur).');
+  };
 
   const refresh = async () => {
     const found = await api.phonePairing();
@@ -181,6 +193,16 @@ export function PhoneTransfer() {
           <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
           {paired && <button className="button secondary danger" onClick={() => void api.unpairPhone().then(refresh).then(() => setQr(undefined))}>Dissocier</button>}
         </div>
+        {network && !network.allowed && (network.publicNetworks.length > 0 ? (
+          <div className="network-warning">
+            <p><b>Windows bloque l’iPhone sur ce réseau</b> (« {network.publicNetworks.join(', ')} », classé public, comme souvent un partage de connexion) :
+              il ne peut ni envoyer ses titres ni piloter la lecture.</p>
+            <button className="button" disabled={allowing} onClick={() => void allowNetwork()}>{allowing ? 'Confirme dans la fenêtre de Windows…' : 'Autoriser Nova sur tous les réseaux'}</button>
+          </div>
+        ) : (
+          <p className="muted small">L’iPhone ne trouve pas ce PC (partage de connexion, autre réseau) ?{' '}
+            <button className="link" disabled={allowing} onClick={() => void allowNetwork()}>Autoriser Nova sur tous les réseaux</button></p>
+        ))}
         {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme dans Nova. Si Windows le demande, autorise Nova sur le réseau privé. ({pairing?.address})</p>}
         {result && <p className="success">{result}</p>}
         {error && <p className="error">{error}</p>}

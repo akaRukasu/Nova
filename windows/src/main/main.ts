@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
 import { defaultSettings } from '../shared/types.js';
 import { searchConcerts } from './concerts.js';
+import { allowEverywhere, networkStatus } from './firewall.js';
 import * as importer from './importer.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
@@ -423,6 +424,8 @@ app.whenReady().then(async () => {
   }).catch(() => undefined);
   handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
   handle('phone:unpair', () => unpair());
+  handle('phone:network', () => networkStatus());
+  handle('phone:allowNetwork', () => allowEverywhere());
   // Télécommande depuis l'iPhone : l'interface publie son état, reçoit les commandes.
   handle('remote:state', (state: unknown) => setRemoteState(state));
   setRemoteHandler((command) => sendToUI('remote:command', command));

@@ -4,6 +4,7 @@ import * as yt from '../dist/main/yt.js';
 import { lyrics } from '../dist/main/lyrics.js';
 import { match } from '../dist/main/matcher.js';
 import { fromLink } from '../dist/main/importer.js';
+import { networkStatus } from '../dist/main/firewall.js';
 
 let failures = 0;
 async function step(title, body) {
@@ -113,6 +114,11 @@ await step('Correspondance difficile', async () => {
     const found = await match(wanted);
     console.log(`  ${found ? '✓' : '✗'} ${wanted.artist} — ${wanted.title}${found ? `  →  ${found.artist} — ${found.title}` : ''}`);
   }
+});
+
+if (process.platform === 'win32') await step('Pare-feu de Windows (réseaux publics, règle de Nova)', async () => {
+  const status = await networkStatus();
+  console.log(`  réseaux publics : ${status.publicNetworks.join(', ') || 'aucun'} · règle de Nova : ${status.allowed ? 'oui' : 'non'}`);
 });
 
 console.log(`\nTerminé : ${failures} étape(s) en échec.`);

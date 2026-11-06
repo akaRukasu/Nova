@@ -1,6 +1,6 @@
 // Télécommande : l'iPhone associé pilote la lecture de ce PC (comme Spotify Connect).
 import type { Track } from '../../shared/types';
-import { on } from './api';
+import { api, on } from './api';
 import { library, notify } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
 
@@ -64,3 +64,17 @@ on('remote:command', (command: any) => {
   }
   publish();
 });
+
+// Réseau « public » (partage de connexion…) où Windows bloque l'iPhone associé : on le signale une fois par réseau.
+const warnedNetworks = new Set<string>();
+async function checkNetwork() {
+  if (window.nova.platform === 'android') return;
+  const [network, pairing] = await Promise.all([api.phoneNetwork(), api.phonePairing()]).catch(() => [undefined, undefined]);
+  if (!network || !pairing?.paired || network.allowed) return;
+  const blocked = network.publicNetworks.filter((name) => !warnedNetworks.has(name));
+  if (!blocked.length) return;
+  blocked.forEach((name) => warnedNetworks.add(name));
+  notify(`Windows bloque l’iPhone sur « ${blocked[0]} » : Importer → Depuis l’iPhone → Autoriser Nova sur tous les réseaux`);
+}
+setTimeout(() => void checkNetwork(), 8000);
+setInterval(() => void checkNetwork(), 60_000);
