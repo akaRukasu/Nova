@@ -19,26 +19,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native-preview
+          cache-on-failure: true
       - run: cargo build --release --manifest-path native-preview/Cargo.toml
       - name: Open the GPUI window
         shell: pwsh
         run: |
+          $marker = Join-Path $env:RUNNER_TEMP "novacord-native-render.txt"
+          $panicLog = [IO.Path]::ChangeExtension($marker, "panic")
+          $env:NOVACORD_NATIVE_SMOKE = $marker
           $process = Start-Process native-preview/target/release/novacord-native-preview.exe -PassThru
           try {
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 500
-              $process.Refresh()
+              if (Test-Path $panicLog) { throw (Get-Content $panicLog -Raw) }
               if ($process.HasExited) { throw "GPUI exited with code $($process.ExitCode)" }
-              if ($process.MainWindowHandle -ne 0) {
-                Write-Host "GPUI window opened."
+              if (Test-Path $marker) {
+                Get-Content $marker
                 break
               }
             }
-            if ($process.MainWindowHandle -eq 0) { throw "GPUI window did not open" }
+            if (!(Test-Path $marker)) { throw "GPUI did not render" }
           } finally {
             if (!$process.HasExited) { Stop-Process -Id $process.Id }
           }
       - uses: actions/upload-artifact@v4
+        if: success() || failure()
         with:
           name: NovaCord-Native-Preview-Windows
           path: |

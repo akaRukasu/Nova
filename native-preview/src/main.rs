@@ -26,10 +26,14 @@ impl Catalog {
 
 struct Preview {
     catalog: Catalog,
+    smoke_marker: Option<std::path::PathBuf>,
 }
 
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(path) = self.smoke_marker.take() {
+            std::fs::write(path, "GPUI reached the first render").expect("write smoke marker");
+        }
         let active = self.catalog;
         let tabs = div().flex().gap_2().children(
             [Catalog::Members, Catalog::Emoji, Catalog::Sounds]
@@ -88,10 +92,18 @@ impl Render for Preview {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    let smoke_marker = std::env::var_os("NOVACORD_NATIVE_SMOKE").map(std::path::PathBuf::from);
+    if let Some(path) = &smoke_marker {
+        let panic_log = path.with_extension("panic");
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = std::fs::write(&panic_log, info.to_string());
+        }));
+    }
+    Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(900.0), px(680.0)), cx);
         cx.open_window(
             WindowOptions {
+                show: true,
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
                     title: Some("NovaCord Native · aperçu".into()),
@@ -99,7 +111,7 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| Preview { catalog: Catalog::Members }),
+            move |_, cx| cx.new(|_| Preview { catalog: Catalog::Members, smoke_marker }),
         )
         .expect("Impossible d’ouvrir la fenêtre GPUI");
         cx.activate(true);
