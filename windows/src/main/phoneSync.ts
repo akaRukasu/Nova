@@ -33,6 +33,10 @@ export function setRemoteState(state: unknown) {
   remoteState = state;
 }
 
+export function getRemoteState() {
+  return remoteState;
+}
+
 export function setRemoteHandler(handler: (command: unknown) => void) {
   onCommand = handler;
 }

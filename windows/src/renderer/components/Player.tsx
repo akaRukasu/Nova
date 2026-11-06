@@ -1,7 +1,7 @@
 // Barre de lecture (en bas), lecteur plein écran (pochette, paroles synchronisées, file d'attente).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Lyrics, Track } from '../../shared/types';
-import { api } from '../lib/api';
+import { api, isAndroid } from '../lib/api';
 import { jam } from '../lib/jam';
 import { isLiked, library, toggleLike } from '../lib/library';
 import { currentTrack, player, playerState, timeState } from '../lib/player';
@@ -109,6 +109,7 @@ export function PlayerBar() {
         <button className={`icon-button ${state.sleepAt ? 'accent' : ''}`} onClick={(e) => showMenu(e, sleepMenu())} aria-label="Minuterie"><Icon name="moon" size={18} /></button>
         <button className="icon-button" onClick={() => nowPlayingOpen.set('lyrics')} aria-label="Paroles"><Icon name="lyrics" size={19} /></button>
         <button className="icon-button" onClick={() => nowPlayingOpen.set('queue')} aria-label="File d’attente"><Icon name="list" size={19} /></button>
+        {!isAndroid && <button className="icon-button" onClick={() => void window.nova.invoke('mini:open')} aria-label="Mini lecteur" title="Mini lecteur"><Icon name="mini" size={18} /></button>}
         <Volume />
       </div>
     </footer>

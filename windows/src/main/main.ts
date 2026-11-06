@@ -1,5 +1,5 @@
 // Nova pour Windows : processus principal.
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -11,7 +11,7 @@ import { allowEverywhere, networkStatus } from './firewall.js';
 import * as importer from './importer.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
-import { currentPairing, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
+import { currentPairing, getRemoteState, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import './evalNode.js';
@@ -192,6 +192,7 @@ async function createWindow() {
       sandbox: true,
       // La musique continue quand la fenêtre est réduite.
       backgroundThrottling: false,
+      spellcheck: false,
     },
   });
   nativeTheme.on('updated', () => {
@@ -209,6 +210,44 @@ async function createWindow() {
   });
   watchStartup(window);
   await window.loadFile(path.join(here, '../renderer/index.html'));
+}
+
+// MARK: - Mini lecteur
+
+let mini: BrowserWindow | null = null;
+
+function openMini() {
+  if (!window || window.isDestroyed()) return;
+  if (mini && !mini.isDestroyed()) return mini.show();
+  const dark = nativeTheme.shouldUseDarkColors;
+  mini = new BrowserWindow({
+    width: 380,
+    height: 104,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    title: 'Nova',
+    backgroundColor: dark ? '#1c1c1e' : '#f5f5f7',
+    icon: path.join(here, '../../build/icon.png'),
+    webPreferences: { preload: path.join(here, '../preload/preload.cjs'), contextIsolation: true, sandbox: true, spellcheck: false },
+  });
+  mini.setAlwaysOnTop(true, 'floating');
+  // En bas à droite de l'écran où se trouvait Nova.
+  const area = screen.getDisplayMatching(window.getBounds()).workArea;
+  mini.setPosition(area.x + area.width - 400, area.y + area.height - 124);
+  const current = mini;
+  current.webContents.on('did-finish-load', async () => {
+    current.webContents.send('mini:state', getRemoteState());
+    current.webContents.send('mini:theme', (await loadLibrary()).settings.theme);
+  });
+  current.on('closed', () => {
+    mini = null;
+    if (window && !window.isDestroyed()) window.show();
+  });
+  void current.loadFile(path.join(here, '../renderer/index.html'), { hash: 'mini' });
+  window.hide();
 }
 
 // MARK: - Démarrage surveillé : si l'interface n'apparaît pas, Nova dit pourquoi au lieu de rester vide.
@@ -427,7 +466,14 @@ app.whenReady().then(async () => {
   handle('phone:network', () => networkStatus());
   handle('phone:allowNetwork', () => allowEverywhere());
   // Télécommande depuis l'iPhone : l'interface publie son état, reçoit les commandes.
-  handle('remote:state', (state: unknown) => setRemoteState(state));
+  handle('remote:state', (state: unknown) => {
+    setRemoteState(state);
+    if (mini && !mini.isDestroyed()) mini.webContents.send('mini:state', state);
+  });
+  // Mini lecteur : petite fenêtre toujours au premier plan ; la lecture continue dans la fenêtre principale (cachée).
+  handle('mini:open', () => openMini());
+  handle('mini:close', () => mini?.close());
+  handle('mini:command', (command: Record<string, unknown>) => sendToUI('remote:command', { ...command, source: 'mini' }));
   setRemoteHandler((command) => sendToUI('remote:command', command));
   handle('phone:openFile', async () => {
     const picked = await dialog.showOpenDialog(window!, {

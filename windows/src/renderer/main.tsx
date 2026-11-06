@@ -1,8 +1,5 @@
 import { Component, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import { loadLibrary } from './lib/library';
-import './lib/remote';
 import './styles.css';
 
 /** Erreur d'affichage : un message lisible et un bouton pour recharger, plutôt qu'une fenêtre vide. */
@@ -25,7 +22,13 @@ class Guard extends Component<{ children: ReactNode }, { error?: Error }> {
   }
 }
 
-const root = createRoot(document.getElementById('root')!);
-void loadLibrary()
-  .catch((error) => console.error('Nova : bibliothèque illisible', error))
-  .finally(() => root.render(<Guard><App /></Guard>));
+const container = document.getElementById('root')!;
+if (location.hash === '#mini') {
+  // Mini lecteur : rien d'autre n'est chargé (pas de second lecteur, pas de bibliothèque).
+  void import('./mini').then(({ renderMini }) => renderMini(container));
+} else {
+  void Promise.all([import('./App'), import('./lib/library'), import('./lib/remote')]).then(async ([{ App }, { loadLibrary }]) => {
+    await loadLibrary().catch((error) => console.error('Nova : bibliothèque illisible', error));
+    createRoot(container).render(<Guard><App /></Guard>);
+  });
+}

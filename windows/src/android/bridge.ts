@@ -31,6 +31,9 @@ interface NovaPlayer {
   jamJoin(options: { address: string; port: number; name: string }): Promise<void>;
   jamToHost(options: { message: string }): Promise<void>;
   jamStop(): Promise<void>;
+  startTicker(options: { interval: number }): Promise<void>;
+  stopTicker(): Promise<void>;
+  addListener(event: 'tick', listener: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'relay', listener: (data: { channel: string; args: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'event', listener: (data: { deck: number; payload: unknown }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'media', listener: (data: { action: string }) => void): Promise<PluginListenerHandle>;
@@ -254,6 +257,34 @@ window.nova = {
   },
 };
 (window.nova as any).platform = 'android';
+
+// Minuteries des transitions rythmées par Android (une page invisible voit ses minuteries ralenties).
+const tickers = new Map<number, { ms: number; fn: () => void; last: number }>();
+let nextTicker = 0;
+let ticking = false;
+if (Capacitor.isNativePlatform()) {
+  native.addListener('tick', () => {
+    const now = performance.now();
+    for (const entry of [...tickers.values()]) {
+      if (now - entry.last >= entry.ms - 4) {
+        entry.last = now;
+        entry.fn();
+      }
+    }
+  }).catch(() => undefined);
+  (window as any).novaTicker = {
+    every(ms: number, fn: () => void) {
+      const id = ++nextTicker;
+      tickers.set(id, { ms, fn, last: performance.now() });
+      if (!ticking) { ticking = true; void native.startTicker({ interval: 20 }).catch(() => undefined); }
+      return id;
+    },
+    clear(id: number) {
+      tickers.delete(id);
+      if (!tickers.size && ticking) { ticking = false; void native.stopTicker().catch(() => undefined); }
+    },
+  };
+}
 
 // Sur Android, la lecture passe toujours par le lecteur officiel de YouTube Music.
 localStorage.setItem('engineMode', 'web');

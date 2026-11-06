@@ -8,6 +8,11 @@ import path from 'node:path';
 type Send = (channel: string, ...args: unknown[]) => void;
 
 const decks = new Map<number, BrowserWindow>();
+/** Lecteurs arrêtés : fermés au bout de quelques secondes pour libérer la mémoire (une page YouTube Music pèse lourd). */
+const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
+// Fenêtre cachée petite : YouTube envoie alors la vidéo des clips en basse définition (le son n'est pas touché).
+const HIDDEN_SIZE = { width: 426, height: 240 };
+const SHOWN_SIZE = { width: 1100, height: 760 };
 let send: Send = () => {};
 let preloadPath = '';
 const partition = 'persist:google';
@@ -32,8 +37,7 @@ function create(deck: number): BrowserWindow {
   if (existing && !existing.isDestroyed()) return existing;
   const window = new BrowserWindow({
     show: false,
-    width: 1100,
-    height: 760,
+    ...HIDDEN_SIZE,
     title: 'YouTube Music',
     autoHideMenuBar: true,
     webPreferences: {
@@ -42,6 +46,7 @@ function create(deck: number): BrowserWindow {
       contextIsolation: true,
       backgroundThrottling: false,
       autoplayPolicy: 'no-user-gesture-required',
+      spellcheck: false,
     },
   });
   // Navigateur ordinaire (sans la mention « Electron »), comme Chrome.
@@ -50,10 +55,10 @@ function create(deck: number): BrowserWindow {
   window.webContents.on('did-navigate', (_event, url) => {
     if (/consent\.(youtube|google)\.com/.test(url)) {
       window.setTitle('YouTube : choisis tes préférences de cookies, puis la musique démarre');
-      window.show();
+      reveal(window);
       send('webplayer:consent', true);
     } else if (url.startsWith('https://music.youtube.com') && window.isVisible()) {
-      window.hide();
+      conceal(window);
       send('webplayer:consent', false);
     }
   });
@@ -61,7 +66,7 @@ function create(deck: number): BrowserWindow {
     // Fermer la fenêtre de consentement la cache seulement : le lecteur reste disponible.
     if (!quitting) {
       event.preventDefault();
-      window.hide();
+      conceal(window);
     }
   });
   decks.set(deck, window);
@@ -75,7 +80,20 @@ export function destroyWebPlayers() {
   decks.clear();
 }
 
+function reveal(window: BrowserWindow) {
+  window.setSize(SHOWN_SIZE.width, SHOWN_SIZE.height);
+  window.center();
+  window.show();
+  window.focus();
+}
+
+function conceal(window: BrowserWindow) {
+  window.hide();
+  window.setSize(HIDDEN_SIZE.width, HIDDEN_SIZE.height);
+}
+
 export async function webLoad(deck: number, videoId: string, startAt: number, volume: number) {
+  clearTimeout(idleTimers.get(deck));
   const window = create(deck);
   const time = startAt > 1 ? `&t=${Math.floor(startAt)}` : '';
   window.webContents.send('ytm:command', { type: 'expect', videoId, volume });
@@ -88,13 +106,22 @@ export async function webLoad(deck: number, videoId: string, startAt: number, vo
 export function webCommand(deck: number, command: { type: string; value?: number }) {
   const window = decks.get(deck);
   if (window && !window.isDestroyed()) window.webContents.send('ytm:command', command);
+  // Lecteur arrêté (fin d'une transition, titre changé) : fermé s'il ne resert pas dans les 5 s.
+  if (command.type === 'play') clearTimeout(idleTimers.get(deck));
+  if (command.type === 'stop') {
+    clearTimeout(idleTimers.get(deck));
+    idleTimers.set(deck, setTimeout(() => {
+      const idle = decks.get(deck);
+      if (idle && !idle.isDestroyed() && !idle.isVisible()) idle.destroy();
+      decks.delete(deck);
+    }, 5000));
+  }
 }
 
 /** Fenêtre du lecteur affichée (pour vérifier une publicité, un message de YouTube…). */
 export function showWebPlayer(deck: number) {
   const window = decks.get(deck);
-  window?.show();
-  window?.focus();
+  if (window && !window.isDestroyed()) reveal(window);
 }
 
 export async function clearWebPlayerData() {

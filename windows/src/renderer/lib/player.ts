@@ -6,6 +6,7 @@ import {
   type MixPlan, type TrackAnalysis,
 } from './analysis';
 import { api, isAndroid, on } from './api';
+import { after, cancel, every, type Timer } from './timers';
 import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
 import { Store } from './store';
 import { WebDeck } from './webDeck';
@@ -62,7 +63,7 @@ class Engine {
   private decks: Deck[] = [];
   private active = 0;
   private unshuffled: Track[] | null = null;
-  private fadeTimer: ReturnType<typeof setInterval> | undefined;
+  private fadeTimer: Timer;
   private endHandled = false;
   private recoveries = 0;
   private recoveryFor = '';
@@ -79,8 +80,8 @@ class Engine {
   private planQuality = 0;
   private planCheckedAt = 0;
   /** Transition préparée : titre suivant chargé, calé sur son premier temps, départ programmé. */
-  private pending: { plan: MixPlan; deck: Deck; timer?: ReturnType<typeof setTimeout> } | null = null;
-  private tempoTimer: ReturnType<typeof setInterval> | undefined;
+  private pending: { plan: MixPlan; deck: Deck; timer?: Timer } | null = null;
+  private tempoTimer: Timer;
   private analyzing = new Set<string>();
   private analysisChain: Promise<unknown> = Promise.resolve();
 
@@ -317,7 +318,7 @@ class Engine {
     const track = currentTrack();
     if (!track) return;
     this.finishFade();
-    clearInterval(this.tempoTimer);
+    cancel(this.tempoTimer);
     this.endHandled = false;
     this.stalledSince = 0;
     const known = track.duration ?? durations.get(track.id);
@@ -463,8 +464,8 @@ class Engine {
     const volume = playerState.get().volume;
     const smooth = (x: number) => { const v = Math.min(Math.max(x, 0), 1); return v * v * (3 - 2 * v); };
     const startedAt = Date.now();
-    clearInterval(this.fadeTimer);
-    this.fadeTimer = setInterval(() => {
+    cancel(this.fadeTimer);
+    this.fadeTimer = every(50, () => {
       const t = Math.min((Date.now() - startedAt) / (seconds * 1000), 1);
       // AutoMix (DJ) : le suivant monte pendant que l'autre tient, puis celui-ci s'efface.
       const [inVolume, outVolume] = automix
@@ -473,7 +474,7 @@ class Engine {
       incoming.volume = volume * incomingGain * inVolume;
       outgoing.volume = volume * outgoingGain * outVolume;
       if (t >= 1) this.finishFade();
-    }, 50);
+    });
     this.fadingOut = outgoing;
     this.updateMediaSession();
   }
@@ -481,7 +482,7 @@ class Engine {
   private fadingOut: Deck | null = null;
 
   private finishFade() {
-    clearInterval(this.fadeTimer);
+    cancel(this.fadeTimer);
     this.fadeTimer = undefined;
     if (this.fadingOut) {
       this.fadingOut.pause();
@@ -603,7 +604,7 @@ class Engine {
     const schedule = () => {
       if (this.pending !== pending) return;
       const delay = Math.max(0, (plan.start - outgoing.currentTime) / (outgoing.playbackRate || 1));
-      pending.timer = setTimeout(() => this.commitMix(pending), delay * 1000);
+      pending.timer = after(delay * 1000, () => this.commitMix(pending));
     };
     if (incoming instanceof WebDeck) {
       // Lecteur de YouTube Music : page chargée à l'avance, puis arrêtée sur le premier temps.
@@ -622,7 +623,7 @@ class Engine {
     const pending = this.pending;
     if (!pending) return;
     this.pending = null;
-    clearTimeout(pending.timer);
+    cancel(pending.timer);
     pending.deck.pause();
     pending.deck.removeAttribute('src');
   }
@@ -658,8 +659,8 @@ class Engine {
     this.gain = plan.incomingGain;
     const startedAt = performance.now();
     let lastJump = 0;
-    clearInterval(this.fadeTimer);
-    this.fadeTimer = setInterval(() => {
+    cancel(this.fadeTimer);
+    this.fadeTimer = every(50, () => {
       const elapsed = performance.now() - startedAt;
       const t = Math.min(elapsed / (plan.duration * 1000), 1);
       const volume = playerState.get().volume;
@@ -689,18 +690,18 @@ class Engine {
         this.finishFade();
         if (incoming.playbackRate !== 1) this.restoreTempo(incoming, incoming.playbackRate);
       }
-    }, 50);
+    });
   }
 
   /** Retour progressif au tempo d'origine (4 s, hauteur inchangée). */
   private restoreTempo(deck: Deck, from: number) {
-    clearInterval(this.tempoTimer);
+    cancel(this.tempoTimer);
     let step = 0;
-    this.tempoTimer = setInterval(() => {
+    this.tempoTimer = every(100, () => {
       step++;
-      if (deck !== this.deck || step > 40) { clearInterval(this.tempoTimer); return; }
+      if (deck !== this.deck || step > 40) { cancel(this.tempoTimer); return; }
       if (!deck.paused) deck.playbackRate = from + ((1 - from) * step) / 40;
-    }, 100);
+    });
   }
 
   // MARK: Reprise automatique

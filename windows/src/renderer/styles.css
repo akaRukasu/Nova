@@ -635,3 +635,24 @@ html.android.tv main { padding-top: 16px; }
 .network-warning { background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; margin: 12px 0; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .network-warning p { margin: 0; }
 button.link { color: var(--accent); font-weight: 600; }
+
+/* MARK: Mini lecteur (fenêtre compacte, toujours au premier plan) */
+
+html.mini-window, html.mini-window body { background: var(--bg); }
+.mini {
+  position: relative; height: 100vh; display: flex; align-items: center; gap: 12px; padding: 0 12px 4px;
+  -webkit-app-region: drag; overflow: hidden;
+}
+.mini button, .mini-progress { -webkit-app-region: no-drag; }
+.mini-art { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; flex-shrink: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); background: var(--hover); }
+.mini-art.placeholder { display: grid; place-items: center; color: var(--faint); }
+.mini-text { flex: 1; min-width: 0; }
+.mini-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.mini-controls { display: flex; align-items: center; gap: 2px; }
+.mini-controls button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--text); }
+.mini-controls button:hover { background: var(--hover); }
+.mini-controls .mini-play { width: 38px; height: 38px; }
+.mini-controls .mini-expand { color: var(--muted); margin-left: 4px; }
+.mini-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--line); cursor: pointer; }
+.mini-progress div { height: 100%; background: var(--accent); }

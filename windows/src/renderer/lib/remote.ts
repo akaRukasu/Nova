@@ -40,8 +40,10 @@ setInterval(publish, 1000);
 playerState.subscribe(() => publish());
 
 on('remote:command', (command: any) => {
-  if (Date.now() - lastRemote > 60_000) notify('Ton iPhone contrôle la lecture');
-  lastRemote = Date.now();
+  if (command.source !== 'mini') {
+    if (Date.now() - lastRemote > 60_000) notify('Ton iPhone contrôle la lecture');
+    lastRemote = Date.now();
+  }
   const tracks = (command.tracks ?? []).map(fromPhone).filter(Boolean) as Track[];
   switch (command.action) {
     case 'play': player.resume(); break;

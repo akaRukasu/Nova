@@ -9,6 +9,8 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.ViewGroup;
@@ -58,6 +60,36 @@ public class NovaPlayerPlugin extends Plugin {
     static NovaPlayerPlugin instance;
     /** Réseau local : synchronisation et télécommande depuis l'iPhone, Jam. */
     private NovaLink link;
+
+    // Rythme des transitions (AutoMix) : Android ne ralentit pas ce minuteur, même écran verrouillé.
+    private final Handler tickHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean ticking = false;
+    private int tickInterval = 25;
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            if (!ticking) return;
+            notifyListeners("tick", new JSObject());
+            tickHandler.postDelayed(this, tickInterval);
+        }
+    };
+
+    @PluginMethod
+    public void startTicker(PluginCall call) {
+        tickInterval = Math.max(10, call.getInt("interval", 25));
+        if (!ticking) {
+            ticking = true;
+            tickHandler.post(tick);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopTicker(PluginCall call) {
+        ticking = false;
+        tickHandler.removeCallbacks(tick);
+        call.resolve();
+    }
 
     /** Bouton Retour : ferme la fenêtre YouTube ouverte (connexion, publicité, page), si elle l'est. */
     boolean dismissOverlay() {
