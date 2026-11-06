@@ -422,7 +422,13 @@ export function SettingsPage() {
           <select value={settings.transition} onChange={(e) => updateSettings({ transition: e.target.value as typeof settings.transition })}>
             <option value="automix">AutoMix (DJ)</option><option value="crossfade">Fondu enchaîné</option><option value="off">Désactivées</option>
           </select>
+          {settings.transition === 'automix' && (
+            <span className="muted small">Nova analyse chaque titre (tempo, temps, intro, fin) : le suivant est calé sur le rythme de celui qui se
+              termine, part sur un temps, et les basses s’échangent comme chez un DJ. Avec le lecteur officiel, un titre est analysé pendant
+              sa première écoute ; les transitions deviennent calées dès qu’il revient.</span>
+          )}
         </label>
+        <label className="toggle-row"><input type="checkbox" checked={settings.normalizeVolume !== false} onChange={(e) => updateSettings({ normalizeVolume: e.target.checked })} /> Égaliseur de volume (titres très forts baissés au niveau des autres)</label>
         {settings.transition === 'crossfade' && (
           <label className="field">Durée du fondu : {settings.crossfadeSeconds} s
             <input type="range" min={1} max={12} value={settings.crossfadeSeconds} onChange={(e) => updateSettings({ crossfadeSeconds: Number(e.target.value) })} />

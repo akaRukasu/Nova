@@ -1,6 +1,10 @@
 // Lecteur : file d'attente, aléatoire, répétition, AutoMix / fondu enchaîné (deux lecteurs audio),
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
+import {
+  analyzeMeasures, analyzeSamples, bassSwap, gainFor, mixVolumes, planMix, saveAnalysis, savedAnalysis,
+  type MixPlan, type TrackAnalysis,
+} from './analysis';
 import { api, isAndroid, on } from './api';
 import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
 import { Store } from './store';
@@ -43,6 +47,7 @@ export const currentTrack = () => {
 };
 
 const set = (change: Partial<PlayerState>) => playerState.set((s) => ({ ...s, ...change }));
+const normalize = () => library.get().settings.normalizeVolume !== false;
 
 /** Durées réelles connues (les flux annoncent parfois une durée fausse). */
 const durations = new Map<string, number>(Object.entries(JSON.parse(localStorage.getItem('durations') ?? '{}')));
@@ -66,6 +71,18 @@ class Engine {
   private sleepTimer: ReturnType<typeof setTimeout> | undefined;
   /** Jam : un invité qui écoute aussi suit l'hôte, sans transitions ni radio. */
   followingJam = false;
+  /** Égaliseur de volume du titre en cours (1 = inchangé). */
+  private gain = 1;
+  /** Mesures du son reçues du lecteur de YouTube Music, par titre (AutoMix). */
+  private live = new Map<string, { rms: Float32Array; flux: Float32Array; seen: Uint8Array; frameRate: number; count: number; duration: number }>();
+  private plan: MixPlan | null = null;
+  private planQuality = 0;
+  private planCheckedAt = 0;
+  /** Transition préparée : titre suivant chargé, calé sur son premier temps, départ programmé. */
+  private pending: { plan: MixPlan; deck: Deck; timer?: ReturnType<typeof setTimeout> } | null = null;
+  private tempoTimer: ReturnType<typeof setInterval> | undefined;
+  private analyzing = new Set<string>();
+  private analysisChain: Promise<unknown> = Promise.resolve();
 
   constructor() {
     this.createDecks(playerState.get().mode);
@@ -103,6 +120,7 @@ class Engine {
         if (track && !track.duration && !durations.get(track.id) && Number.isFinite(deck.duration)) setTime({ duration: deck.duration });
       });
       deck.addEventListener('adchange', () => number === this.active && set({ ad: (deck as WebDeck).ad }));
+      deck.addEventListener('measures', (event) => this.collect((event as CustomEvent).detail));
     });
   }
 
@@ -234,7 +252,7 @@ class Engine {
   setVolume(volume: number) {
     localStorage.setItem('volume', String(volume));
     set({ volume });
-    if (!this.fadeTimer) this.deck.volume = volume;
+    if (!this.fadeTimer) this.deck.volume = volume * this.gain;
   }
 
   toggleShuffle() {
@@ -299,6 +317,7 @@ class Engine {
     const track = currentTrack();
     if (!track) return;
     this.finishFade();
+    clearInterval(this.tempoTimer);
     this.endHandled = false;
     this.stalledSince = 0;
     const known = track.duration ?? durations.get(track.id);
@@ -307,7 +326,9 @@ class Engine {
     if (!known) void this.fetchDuration(track);
     if (!track.square) void this.resolveArtwork(track);
     const deck = this.deck;
-    deck.volume = playerState.get().volume;
+    this.gain = gainFor(savedAnalysis(track.id), normalize());
+    deck.playbackRate = 1;
+    deck.volume = playerState.get().volume * this.gain;
     deck.src = `nova-stream://audio/${encodeURIComponent(track.id)}`;
     if (startAt > 1) deck.currentTime = startAt;
     if (paused) {
@@ -332,6 +353,11 @@ class Engine {
       const { queue, index } = playerState.get();
       const next = queue[index + 1];
       if (next) void api.prefetch(next.id);
+      // AutoMix (lecture directe) : le titre en cours et le suivant sont analysés en arrière-plan.
+      if (library.get().settings.transition !== 'off') {
+        this.analyzeFile(track.id);
+        if (next) setTimeout(() => this.analyzeFile(next.id), 10_000);
+      }
     }, 15_000);
   }
 
@@ -376,11 +402,25 @@ class Engine {
     const expected = this.expectedDuration();
     if (expected > 0 && Math.abs(timeState.get().duration - expected) > 0.5) setTime({ duration: expected });
     const settings = library.get().settings;
-    const fade = settings.transition === 'off' ? 0 : settings.transition === 'automix' ? 10 : settings.crossfadeSeconds;
     const { queue, index, repeat, playing } = playerState.get();
-    if (fade && playing && !this.fadeTimer && repeat !== 'one' && index + 1 < queue.length && !this.followingJam
-      && expected > fade * 3 && time >= expected - fade && time < expected - 0.5) {
-      return this.beginTransition(fade);
+    const canMix = playing && !this.fadeTimer && !this.pending && repeat !== 'one' && index + 1 < queue.length && !this.followingJam
+      && !(this.deck as WebDeck).ad && expected > 30;
+    // AutoMix : transition préparée d'après l'analyse des deux titres (tempo, temps, fin), calée sur un temps.
+    if (canMix && settings.transition === 'automix') {
+      this.refreshPlan();
+      const plan = this.plan;
+      const lead = this.deck instanceof WebDeck ? 12 : 2.5;
+      if (plan && plan.outgoingId === queue[index].id && plan.incomingId === queue[index + 1].id
+        && time >= plan.start - lead && time < plan.start + plan.duration * 0.5) {
+        return this.prepareMix(plan);
+      }
+    }
+    // Fondu enchaîné : il se termine avec le dernier son entendu (silence de fin ignoré quand le titre est analysé).
+    if (canMix && settings.transition === 'crossfade') {
+      const fade = settings.crossfadeSeconds;
+      const known = savedAnalysis(queue[index].id);
+      const end = known && known.coverage >= 0.95 ? known.audibleEnd : expected;
+      if (end > fade * 3 && time >= end - fade && time < end - 0.5) return this.beginTransition(fade);
     }
     // Flux plus long que le titre (durée annoncée fausse) : on passe au suivant nous-mêmes.
     if (expected > 0 && playing && !this.endHandled && time >= expected - 0.3) this.trackEnded();
@@ -399,6 +439,7 @@ class Engine {
   }
 
   private beginTransition(seconds: number) {
+    this.cancelPending();
     const { queue, index } = playerState.get();
     const nextTrack = queue[index + 1];
     if (!nextTrack) return;
@@ -407,7 +448,11 @@ class Engine {
     this.active = 1 - this.active;
     const incoming = this.deck;
     incoming.volume = 0;
+    incoming.playbackRate = 1;
     incoming.src = `nova-stream://audio/${encodeURIComponent(nextTrack.id)}`;
+    const outgoingGain = this.gain;
+    this.gain = gainFor(savedAnalysis(nextTrack.id), normalize());
+    const incomingGain = this.gain;
     set({ index: index + 1, transitioning: true, loading: true });
     setTime({ time: 0, duration: nextTrack.duration ?? durations.get(nextTrack.id) ?? 0 });
     if (!nextTrack.duration && !durations.get(nextTrack.id)) void this.fetchDuration(nextTrack);
@@ -425,8 +470,8 @@ class Engine {
       const [inVolume, outVolume] = automix
         ? [smooth(t / 0.55), 1 - smooth((t - 0.35) / 0.65)]
         : [Math.sin((t * Math.PI) / 2), Math.cos((t * Math.PI) / 2)];
-      incoming.volume = volume * inVolume;
-      outgoing.volume = volume * outVolume;
+      incoming.volume = volume * incomingGain * inVolume;
+      outgoing.volume = volume * outgoingGain * outVolume;
       if (t >= 1) this.finishFade();
     }, 50);
     this.fadingOut = outgoing;
@@ -444,8 +489,218 @@ class Engine {
       this.fadingOut.load();
       this.fadingOut = null;
     }
-    this.deck.volume = playerState.get().volume;
+    this.cancelPending();
+    if (this.deck instanceof WebDeck) this.deck.setBass(0);
+    this.deck.volume = playerState.get().volume * this.gain;
     if (playerState.get().transitioning) set({ transitioning: false });
+  }
+
+  // MARK: AutoMix calé sur le tempo
+
+  /** Mesures du son envoyées par le lecteur de YouTube Music pendant l'écoute. */
+  private collect(detail: { videoId?: string; expected?: string; frameRate: number; frames: [number, number, number][] }) {
+    const id = detail.videoId || detail.expected;
+    if (!id || !detail.frameRate) return;
+    let entry = this.live.get(id);
+    if (!entry || entry.frameRate !== detail.frameRate) {
+      const track = playerState.get().queue.find((t) => t.id === id);
+      const duration = track?.duration ?? durations.get(id) ?? 0;
+      const size = Math.ceil(((duration || 900) + 5) * detail.frameRate);
+      entry = { rms: new Float32Array(size), flux: new Float32Array(size), seen: new Uint8Array(size), frameRate: detail.frameRate, count: 0, duration };
+      this.live.set(id, entry);
+      if (this.live.size > 4) this.live.delete(this.live.keys().next().value as string);
+    }
+    for (const [time, rms, flux] of detail.frames) {
+      const i = Math.round(time * entry.frameRate);
+      if (i < 0 || i >= entry.rms.length) continue;
+      if (!entry.seen[i]) { entry.seen[i] = 1; entry.count++; }
+      entry.rms[i] = rms;
+      entry.flux[i] = flux;
+    }
+  }
+
+  /** Analyse d'après l'écoute (partielle tant que le titre n'a pas été entendu en entier). */
+  private liveAnalysis(id: string): TrackAnalysis | undefined {
+    const entry = this.live.get(id);
+    if (!entry || entry.count < entry.frameRate * 40) return undefined;
+    const duration = entry.duration || durations.get(id) || entry.rms.length / entry.frameRate - 5;
+    const frames = Math.min(entry.rms.length, Math.ceil(duration * entry.frameRate));
+    const coverage = Math.min(1, entry.count / frames);
+    let last = frames - 1;
+    while (last > 0 && !entry.seen[last]) last--;
+    const end = coverage >= 0.95 ? frames : last + 1;
+    return analyzeMeasures(entry.rms.subarray(0, end), entry.flux.subarray(0, end), entry.frameRate, duration, coverage);
+  }
+
+  /** Lecture directe : le fichier complet est analysé une fois (en arrière-plan, un titre à la fois). */
+  private analyzeFile(id: string) {
+    if (playerState.get().mode !== 'direct' || savedAnalysis(id) || this.analyzing.has(id)) return;
+    this.analyzing.add(id);
+    this.analysisChain = this.analysisChain.then(async () => {
+      try {
+        const response = await fetch(`nova-stream://audio/${encodeURIComponent(id)}`);
+        if (!response.ok) return;
+        const context = new OfflineAudioContext(1, 1, 11025);
+        const buffer = await context.decodeAudioData(await response.arrayBuffer());
+        const mono = new Float32Array(buffer.length);
+        for (let c = 0; c < buffer.numberOfChannels; c++) {
+          const channel = buffer.getChannelData(c);
+          for (let i = 0; i < mono.length; i++) mono[i] += channel[i] / buffer.numberOfChannels;
+        }
+        saveAnalysis(id, analyzeSamples(mono, buffer.sampleRate));
+        this.planCheckedAt = 0;
+      } catch {
+        // Analyse impossible : la transition se fera sans calage.
+      } finally {
+        this.analyzing.delete(id);
+      }
+    });
+  }
+
+  /** Plan de la prochaine transition, revu toutes les 5 s au plus (analyses plus complètes entre-temps). */
+  private refreshPlan() {
+    if (Date.now() - this.planCheckedAt < 5000) return;
+    this.planCheckedAt = Date.now();
+    const { queue, index } = playerState.get();
+    const current = queue[index], next = queue[index + 1];
+    // Titres entendus en entier : leur analyse est gardée pour les prochaines fois.
+    for (const [id, entry] of this.live) {
+      if (id === current?.id) continue;
+      const analysis = this.liveAnalysis(id);
+      if (analysis && analysis.coverage >= 0.9) saveAnalysis(id, analysis);
+      if (entry) this.live.delete(id);
+    }
+    if (!current || !next) { this.plan = null; return; }
+    const expected = this.expectedDuration();
+    const nearEnd = expected - timeState.get().time < 90;
+    const a = savedAnalysis(current.id) ?? (nearEnd ? this.liveAnalysis(current.id) : undefined);
+    const b = savedAnalysis(next.id);
+    const quality = (a ? 2 : 0) + (b ? 1 : 0) + (a && a.coverage >= 0.95 ? 4 : 0);
+    if (this.plan && this.plan.outgoingId === current.id && this.plan.incomingId === next.id && quality <= this.planQuality) return;
+    // Titre inconnu : repères par défaut (pas de calage du tempo, fin d'après la durée).
+    const unknown = (duration: number): TrackAnalysis => ({
+      version: 1, duration, beatClarity: 0, beatNearStart: 0, beatNearEnd: 0, audibleStart: 0, audibleEnd: duration,
+      introEnd: 0, outroStart: duration, loudness: -20, coverage: 0,
+    });
+    if (!expected) return;
+    this.plan = planMix(current.id, a ?? unknown(expected), next.id, b ?? unknown(next.duration ?? durations.get(next.id) ?? 240), normalize());
+    this.planQuality = quality;
+  }
+
+  /** Charge le titre suivant à l'avance (son coupé, sur son premier temps) et programme son départ. */
+  private prepareMix(plan: MixPlan) {
+    const { queue, index } = playerState.get();
+    const next = queue[index + 1];
+    if (!next || next.id !== plan.incomingId) return;
+    const outgoing = this.deck;
+    const incoming = this.decks[1 - this.active];
+    const pending: NonNullable<typeof this.pending> = { plan, deck: incoming };
+    this.pending = pending;
+    incoming.volume = 0;
+    incoming.playbackRate = 1;
+    incoming.src = `nova-stream://audio/${encodeURIComponent(next.id)}`;
+    incoming.currentTime = plan.incomingOffset;
+    const schedule = () => {
+      if (this.pending !== pending) return;
+      const delay = Math.max(0, (plan.start - outgoing.currentTime) / (outgoing.playbackRate || 1));
+      pending.timer = setTimeout(() => this.commitMix(pending), delay * 1000);
+    };
+    if (incoming instanceof WebDeck) {
+      // Lecteur de YouTube Music : page chargée à l'avance, puis arrêtée sur le premier temps.
+      incoming.play().then(() => {
+        if (this.pending !== pending) return;
+        incoming.pause();
+        incoming.currentTime = plan.incomingOffset;
+        schedule();
+      }).catch(() => { if (this.pending === pending) this.cancelPending(); });
+    } else {
+      schedule();
+    }
+  }
+
+  private cancelPending() {
+    const pending = this.pending;
+    if (!pending) return;
+    this.pending = null;
+    clearTimeout(pending.timer);
+    pending.deck.pause();
+    pending.deck.removeAttribute('src');
+  }
+
+  /** Départ du titre suivant sur un temps du titre en cours, mélange, échange des basses, calage continu. */
+  private commitMix(pending: NonNullable<typeof this.pending>) {
+    if (this.pending !== pending) return;
+    this.pending = null;
+    const { plan, deck: incoming } = pending;
+    const { queue, index, playing } = playerState.get();
+    const next = queue[index + 1];
+    if (!playing || queue[index]?.id !== plan.outgoingId || next?.id !== plan.incomingId) {
+      incoming.pause();
+      incoming.removeAttribute('src');
+      return;
+    }
+    const outgoing = this.deck;
+    const late = Math.max(0, outgoing.currentTime - plan.start);
+    if (late > 0.05) incoming.currentTime = plan.incomingOffset + late * plan.incomingRate;
+    incoming.playbackRate = plan.incomingRate;
+    this.endHandled = true;
+    this.active = 1 - this.active;
+    set({ index: index + 1, transitioning: true });
+    setTime({ time: plan.incomingOffset, duration: next.duration ?? durations.get(next.id) ?? 0 });
+    if (!next.duration && !durations.get(next.id)) void this.fetchDuration(next);
+    if (!next.square) void this.resolveArtwork(next);
+    this.endHandled = false;
+    void incoming.play().then(() => this.started(next)).catch(() => undefined);
+    this.fadingOut = outgoing;
+    this.updateMediaSession();
+
+    const outgoingGain = this.gain;
+    this.gain = plan.incomingGain;
+    const startedAt = performance.now();
+    let lastJump = 0;
+    clearInterval(this.fadeTimer);
+    this.fadeTimer = setInterval(() => {
+      const elapsed = performance.now() - startedAt;
+      const t = Math.min(elapsed / (plan.duration * 1000), 1);
+      const volume = playerState.get().volume;
+      const [inVolume, outVolume] = mixVolumes(t);
+      incoming.volume = volume * plan.incomingGain * inVolume;
+      outgoing.volume = volume * outgoingGain * outVolume;
+      if (plan.beatMatched) {
+        // Échange des basses (lecteur de YouTube Music) : jamais deux lignes de basse en même temps.
+        const [inBass, outBass] = bassSwap(t);
+        if (incoming instanceof WebDeck) incoming.setBass(inBass);
+        if (outgoing instanceof WebDeck) outgoing.setBass(outBass);
+        // Calage des temps : le titre entrant suit le sortant par de légères corrections de vitesse.
+        if (t < 0.85 && !incoming.paused && !outgoing.paused && elapsed > 400) {
+          const target = plan.incomingOffset + (outgoing.currentTime - plan.start) * plan.incomingRate;
+          const error = incoming.currentTime - target;
+          if (Math.abs(error) > 0.3 && performance.now() - lastJump > 1500) {
+            lastJump = performance.now();
+            incoming.currentTime = target;
+          } else {
+            incoming.playbackRate = plan.incomingRate * (1 - Math.max(-0.04, Math.min(0.04, error * 0.8)));
+          }
+        } else if (t >= 0.85) {
+          incoming.playbackRate = plan.incomingRate;
+        }
+      }
+      if (t >= 1) {
+        this.finishFade();
+        if (incoming.playbackRate !== 1) this.restoreTempo(incoming, incoming.playbackRate);
+      }
+    }, 50);
+  }
+
+  /** Retour progressif au tempo d'origine (4 s, hauteur inchangée). */
+  private restoreTempo(deck: Deck, from: number) {
+    clearInterval(this.tempoTimer);
+    let step = 0;
+    this.tempoTimer = setInterval(() => {
+      step++;
+      if (deck !== this.deck || step > 40) { clearInterval(this.tempoTimer); return; }
+      if (!deck.paused) deck.playbackRate = from + ((1 - from) * step) / 40;
+    }, 100);
   }
 
   // MARK: Reprise automatique

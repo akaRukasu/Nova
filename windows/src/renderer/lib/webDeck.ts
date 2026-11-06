@@ -21,6 +21,10 @@ export class WebDeck extends EventTarget {
   private startAt = 0;
   private started = false;
   private lastType = '';
+  /** Instant de la dernière position reçue : la position est prolongée entre deux messages (transitions calées). */
+  private timeAt = 0;
+  private speed = 1;
+  private bass = 0;
   private waiting: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(private readonly number: number) {
@@ -40,9 +44,13 @@ export class WebDeck extends EventTarget {
     this.started = false;
   }
 
-  get currentTime() { return this.time; }
+  get currentTime() {
+    if (this.paused || !this.timeAt) return this.time;
+    return this.time + ((performance.now() - this.timeAt) / 1000) * this.speed;
+  }
   set currentTime(value: number) {
     this.time = value;
+    this.timeAt = 0;
     if (this.loaded) void call('webplayer:command', this.number, { type: 'seek', value });
     else this.startAt = value;
   }
@@ -70,12 +78,32 @@ export class WebDeck extends EventTarget {
     return promise;
   }
 
+  /** Tempo (hauteur conservée) : AutoMix cale le titre suivant sur celui qui se termine. */
+  get playbackRate() { return this.speed; }
+  set playbackRate(value: number) {
+    if (Math.abs(value - this.speed) < 0.0005) return;
+    if (this.timeAt) { this.time = this.currentTime; this.timeAt = performance.now(); }
+    this.speed = value;
+    void call('webplayer:command', this.number, { type: 'rate', value });
+  }
+
+  /** Basses (dB, 0 = inchangées) : échange des basses pendant les transitions. */
+  setBass(value: number) {
+    if (value === this.bass || (Math.abs(value - this.bass) < 0.5 && value !== 0)) return;
+    this.bass = value;
+    void call('webplayer:command', this.number, { type: 'bass', value });
+  }
+
   pause() {
+    this.time = this.currentTime;
+    this.timeAt = 0;
     this.paused = true;
     void call('webplayer:command', this.number, { type: 'pause' });
   }
 
   removeAttribute(_name: string) {
+    this.speed = 1;
+    this.bass = 0;
     this.url = '';
     this.videoId = '';
     this.loaded = false;
@@ -87,6 +115,11 @@ export class WebDeck extends EventTarget {
   receive(payload: { type: string; time: number; duration: number; paused: boolean; ad: boolean; videoId: string; expected: string }) {
     // Événement d'un titre précédent ou d'une page qui n'est plus la nôtre : ignoré.
     if (!this.videoId || (payload.expected && payload.expected !== this.videoId)) return;
+    // Mesures du son (AutoMix) : transmises telles quelles.
+    if (payload.type === 'measures') {
+      if (!payload.videoId || payload.videoId === this.videoId) this.dispatchEvent(new CustomEvent('measures', { detail: payload }));
+      return;
+    }
     const wasAd = this.ad;
     this.ad = payload.ad;
     if (this.ad !== wasAd) this.dispatchEvent(new Event('adchange'));
@@ -98,7 +131,10 @@ export class WebDeck extends EventTarget {
       this.duration = payload.duration;
       if (first) this.dispatchEvent(new Event('loadedmetadata'));
     }
-    if (payload.type === 'timeupdate' || payload.type === 'playing') this.time = payload.time;
+    if (payload.type === 'timeupdate' || payload.type === 'playing') {
+      this.time = payload.time;
+      this.timeAt = performance.now();
+    }
     // La position avance alors qu'on n'a pas vu le début de la lecture : elle a bien démarré.
     if (payload.type === 'timeupdate' && !payload.paused && (this.waiting || this.lastType === 'pause' || !this.started)) {
       payload = { ...payload, type: 'playing' };

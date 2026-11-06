@@ -117,6 +117,8 @@ export interface Settings {
   theme: 'system' | 'dark' | 'light';
   /** Lecture : automatique (direct, puis lecteur officiel si YouTube refuse), direct, ou lecteur officiel. */
   engine: 'auto' | 'direct' | 'web';
+  /** Égaliseur de volume : les titres très forts sont baissés au niveau des autres. */
+  normalizeVolume?: boolean;
 }
 
 export const defaultSettings: Settings = {

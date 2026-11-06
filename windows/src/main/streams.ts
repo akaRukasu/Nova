@@ -73,6 +73,8 @@ export function handleStreams() {
         const headers = new Headers();
         headers.set('content-type', found.mime);
         headers.set('accept-ranges', 'bytes');
+        // Lecture du fichier par l'interface (analyse AutoMix).
+        headers.set('access-control-allow-origin', '*');
         for (const name of ['content-length', 'content-range']) {
           const value = upstream.headers.get(name);
           if (value) headers.set(name, value);

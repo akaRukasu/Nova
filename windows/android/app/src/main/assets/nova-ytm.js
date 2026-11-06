@@ -35,6 +35,86 @@
       report('timeupdate');
     });
   }
+  // AutoMix : écoute du titre (tempo, temps, fin), tempo réglable, filtre des basses (même calcul que dans Nova).
+  function createMeter(sampleRate) {
+    var size = 512, hop = 256, i, reverse = new Uint32Array(size);
+    for (i = 0; i < size; i++) { var r = 0; for (var b = 0; b < 9; b++) r |= ((i >> b) & 1) << (8 - b); reverse[i] = r; }
+    var cos = new Float64Array(size / 2), sin = new Float64Array(size / 2), win = new Float64Array(size), weights = new Float64Array(size / 2);
+    for (i = 0; i < size / 2; i++) { cos[i] = Math.cos(2 * Math.PI * i / size); sin[i] = -Math.sin(2 * Math.PI * i / size); weights[i] = i * sampleRate / size < 250 ? 3 : 1; }
+    for (i = 0; i < size; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (size - 1));
+    var buffer = new Float64Array(size), re = new Float64Array(size), im = new Float64Array(size), previous = new Float64Array(size / 2);
+    var filled = 0, first = true;
+    return function (samples, emit) {
+      for (var s = 0; s < samples.length; s++) {
+        buffer[filled++] = samples[s];
+        if (filled < size) continue;
+        var energy = 0;
+        for (var j = 0; j < size; j++) { energy += buffer[j] * buffer[j]; re[reverse[j]] = buffer[j] * win[j]; im[reverse[j]] = 0; }
+        for (var half = 1; half < size; half *= 2) {
+          var step = size / (half * 2);
+          for (var start = 0; start < size; start += half * 2) {
+            for (var k = 0; k < half; k++) {
+              var a = start + k, c2 = a + half, c = cos[k * step], d = sin[k * step];
+              var tr = c * re[c2] - d * im[c2], ti = c * im[c2] + d * re[c2];
+              re[c2] = re[a] - tr; im[c2] = im[a] - ti; re[a] += tr; im[a] += ti;
+            }
+          }
+        }
+        var flux = 0;
+        for (var m = 1; m < size / 2; m++) {
+          var value = Math.log1p(100 * Math.hypot(re[m], im[m]));
+          if (!first && value > previous[m]) flux += (value - previous[m]) * weights[m];
+          previous[m] = value;
+        }
+        first = false;
+        emit(s, Math.sqrt(energy / size), flux);
+        buffer.copyWithin(0, hop);
+        filled = size - hop;
+      }
+    };
+  }
+  var audio = null, measures = [];
+  function setupAudio(element) {
+    if (audio && audio.element === element) return;
+    try {
+      var context = new (window.AudioContext || window.webkitAudioContext)();
+      var source = context.createMediaElementSource(element);
+      var bass = context.createBiquadFilter();
+      bass.type = 'lowshelf'; bass.frequency.value = 200; bass.gain.value = 0;
+      source.connect(bass); bass.connect(context.destination);
+      var tap = context.createScriptProcessor(2048, 2, 1);
+      var factor = Math.max(1, Math.round(context.sampleRate / 11025)), rate = context.sampleRate / factor;
+      var meter = createMeter(rate), reduced = new Float32Array(Math.ceil(2048 / factor));
+      tap.onaudioprocess = function (event) {
+        event.outputBuffer.getChannelData(0).fill(0);
+        if (!video || video.paused || isAd() || Math.abs(video.playbackRate - 1) > 0.001) return;
+        var left = event.inputBuffer.getChannelData(0);
+        var right = event.inputBuffer.numberOfChannels > 1 ? event.inputBuffer.getChannelData(1) : left;
+        var n = 0;
+        for (var i = 0; i + factor <= left.length; i += factor) {
+          var sum = 0;
+          for (var j = 0; j < factor; j++) sum += left[i + j] + right[i + j];
+          reduced[n++] = sum / (2 * factor);
+        }
+        var blockStart = video.currentTime - left.length / context.sampleRate;
+        meter(reduced.subarray(0, n), function (index, rms, flux) {
+          var time = blockStart + (index + 1 - 512) / rate;
+          if (time >= 0) measures.push([Math.round(time * 1000) / 1000, rms, flux]);
+        });
+      };
+      source.connect(tap); tap.connect(context.destination);
+      context.resume();
+      audio = { element: element, context: context, bass: bass, frameRate: rate / 256 };
+    } catch (e) {
+      audio = { element: element, context: null, bass: null };
+    }
+  }
+  setInterval(function () {
+    if (!measures.length || !audio || !audio.context) return;
+    NovaBridge.post(JSON.stringify({ type: 'measures', videoId: currentId(), expected: expected, frameRate: audio.frameRate, frames: measures }));
+    measures = [];
+  }, 1000);
+
   // Publicités : son coupé pendant qu'elles passent, et « Passer » pressé dès que YouTube le propose.
   var skipButtons = '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, button[id^="skip-button"]';
   var mutedForAd = false;
@@ -46,7 +126,12 @@
       if (skip && skip.offsetParent !== null) skip.click();
     } else if (mutedForAd) { video.muted = false; mutedForAd = false; }
   }
-  setInterval(function () { var found = document.querySelector('video'); if (found) attach(found); handleAds(); }, 300);
+  setInterval(function () {
+    var found = document.querySelector('video');
+    if (found) attach(found);
+    if (found && !found.paused) setupAudio(found);
+    handleAds();
+  }, 300);
   window.__nova = {
     expect: function (id, level) { expected = id || ''; if (level != null) volume = level; applyVolume(); },
     command: function (c) {
@@ -55,6 +140,8 @@
       if (c.type === 'seek' && video && c.value != null) video.currentTime = c.value;
       if (c.type === 'volume') { if (c.value != null) volume = c.value; applyVolume(); }
       if (c.type === 'stop') { expected = ''; if (video) video.pause(); }
+      if (c.type === 'rate' && video && c.value) { video.preservesPitch = true; video.playbackRate = c.value; }
+      if (c.type === 'bass' && audio && audio.bass && c.value != null) audio.bass.gain.setTargetAtTime(c.value, audio.context.currentTime, 0.05);
     }
   };
 })();
