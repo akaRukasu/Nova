@@ -21,13 +21,23 @@ jobs:
           workspaces: native-preview
           cache-on-failure: true
       - run: cargo build --release --manifest-path native-preview/Cargo.toml
-      - name: Open the GPUI window
+      - name: Build Nacre-Setup.exe
+        shell: pwsh
+        run: |
+          $version = (cargo pkgid --manifest-path native-preview/Cargo.toml).Split('#')[-1].Split('@')[-1]
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          & $compiler "/DAppVersion=$version" native-preview/setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+      - name: Install and open Nacre
         shell: pwsh
         run: |
           $marker = Join-Path $env:RUNNER_TEMP "nacre-render.txt"
           $panicLog = [IO.Path]::ChangeExtension($marker, "panic")
           $env:NACRE_SMOKE = $marker
-          $process = Start-Process native-preview/target/release/nacre.exe -PassThru
+          $installDir = Join-Path $env:RUNNER_TEMP "Nacre"
+          $setup = Start-Process native-preview/dist/Nacre-Setup.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
+          $process = Start-Process (Join-Path $installDir "nacre.exe") -PassThru
           try {
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 500
@@ -42,11 +52,15 @@ jobs:
           } finally {
             if (!$process.HasExited) { Stop-Process -Id $process.Id }
           }
+          $uninstall = Start-Process (Join-Path $installDir "unins000.exe") -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -PassThru -Wait
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path (Join-Path $installDir "nacre.exe"))) {
+            throw "Nacre uninstall failed"
+          }
       - uses: actions/upload-artifact@v4
-        if: success() || failure()
         with:
           name: Nacre-Windows
           path: |
+            native-preview/dist/Nacre-Setup.exe
             native-preview/target/release/nacre.exe
             native-preview/Cargo.lock
           if-no-files-found: error
