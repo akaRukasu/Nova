@@ -1,0 +1,98 @@
+name: NovaCord Native
+
+on:
+  push:
+    branches: [codex/native-port-yapfast]
+    paths: ["native-port/**", ".github/workflows/native-port.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: nova
+      - uses: actions/checkout@v5
+        with:
+          repository: yapfast/yapfast
+          ref: 28174c7227e9b5a7a7dd222378086e88a62cbdb1
+          path: engine
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ github.token }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/cargo-xwin
+            engine/.local/windows/skia-static-production/build.json
+            engine/.local/windows/skia-static-production/prepared
+          key: native-skia-${{ hashFiles('engine/nix/flake.lock', 'engine/nix/prepare-windows-skia.py', 'engine/nix/prepare-skia-native.py', 'engine/nix/skia-windows-builder/**') }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+          cache-on-failure: true
+      - name: Apply the NovaCord port and cross-compile
+        working-directory: engine
+        env:
+          NOVACORD_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          git apply --check ../nova/native-port/yapfast.patch
+          git apply ../nova/native-port/yapfast.patch
+          nix develop path:./nix#windows --command scripts/build-windows discord --no-installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaCord-Native-portable-and-source
+          path: engine/target/dist/discord/Yapfast-*.zip
+          compression-level: 0
+          if-no-files-found: error
+
+  installer:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: NovaCord-Native-portable-and-source
+          path: package
+      - name: Package the installer and test the installed binary
+        shell: pwsh
+        run: |
+          $zip = @(Get-ChildItem package -Filter "*-windows-x64.zip")
+          if ($zip.Count -ne 1) { throw "Expected one Windows portable archive" }
+          Expand-Archive $zip[0].FullName unpacked
+          $binary = @(Get-ChildItem unpacked -Recurse -Filter yapfast.exe)
+          if ($binary.Count -ne 1) { throw "Expected one native executable" }
+          $inno = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"
+          & $inno "/DSourceDir=$($binary[0].DirectoryName)" "/O$PWD" native-port/setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+          $target = Join-Path $env:RUNNER_TEMP "NovaCord Native"
+          $setup = Start-Process ./NovaCord-Native-Setup.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$target`"" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup failed: $($setup.ExitCode)" }
+          $test = Start-Process (Join-Path $target "yapfast.exe") -ArgumentList "--smoke-test" -PassThru
+          if (!$test.WaitForExit(30000)) { Stop-Process -Id $test.Id; throw "Native smoke test timed out" }
+          if ($test.ExitCode -ne 0) { throw "Native smoke test failed: $($test.ExitCode)" }
+          $data = Join-Path $env:RUNNER_TEMP "novacord-native-smoke"
+          $window = Start-Process (Join-Path $target "yapfast.exe") -ArgumentList "--data-dir `"$data`"" -PassThru
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              $window.Refresh()
+              if ($window.HasExited) { throw "Client closed: $($window.ExitCode)" }
+              if ($window.MainWindowHandle -ne 0) { break }
+            }
+            if ($window.MainWindowHandle -eq 0) { throw "Native client did not open a window" }
+          } finally {
+            if (!$window.HasExited) { Stop-Process -Id $window.Id }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaCord-Native-Windows-Setup
+          path: NovaCord-Native-Setup.exe
+          if-no-files-found: error

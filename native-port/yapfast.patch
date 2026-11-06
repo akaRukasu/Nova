@@ -1,0 +1,266 @@
+diff --git a/crates/yapfast-core/src/lib.rs b/crates/yapfast-core/src/lib.rs
+index adc81d1..4923770 100644
+--- a/crates/yapfast-core/src/lib.rs
++++ b/crates/yapfast-core/src/lib.rs
+@@ -97,7 +97,7 @@ pub fn init_tls() -> anyhow::Result<()> {
+ 
+ /// Where Yapfast keeps its sessions and local settings unless given --data-dir.
+ pub fn default_directory() -> anyhow::Result<std::path::PathBuf> {
+-    directories::ProjectDirs::from("io.github", "yapfast", "Yapfast")
++    directories::ProjectDirs::from("io.github", "NovaCord", "NovaCord Native")
+         .map(|dirs| dirs.data_local_dir().to_owned())
+         .context("could not find an application data directory; pass --data-dir")
+ }
+diff --git a/crates/yapfast-discord/src/token.rs b/crates/yapfast-discord/src/token.rs
+index c0ee52c..83a90d3 100644
+--- a/crates/yapfast-discord/src/token.rs
++++ b/crates/yapfast-discord/src/token.rs
+@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
+ use anyhow::{Result, anyhow, bail};
+ use keyring::Entry;
+ 
+-const SERVICE: &str = "io.github.yapfast.Yapfast";
++const SERVICE: &str = "io.github.akaRukasu.NovaCordNative";
+ /// The linked Discord account, set by linking by QR code or by the developer
+ /// probe's store-token command.
+ const ACCOUNT: &str = "discord-token";
+diff --git a/scripts/package-windows.py b/scripts/package-windows.py
+index bb309c1..f8b99aa 100644
+--- a/scripts/package-windows.py
++++ b/scripts/package-windows.py
+@@ -143,7 +143,7 @@ def main():
+         shutil.copy2(ROOT / "LICENSE", package / "LICENSE.txt")
+         # The source snapshot goes beside the packages, on the release page,
+         # rather than into every install; SOURCE.txt says where.
+-        source_url = f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
++        source_url = os.environ.get("NOVACORD_SOURCE_URL") or f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
+         (package / "SOURCE.txt").write_text(
+             f"The source code of this build of Yapfast {version}"
+             + (", with the exact source of\nthe libraries it includes under the AGPL," if rtc else "")
+diff --git a/src/autostart.rs b/src/autostart.rs
+index 94c8830..ffe325f 100644
+--- a/src/autostart.rs
++++ b/src/autostart.rs
+@@ -11,7 +11,7 @@ pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
+ /// The name the entry goes by: the Run key's value, and the Inno Setup
+ /// installer's, which writes the same one.
+ #[cfg(windows)]
+-const NAME: &str = "Yapfast";
++const NAME: &str = "NovaCord Native";
+ 
+ /// Whether Yapfast starts when the person signs in.
+ pub fn enabled() -> bool {
+diff --git a/src/ui.rs b/src/ui.rs
+index ee2e4e0..6120cc5 100644
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -1702,6 +1702,7 @@ struct Adapter {
+     /// The soundboard's sounds as its rows show them, and the pictures'
+     /// revision then, so the rows are made again only when either changes.
+     soundboard_shown: Option<(Arc<[voice::SoundGroup]>, u64)>,
++    soundboard_query: String,
+     /// The same for the entrance sounds Settings offers; the servers it
+     /// offers them for, "All servers" first as none; and the soundboard
+     /// volume shown, so the slider moves only when Discord's does.
+@@ -1927,6 +1928,7 @@ impl Adapter {
+                 preview_camera: None,
+                 frame_ids: vec![],
+                 soundboard_shown: None,
++                soundboard_query: String::new(),
+                 entrance_shown: None,
+                 entrance_servers: vec![],
+                 soundboard_volume_shown: None,
+diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
+index 597fb2e..467d4d5 100644
+--- a/src/ui/callbacks.rs
++++ b/src/ui/callbacks.rs
+@@ -2596,6 +2596,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+     });
+     let state = adapter.clone();
+     let weak = window.as_weak();
++    window.on_search_soundboard(move |query| {
++        let Some(window) = weak.upgrade() else { return };
++        let mut state = state.borrow_mut();
++        state.soundboard_query = query.trim().to_lowercase();
++        state.soundboard_shown = None;
++        state.show_soundboard(&window);
++    });
++    let state = adapter.clone();
++    let weak = window.as_weak();
+     window.on_play_soundboard(move |id| {
+         let Some(window) = weak.upgrade() else { return };
+         state.borrow_mut().action(
+diff --git a/src/ui/refresh.rs b/src/ui/refresh.rs
+index c3040a1..5f233dd 100644
+--- a/src/ui/refresh.rs
++++ b/src/ui/refresh.rs
+@@ -3672,7 +3672,7 @@ impl Adapter {
+ 
+     /// The call's soundboard, its rows made again only when its sounds
+     /// change or pictures arrive, and why it can't play, as Discord says.
+-    fn show_soundboard(&mut self, window: &YapfastWindow) {
++    pub(super) fn show_soundboard(&mut self, window: &YapfastWindow) {
+         let state = &self.app.state;
+         let voice = &state.voice;
+         let groups = voice.soundboard.as_ref().filter(|_| voice.active());
+@@ -3705,7 +3705,7 @@ impl Adapter {
+             return;
+         }
+         self.soundboard_shown = Some((groups.clone(), state.picture_changes));
+-        let rows = sound_rows(groups, &mut self.pictures, state);
++        let rows = sound_rows(groups, &mut self.pictures, state, &self.soundboard_query);
+         self.models.soundboard_rows.set_vec(rows);
+     }
+ 
+@@ -3782,7 +3782,7 @@ impl Adapter {
+             return;
+         }
+         self.entrance_shown = Some((groups.clone(), state.picture_changes));
+-        let rows = sound_rows(groups, &mut self.pictures, state);
++        let rows = sound_rows(groups, &mut self.pictures, state, "");
+         self.models.entrance_rows.set_vec(rows);
+     }
+ 
+@@ -4761,14 +4761,21 @@ fn sound_rows(
+     groups: &[voice::SoundGroup],
+     pictures: &mut HashMap<String, slint::Image>,
+     state: &AppState,
++    query: &str,
+ ) -> Vec<SoundRow> {
+     let mut rows = Vec::new();
+     for group in groups {
++        let sounds: Vec<_> = group.sounds.iter()
++            .filter(|sound| query.is_empty() || sound.name.to_lowercase().contains(query))
++            .collect();
++        if sounds.is_empty() {
++            continue;
++        }
+         rows.push(SoundRow {
+             heading: group.name.to_uppercase().into(),
+             sounds: ModelRc::default(),
+         });
+-        for chunk in group.sounds.chunks(3) {
++        for chunk in sounds.chunks(3) {
+             let cells: Vec<SoundCell> = chunk
+                 .iter()
+                 .map(|sound| SoundCell {
+diff --git a/src/ui/shell.rs b/src/ui/shell.rs
+index 24fd463..74630c5 100644
+--- a/src/ui/shell.rs
++++ b/src/ui/shell.rs
+@@ -441,9 +441,9 @@ impl Adapter {
+     pub(super) fn show_title(&self, window: &YapfastWindow) {
+         let waiting: u64 = self.app.state.rooms.iter().map(|room| room.mentions).sum();
+         let title = match waiting {
+-            0 => "Yapfast".to_owned(),
+-            1..=99 => format!("({waiting}) Yapfast"),
+-            _ => "(99+) Yapfast".to_owned(),
++            0 => "NovaCord Native".to_owned(),
++            1..=99 => format!("({waiting}) NovaCord Native"),
++            _ => "(99+) NovaCord Native".to_owned(),
+         };
+         if window.get_window_title() != title.as_str() {
+             window.set_window_title(title.into());
+diff --git a/src/ui/theme.rs b/src/ui/theme.rs
+index b060ef1..53750d2 100644
+--- a/src/ui/theme.rs
++++ b/src/ui/theme.rs
+@@ -120,10 +120,10 @@ pub const YAP: Theme = Theme {
+     secondary: rgb(0xb5b8c1),
+     muted: rgb(0x8d919c),
+     faint: rgb(0x5c606a),
+-    accent: rgb(0xffbf47),
+-    accent_hover: rgb(0xffcd70),
+-    on_accent: rgb(0x1d1607),
+-    accent_soft: rgba(0xffbf4726),
++    accent: rgb(0x7c6bff),
++    accent_hover: rgb(0x9487ff),
++    on_accent: rgb(0xffffff),
++    accent_soft: rgba(0x7c6bff26),
+     danger: rgb(0xf0545e),
+     danger_hover: rgb(0xf46f77),
+     on_danger: rgb(0xffffff),
+diff --git a/ui/theme.slint b/ui/theme.slint
+index ba5f7c9..d3532ba 100644
+--- a/ui/theme.slint
++++ b/ui/theme.slint
+@@ -22,10 +22,10 @@ export global Theme {
+     in-out property <color> secondary: #b5b8c1;
+     in-out property <color> muted: #8d919c;
+     in-out property <color> faint: #5c606a;
+-    in-out property <color> accent: #ffbf47;
+-    in-out property <color> accent-hover: #ffcd70;
+-    in-out property <color> on-accent: #1d1607;
+-    in-out property <color> accent-soft: #ffbf4726;
++    in-out property <color> accent: #7c6bff;
++    in-out property <color> accent-hover: #9487ff;
++    in-out property <color> on-accent: #ffffff;
++    in-out property <color> accent-soft: #7c6bff26;
+     in-out property <color> danger: #f0545e;
+     in-out property <color> danger-hover: #f46f77;
+     /// Text and icons on a danger fill: badges, the LIVE pill, leaving a call.
+diff --git a/ui/voice.slint b/ui/voice.slint
+index 84be8a2..03e7579 100644
+--- a/ui/voice.slint
++++ b/ui/voice.slint
+@@ -1,6 +1,6 @@
+ import { ScrollView, ListView } from "scrollview.slint";
+ import { Theme, Middle, Label, Tip, Popup } from "theme.slint";
+-import { ActionButton, IconButton, Avatar, CallButton, VolumeSlider, MenuItem } from "controls.slint";
++import { ActionButton, IconButton, Avatar, CallButton, VolumeSlider, MenuItem, TextField } from "controls.slint";
+ import { EmojiCell, EmojiFace } from "messages.slint";
+ 
+ export struct PersonRow {
+@@ -1434,6 +1434,8 @@ export component Soundboard inherits Rectangle {
+     in property <string> emoji-font;
+     in property <string> title: "Soundboard";
+     in property <bool> extras: true;
++    in property <bool> searchable: false;
++    callback search(string);
+     /// What a click does to a sound, as its accessible label says.
+     in property <string> verb: "Play";
+     /// Why no sound can be played now, such as being deafened; empty when
+@@ -1462,8 +1464,12 @@ export component Soundboard inherits Rectangle {
+         top := VerticalLayout {
+             padding: 14px; padding-bottom: 4px; spacing: 4px;
+             Text { text: root.title; color: Theme.text; font-size: 16px; font-weight: 700; }
++            if root.searchable: TextField {
++                placeholder: "Rechercher un son…"; label: "Rechercher un son";
++                edited(text) => { root.search(text); }
++            }
+             if root.note != "": Text { text: root.note; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+-            if root.rows.length == 0: Text { text: "Loading sounds..."; color: Theme.muted; font-size: 13px; }
++            if root.rows.length == 0: Text { text: root.searchable ? "Aucun son affiché" : "Loading sounds..."; color: Theme.muted; font-size: 13px; }
+         }
+         ListView {
+             vertical-stretch: 1;
+diff --git a/ui/yapfast.slint b/ui/yapfast.slint
+index 2b2e644..8249a8b 100644
+--- a/ui/yapfast.slint
++++ b/ui/yapfast.slint
+@@ -62,7 +62,7 @@ export { GifTile, GifFavorites } from "gifs.slint";
+ export component YapfastWindow inherits Window {
+     /// "Yapfast", or "(3) Yapfast" with mentions and DMs waiting, as a browser
+     /// tab's title counts them, so the taskbar shows it.
+-    in property <string> window-title: "Yapfast";
++    in property <string> window-title: "NovaCord Native";
+     title: root.window-title;
+     preferred-width: 1120px; preferred-height: 760px;
+     min-width: 800px; min-height: 560px;
+@@ -1645,6 +1645,7 @@ export component YapfastWindow inherits Window {
+         root.soundboard-opened();
+         soundboard-menu.show();
+     }
++    callback search-soundboard(string);
+     soundboard-menu := PopupWindow {
+         x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
+         y: max(8px, root.menu-y - self.height - 6px);
+@@ -1652,6 +1653,8 @@ export component YapfastWindow inherits Window {
+         close-policy: PopupClosePolicy.close-on-click-outside;
+         board := Soundboard {
+             rows: root.soundboard-rows; note: root.soundboard-note; emoji-font: root.emoji-font;
++            searchable: true;
++            search(query) => { root.search-soundboard(query); }
+             play(id) => { root.play-soundboard(id); }
+             preview(id) => { root.preview-soundboard(id); }
+             favorite(id, on) => { root.favorite-soundboard(id, on); }
