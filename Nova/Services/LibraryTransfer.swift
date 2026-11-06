@@ -176,16 +176,36 @@ final class PCSync {
 
     private func locate(_ request: LibraryTransfer.Request) async -> URL? {
         if await answers(request.url, pcId: request.pcId) { return request.url }
-        guard let pcId = request.pcId, let found = await browse(pcId: pcId) else { return nil }
-        return found
+        guard let pcId = request.pcId else { return nil }
+        if let found = await browse(pcId: pcId) { return found }
+        return await searchHotspot(request: request, pcId: pcId)
+    }
+
+    /// Partage de connexion de l'iPhone : le PC y reçoit une adresse 172.20.10.2 à 172.20.10.14, et Bonjour
+    /// n'y trouve pas toujours les appareils connectés. On interroge directement ces quelques adresses.
+    private func searchHotspot(request: LibraryTransfer.Request, pcId: String) async -> URL? {
+        let ports = Array(Set([request.url.port ?? 47822, 47822]))
+        let candidates = (2...14).flatMap { host in ports.compactMap { URL(string: "http://172.20.10.\(host):\($0)/sync") } }
+        return await withTaskGroup(of: URL?.self) { group in
+            for url in candidates {
+                group.addTask { await self.answers(url, pcId: pcId, timeout: 2) ? url : nil }
+            }
+            for await found in group {
+                if let found {
+                    group.cancelAll()
+                    return found
+                }
+            }
+            return nil
+        }
     }
 
     /// Le PC répond-il à cette adresse (et est-ce bien lui) ?
-    private func answers(_ url: URL, pcId: String?) async -> Bool {
+    private func answers(_ url: URL, pcId: String?, timeout: TimeInterval = 3) async -> Bool {
         guard LibraryTransfer.isLocal(url), var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         components.path = "/status"
         guard let status = components.url else { return false }
-        var request = URLRequest(url: status, timeoutInterval: 3)
+        var request = URLRequest(url: status, timeoutInterval: timeout)
         request.httpMethod = "GET"
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
