@@ -1,4 +1,4 @@
-name: NovaCord Native Preview
+name: Nacre Preview
 
 on:
   push:
@@ -24,10 +24,10 @@ jobs:
       - name: Open the GPUI window
         shell: pwsh
         run: |
-          $marker = Join-Path $env:RUNNER_TEMP "novacord-native-render.txt"
+          $marker = Join-Path $env:RUNNER_TEMP "nacre-render.txt"
           $panicLog = [IO.Path]::ChangeExtension($marker, "panic")
-          $env:NOVACORD_NATIVE_SMOKE = $marker
-          $process = Start-Process native-preview/target/release/novacord-native-preview.exe -PassThru
+          $env:NACRE_SMOKE = $marker
+          $process = Start-Process native-preview/target/release/nacre.exe -PassThru
           try {
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 500
@@ -45,8 +45,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success() || failure()
         with:
-          name: NovaCord-Native-Preview-Windows
+          name: Nacre-Windows
           path: |
-            native-preview/target/release/novacord-native-preview.exe
+            native-preview/target/release/nacre.exe
             native-preview/Cargo.lock
           if-no-files-found: error

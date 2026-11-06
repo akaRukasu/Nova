@@ -83,7 +83,7 @@ impl Render for Preview {
             .p_5()
             .bg(rgb(0x151620))
             .text_color(rgb(0xf1efff))
-            .child(div().text_xl().child("NovaCord Native"))
+            .child(div().text_xl().child("Nacre"))
             .child(div().text_sm().text_color(rgb(0xb1b3cc))
                 .child("Prototype GPUI · 10 000 entrées fictives par liste · aucune connexion Discord"))
             .child(tabs)
@@ -92,7 +92,7 @@ impl Render for Preview {
 }
 
 fn main() {
-    let smoke_marker = std::env::var_os("NOVACORD_NATIVE_SMOKE").map(std::path::PathBuf::from);
+    let smoke_marker = std::env::var_os("NACRE_SMOKE").map(std::path::PathBuf::from);
     if let Some(path) = &smoke_marker {
         let panic_log = path.with_extension("panic");
         std::panic::set_hook(Box::new(move |info| {
@@ -106,7 +106,7 @@ fn main() {
                 show: true,
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("NovaCord Native · aperçu".into()),
+                    title: Some("Nacre · aperçu".into()),
                     ..Default::default()
                 }),
                 ..Default::default()
