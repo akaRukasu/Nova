@@ -1,0 +1,47 @@
+name: NovaCord Native Preview
+
+on:
+  push:
+    branches: [codex/native-preview]
+    paths: ["native-preview/**", ".github/workflows/native-preview.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-preview
+      - run: cargo build --release --manifest-path native-preview/Cargo.toml
+      - name: Open the GPUI window
+        shell: pwsh
+        run: |
+          $process = Start-Process native-preview/target/release/novacord-native-preview.exe -PassThru
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              $process.Refresh()
+              if ($process.HasExited) { throw "GPUI exited with code $($process.ExitCode)" }
+              if ($process.MainWindowHandle -ne 0) {
+                Write-Host "GPUI window opened."
+                break
+              }
+            }
+            if ($process.MainWindowHandle -eq 0) { throw "GPUI window did not open" }
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaCord-Native-Preview-Windows
+          path: |
+            native-preview/target/release/novacord-native-preview.exe
+            native-preview/Cargo.lock
+          if-no-files-found: error
