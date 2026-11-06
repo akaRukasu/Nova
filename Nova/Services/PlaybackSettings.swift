@@ -24,6 +24,15 @@ enum PlaybackSettings {
         Int64(defaults.object(forKey: "cacheLimitMB") as? Int ?? 1500) * 1_000_000
     }
 
+    /// Égaliseur de volume (comme « Égaliseur de volume » d'Apple Music) : les titres très forts sont baissés
+    /// au niveau des autres, pour ne pas sursauter d'un titre à l'autre.
+    static var normalizeVolume: Bool {
+        defaults.object(forKey: "normalizeVolume") as? Bool ?? true
+    }
+
+    /// Niveau visé par l'égaliseur de volume (dB, valeur efficace du corps du morceau).
+    static let loudnessTarget = -11.0
+
     static var recordHistory: Bool {
         defaults.object(forKey: "recordHistory") as? Bool ?? true
     }

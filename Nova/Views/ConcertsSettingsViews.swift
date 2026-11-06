@@ -337,6 +337,7 @@ struct SettingsView: View {
     @AppStorage("transitionStyle") private var transition = PlaybackSettings.Transition.automix.rawValue
     @AppStorage("crossfadeSeconds") private var crossfadeSeconds = 6.0
     @AppStorage("recordHistory") private var recordHistory = true
+    @AppStorage("normalizeVolume") private var normalizeVolume = true
     @AppStorage("cacheOnCellular") private var cacheOnCellular = true
     @AppStorage("downloadOnCellular") private var downloadOnCellular = false
     @AppStorage("cacheLimitMB") private var cacheLimit = 1500
@@ -399,12 +400,13 @@ struct SettingsView: View {
                     Text("Haute").tag(true)
                     Text("Économie de données").tag(false)
                 }
+                Toggle("Égaliseur de volume", isOn: $normalizeVolume)
                 Toggle("Lecture automatique", isOn: $autoplayRadio)
                 Toggle("Historique d'écoute", isOn: $recordHistory)
             } header: {
                 Text("Lecture")
             } footer: {
-                Text("La lecture automatique enchaîne avec des titres similaires à la fin de la file. AirPlay se choisit depuis le lecteur.")
+                Text("Haute qualité : le meilleur flux AAC que YouTube fournit à Nova (128 kbit/s, qualité « élevée » de YouTube Music). L'égaliseur de volume baisse les titres très forts au niveau des autres. La lecture automatique enchaîne avec des titres similaires à la fin de la file. AirPlay se choisit depuis le lecteur.")
             }
 
             Section {
@@ -422,7 +424,7 @@ struct SettingsView: View {
             } header: {
                 Text("Transitions entre les titres")
             } footer: {
-                Text("AutoMix enchaîne les titres comme un DJ : le suivant monte pendant que l'autre se termine, puis prend le relais. Le fondu enchaîné mélange les deux titres de façon égale pendant la durée choisie.")
+                Text("AutoMix enchaîne les titres comme un DJ : Nova analyse chaque titre (tempo, temps, intro, fin), cale le titre suivant sur le rythme de celui qui se termine et le fait entrer au bon moment. Les titres déjà écoutés ou préchargés en profitent ; sinon, un fondu classique prend le relais. Le fondu enchaîné mélange les deux titres de façon égale pendant la durée choisie.")
             }
 
             Section("Données mobiles") {

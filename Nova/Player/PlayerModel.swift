@@ -78,6 +78,16 @@ final class PlayerModel {
     /// Évite de passer deux fois au titre suivant (fin détectée + notification).
     @ObservationIgnored private var endHandled = false
 
+    // AutoMix : analyses des titres, transition préparée, titre suivant déjà calé et programmé.
+    @ObservationIgnored private var knownAnalyses: [String: TrackAnalysis] = [:]
+    @ObservationIgnored private var mixPlan: MixPlan?
+    @ObservationIgnored private var planTask: Task<Void, Never>?
+    @ObservationIgnored private var lastPlanCheck = Date.distantPast
+    @ObservationIgnored private var pendingMix: (player: AVPlayer, plan: MixPlan, task: Task<Void, Never>)?
+    @ObservationIgnored private var rateTask: Task<Void, Never>?
+    /// Volume du titre en cours selon l'égaliseur de volume (1 = inchangé).
+    @ObservationIgnored private var currentGain: Double = 1
+
     init() {
         configureAudioSession()
         configureRemoteCommands()
@@ -279,13 +289,16 @@ final class PlayerModel {
         crossfadeStarting = false
         fadingOut = outgoing
         let style = PlaybackSettings.transition
+        let outgoingGain = currentGain
+        let incomingGain = MixPlan.gain(for: current.flatMap { knownAnalyses[$0.id] })
+        currentGain = incomingGain
         fadeTask = Task { [weak self] in
             let steps = max(1, Int(duration / 0.05))
             for step in 0...steps {
                 if Task.isCancelled { return }
                 let volumes = style.volumes(at: Double(step) / Double(steps))
-                incoming.volume = Float(volumes.incoming)
-                outgoing.volume = Float(volumes.outgoing)
+                incoming.volume = Float(volumes.incoming * incomingGain)
+                outgoing.volume = Float(volumes.outgoing * outgoingGain)
                 try? await Task.sleep(for: .milliseconds(50))
             }
             self?.finishTransition()
@@ -301,8 +314,172 @@ final class PlayerModel {
             fadingOut.replaceCurrentItem(with: nil)
         }
         fadingOut = nil
-        player.volume = 1
+        cancelPendingMix()
+        player.volume = Float(currentGain)
         if !crossfadeStarting { isTransitioning = false }
+    }
+
+    // MARK: AutoMix calé sur le tempo
+
+    /// Analyse des deux titres (fichiers locaux) et transition calculée à l'avance, revue toutes les 5 s au plus.
+    private func refreshMixPlan() {
+        guard Date().timeIntervalSince(lastPlanCheck) > 5, planTask == nil, let current, hasNext else { return }
+        let next = queue[index + 1]
+        if let plan = mixPlan, plan.outgoingID == current.id, plan.incomingID == next.id { return }
+        lastPlanCheck = Date()
+        planTask = Task { [weak self] in
+            guard let self else { return }
+            let outgoing = await self.analysis(for: current)
+            let incoming = outgoing == nil ? nil : await self.analysis(for: next)
+            self.planTask = nil
+            guard let outgoing, let incoming, self.current?.id == current.id,
+                  self.queue.indices.contains(self.index + 1), self.queue[self.index + 1].id == next.id else { return }
+            self.mixPlan = MixPlan.plan(outgoingID: current.id, outgoing, incomingID: next.id, incoming)
+        }
+    }
+
+    private func analysis(for track: Track) async -> TrackAnalysis? {
+        if let known = knownAnalyses[track.id] { return known }
+        var result = await AnalysisStore.shared.cached(track.id)
+        if result == nil, let file = await localFile(for: track) {
+            result = await AnalysisStore.shared.analysis(for: track.id, file: file)
+        }
+        if let result { knownAnalyses[track.id] = result }
+        return result
+    }
+
+    private func localFile(for track: Track) async -> URL? {
+        if let file = downloads.localURL(for: track.id) { return file }
+        return await AudioCache.shared.localURL(for: track.id)
+    }
+
+    /// Prépare le titre suivant (fichier local, position, tempo) et programme son départ à l'instant exact
+    /// où le titre en cours atteint le début du mélange : les temps des deux titres tombent ensemble.
+    private func prepareMix(_ plan: MixPlan) {
+        guard let next = queue.dropFirst(index + 1).first, next.id == plan.incomingID else {
+            mixPlan = nil
+            return
+        }
+        let outgoing = player
+        let incoming = AVPlayer()
+        Self.configure(incoming)
+        // Départ programmé à une heure précise : pas d'attente automatique de la mémoire tampon.
+        incoming.automaticallyWaitsToMinimizeStalling = false
+        incoming.volume = 0
+        let task = Task { [weak self] in
+            guard let self, let file = await self.localFile(for: next), !Task.isCancelled else {
+                self?.mixPlan = nil
+                self?.cancelPendingMix()
+                return
+            }
+            let item = AVPlayerItem(url: file)
+            // Tempo ajusté sans changer la hauteur des notes.
+            if plan.incomingRate != 1 { item.audioTimePitchAlgorithm = .spectral }
+            incoming.replaceCurrentItem(with: item)
+            var ready = false
+            for _ in 0..<80 where !Task.isCancelled {
+                if item.status == .readyToPlay { ready = true; break }
+                if item.status == .failed { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard ready, !Task.isCancelled else {
+                if !Task.isCancelled { self.mixPlan = nil; self.cancelPendingMix() }
+                return
+            }
+            _ = await incoming.seek(to: CMTime(seconds: plan.incomingOffset, preferredTimescale: 44_100),
+                                    toleranceBefore: .zero, toleranceAfter: .zero)
+            _ = await incoming.preroll(atRate: Float(plan.incomingRate))
+            guard !Task.isCancelled, self.pendingMix?.plan == plan, self.player === outgoing else { return }
+            // Instant où le titre en cours atteint le début du mélange (horloge de l'appareil).
+            var delay = plan.start - outgoing.currentTime().seconds
+            var offset = plan.incomingOffset
+            if delay < 0.05 {
+                // Un peu en retard (préparation lente) : le titre suivant démarre plus loin, toujours dans le temps.
+                offset += (0.05 - delay) * plan.incomingRate
+                delay = 0.05
+            }
+            let hostTime = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), CMTime(seconds: delay, preferredTimescale: 1_000_000_000))
+            incoming.setRate(Float(plan.incomingRate), time: CMTime(seconds: offset, preferredTimescale: 44_100), atHostTime: hostTime)
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self.commitMix(plan, incoming: incoming, item: item, offset: offset)
+        }
+        pendingMix = (incoming, plan, task)
+    }
+
+    /// Mélange en cours : le titre suivant devient le titre en cours, l'autre s'efface.
+    private func commitMix(_ plan: MixPlan, incoming: AVPlayer, item: AVPlayerItem, offset: Double) {
+        pendingMix = nil
+        mixPlan = nil
+        guard isPlaying, current?.id == plan.outgoingID, queue.indices.contains(index + 1),
+              queue[index + 1].id == plan.incomingID else {
+            incoming.pause()
+            incoming.replaceCurrentItem(with: nil)
+            return
+        }
+        let outgoing = player
+        if let timeObserver { outgoing.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+        index += 1
+        let track = queue[index]
+        player = incoming
+        fadingOut = outgoing
+        isTransitioning = true
+        crossfadeStarting = false
+        currentTime = offset
+        duration = track.duration ?? knownDurations[track.id] ?? 0
+        expectedDuration = track.duration ?? knownDurations[track.id]
+        if expectedDuration == nil { fetchDuration(for: track) }
+        endHandled = false
+        artwork = nil
+        currentIsVideoOnly = false
+        if !track.hasSquareArtwork { resolveArtwork(for: track) }
+        observeStatus(of: item, track: track)
+        attachTimeObserver()
+        isPlaying = true
+        isLoading = false
+        failureCount = 0
+        currentGain = plan.incomingGain
+        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
+        saveSession(force: true)
+        updateNowPlaying()
+        loadArtwork(for: track)
+        prefetchNext()
+
+        fadeTask = Task { [weak self] in
+            let steps = max(1, Int(plan.duration / 0.05))
+            for step in 0...steps {
+                if Task.isCancelled { return }
+                let volumes = MixPlan.volumes(at: Double(step) / Double(steps))
+                incoming.volume = Float(volumes.incoming * plan.incomingGain)
+                outgoing.volume = Float(volumes.outgoing * plan.outgoingGain)
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard let self else { return }
+            self.finishTransition()
+            if plan.incomingRate != 1 { self.restoreTempo(of: incoming, from: plan.incomingRate) }
+        }
+    }
+
+    /// Après le mélange, le titre revient doucement à son tempo d'origine (en 4 s, hauteur inchangée).
+    private func restoreTempo(of target: AVPlayer, from rate: Double) {
+        rateTask?.cancel()
+        rateTask = Task { [weak self] in
+            for step in 1...40 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let self, !Task.isCancelled, self.isPlaying, self.player === target else { return }
+                target.rate = Float(rate + (1 - rate) * Double(step) / 40)
+            }
+        }
+    }
+
+    /// Transition programmée abandonnée (pause, saut, nouveau titre…).
+    private func cancelPendingMix() {
+        guard let pending = pendingMix else { return }
+        pendingMix = nil
+        pending.task.cancel()
+        pending.player.pause()
+        pending.player.replaceCurrentItem(with: nil)
     }
 
     // MARK: Commandes
@@ -560,6 +737,7 @@ final class PlayerModel {
     private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil) {
         guard let track = current else { return }
         loadTask?.cancel()
+        rateTask?.cancel()
         statusObservation = nil
         beginLoadingBackgroundTask()
         if transition == nil {
@@ -631,19 +809,7 @@ final class PlayerModel {
         }
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 30
-        statusObservation = item.observe(\.status, options: [.new]) { @Sendable [weak self] item, _ in
-            let failed = item.status == .failed
-            let error = item.error
-            Task { @MainActor in
-                guard let self, failed, self.current?.id == track.id else { return }
-                // Échec après le début du titre : on le relance là où il en était plutôt que de le sauter.
-                if self.currentTime > 2 {
-                    self.recoverPlayback(reason: "flux en échec")
-                } else {
-                    self.handleFailure(error ?? NovaError.noPlayableStream, track: track)
-                }
-            }
-        }
+        observeStatus(of: item, track: track)
         try? AVAudioSession.sharedInstance().setActive(true)
         if let transition, player.currentItem != nil {
             // Transition : le titre suivant démarre en silence sur un second lecteur, puis monte.
@@ -656,7 +822,8 @@ final class PlayerModel {
         } else {
             crossfadeStarting = false
             isTransitioning = false
-            player.volume = 1
+            currentGain = MixPlan.gain(for: knownAnalyses[track.id])
+            player.volume = Float(currentGain)
             player.replaceCurrentItem(with: item)
             if startTime > 1 {
                 player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
@@ -671,6 +838,22 @@ final class PlayerModel {
         library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
         updateNowPlaying()
         prefetchNext()
+    }
+
+    private func observeStatus(of item: AVPlayerItem, track: Track) {
+        statusObservation = item.observe(\.status, options: [.new]) { @Sendable [weak self] item, _ in
+            let failed = item.status == .failed
+            let error = item.error
+            Task { @MainActor in
+                guard let self, failed, self.current?.id == track.id else { return }
+                // Échec après le début du titre : on le relance là où il en était plutôt que de le sauter.
+                if self.currentTime > 2 {
+                    self.recoverPlayback(reason: "flux en échec")
+                } else {
+                    self.handleFailure(error ?? NovaError.noPlayableStream, track: track)
+                }
+            }
+        }
     }
 
     private func handleFailure(_ error: Error, track: Track) {
@@ -745,11 +928,23 @@ final class PlayerModel {
         guard !crossfadeStarting else { return }
         let seconds = time.seconds
         if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
-        // AutoMix / fondu : le titre suivant démarre avant la fin de celui-ci.
-        if let fade = PlaybackSettings.transitionDuration, isPlaying, !isLoading, fadingOut == nil,
-           repeatMode != .one, hasNext, JamSession.shared.role != .guest || !JamSession.shared.listenAlong,
-           let expected = expectedDuration, expected > fade * 3,
-           currentTime >= expected - fade, currentTime < expected - 0.5 {
+        let canMix = isPlaying && !isLoading && fadingOut == nil && pendingMix == nil && repeatMode != .one && hasNext
+            && (JamSession.shared.role != .guest || !JamSession.shared.listenAlong)
+        // AutoMix calé sur le tempo : les deux titres sont analysés, le suivant part sur un temps du titre en cours.
+        if canMix, PlaybackSettings.transition != .off { refreshMixPlan() }
+        if canMix, PlaybackSettings.transition == .automix, let current {
+            if let plan = mixPlan, plan.outgoingID == current.id, queue[index + 1].id == plan.incomingID,
+               currentTime >= plan.start - 3, currentTime < plan.start + plan.duration * 0.5 {
+                prepareMix(plan)
+                return
+            }
+        }
+        let planned = mixPlan.map { $0.outgoingID == current?.id && currentTime < $0.start + $0.duration * 0.5 } ?? false
+        // Sinon (titres pas encore analysés, fondu enchaîné) : le suivant démarre avant la fin de celui-ci,
+        // la fin étant celle du dernier son entendu quand le titre est analysé.
+        if canMix, !planned, let fade = PlaybackSettings.transitionDuration,
+           let end = current.flatMap({ knownAnalyses[$0.id]?.audibleEnd }) ?? expectedDuration, end > fade * 3,
+           currentTime >= end - fade, currentTime < end - 0.5 {
             beginTransition(fade)
             return
         }

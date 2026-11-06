@@ -6,6 +6,7 @@ on:
       - "Nova/Models/**"
       - "Nova/Services/**"
       - "Tools/Diagnostic/**"
+      - "Tools/AutoMixTest/**"
       - ".github/workflows/diagnostic.yml"
   workflow_dispatch:
 
@@ -35,6 +36,25 @@ jobs:
             Nova/Services/SharedPlaylists.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
+
+      - name: Tester l'analyse AutoMix (signaux connus, vraies musiques)
+        run: |
+          xcrun --sdk macosx swiftc -O \
+            Nova/Models/*.swift \
+            Nova/Services/InnerTubeParser.swift \
+            Nova/Services/InnerTubeClient.swift \
+            Nova/Services/Account.swift \
+            Nova/Services/ImportSources.swift \
+            Nova/Services/PlaybackSettings.swift \
+            Nova/Services/DiscoverySources.swift \
+            Nova/Services/ArtworkResolver.swift \
+            Nova/Services/LyricsService.swift \
+            Nova/Services/LibraryStore.swift \
+            Nova/Services/SharedPlaylists.swift \
+            Nova/Services/AudioAnalysis.swift \
+            Tools/AutoMixTest/main.swift \
+            -o diag/automix-test
+          ./diag/automix-test
 
       - name: Interroger YouTube Music
         env:
