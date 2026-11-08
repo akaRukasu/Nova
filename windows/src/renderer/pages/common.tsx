@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { Track } from '../../shared/types';
 import { Icon } from '../components/icons';
 import { TrackRow, formatTime } from '../components/TrackRow';
-import type { MenuItem } from '../components/menus';
+import { showMenu, type MenuItem } from '../components/menus';
 import { player } from '../lib/player';
 
 const pageCache = new Map<string, { value: unknown; at: number }>();
@@ -96,5 +96,65 @@ export function TrackList({ tracks, numbered, showArtwork = true, menuFor, limit
       {tracks.length > shown && <button className="button secondary more-button" onClick={() => setShown(shown + 300)}>Afficher plus ({tracks.length - shown})</button>}
       <p className="muted list-footer">{tracks.length} titre{tracks.length > 1 ? 's' : ''}{total ? ` · ${formatTime(total)}` : ''}</p>
     </div>
+  );
+}
+
+// MARK: Tri des listes (playlists, titres likés, playlists et albums YouTube)
+
+export type TrackSortKey = 'manual' | 'title' | 'artist' | 'album' | 'duration' | 'mostPlayed' | 'recentlyPlayed';
+const sortLabels: Record<Exclude<TrackSortKey, 'manual'>, string> = {
+  title: 'Titre', artist: 'Artiste', album: 'Album', duration: 'Durée', mostPlayed: 'Les plus écoutés', recentlyPlayed: 'Écoutés récemment',
+};
+
+/** Tri mémorisé pour une liste. */
+export function useTrackSort(key: string) {
+  const storageKey = `sort.${key}`;
+  const read = () => {
+    const [sort, reversed] = (localStorage.getItem(storageKey) ?? 'manual').split('|');
+    return { sort: (sort || 'manual') as TrackSortKey, reversed: reversed === 'rev' };
+  };
+  const [state, setState] = useState(read);
+  useEffect(() => setState(read()), [storageKey]);
+  const change = (sort: TrackSortKey, reversed: boolean) => {
+    localStorage.setItem(storageKey, sort + (reversed ? '|rev' : ''));
+    setState({ sort, reversed });
+  };
+  return { ...state, manual: state.sort === 'manual' && !state.reversed, change };
+}
+
+/** Positions des titres dans l'ordre choisi (à égalité, l'ordre de la liste est gardé). */
+export function sortOrder(tracks: Track[], sort: TrackSortKey, reversed: boolean, stats: Record<string, { playCount: number; lastPlayed?: number }>) {
+  const positions = tracks.map((_, i) => i);
+  const text = (a: string | undefined, b: string | undefined) => {
+    if (a && b) return a.localeCompare(b, 'fr', { sensitivity: 'base', numeric: true });
+    return a ? -1 : b ? 1 : 0;
+  };
+  const compare: Record<TrackSortKey, (a: Track, b: Track) => number> = {
+    manual: () => 0,
+    title: (a, b) => text(a.title, b.title),
+    artist: (a, b) => text(a.artist, b.artist) || text(a.album, b.album),
+    album: (a, b) => text(a.album, b.album),
+    duration: (a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity),
+    mostPlayed: (a, b) => (stats[b.id]?.playCount ?? 0) - (stats[a.id]?.playCount ?? 0),
+    recentlyPlayed: (a, b) => (stats[b.id]?.lastPlayed ?? 0) - (stats[a.id]?.lastPlayed ?? 0),
+  };
+  positions.sort((i, j) => compare[sort](tracks[i], tracks[j]) || i - j);
+  return reversed ? positions.reverse() : positions;
+}
+
+/** Bouton « Trier ». */
+export function SortButton({ state, manualLabel = 'Ordre de la playlist' }: { state: ReturnType<typeof useTrackSort>; manualLabel?: string }) {
+  const option = (sort: TrackSortKey, label: string): MenuItem => ({
+    label, icon: state.sort === sort ? 'check' : undefined, action: () => state.change(sort, state.reversed),
+  });
+  return (
+    <button className={`button secondary ${state.manual ? '' : 'accent-text'}`} onClick={(e) => showMenu(e, [
+      option('manual', manualLabel),
+      ...(Object.entries(sortLabels) as [TrackSortKey, string][]).map(([sort, label]) => option(sort, label)),
+      { label: '', separator: true },
+      { label: 'Ordre inversé', icon: state.reversed ? 'check' : undefined, action: () => state.change(state.sort, !state.reversed) },
+    ])}>
+      <Icon name="sort" size={16} /> {state.sort === 'manual' ? 'Trier' : sortLabels[state.sort]}{state.reversed ? ' ↓' : ''}
+    </button>
   );
 }

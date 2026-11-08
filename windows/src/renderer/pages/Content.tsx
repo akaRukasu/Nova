@@ -8,7 +8,7 @@ import { isSaved, isShared, library, sharedURL, toggleSaved, upsertPlaylist, not
 import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { useStore } from '../lib/store';
-import { ErrorState, Loading, PlayShuffle, TrackList, useCached } from './common';
+import { ErrorState, Loading, PlayShuffle, SortButton, TrackList, sortOrder, useCached, useTrackSort } from './common';
 
 export function ArtistPage({ id, title }: { id: string; title: string }) {
   useStore(library);
@@ -45,7 +45,8 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
 }
 
 export function CollectionPage({ collection }: { collection: Collection }) {
-  useStore(library);
+  const state = useStore(library);
+  const sort = useTrackSort(`collection.${collection.id}`);
   // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
   const shared = isShared(collection.id);
   const { data, error, loading, reload } = useCached(`collection-${collection.id}`, () => api.collection(collection), shared ? 0 : 30 * 60_000);
@@ -54,6 +55,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
   if (!data) return null;
   const header = data.header;
   const isAlbum = collection.kind === 'album';
+  const tracks = sortOrder(data.tracks, sort.sort, sort.reversed, state.stats).map((i) => data.tracks[i]);
   const saved: Collection = { ...collection, title: header.title || collection.title, artwork: header.artwork ?? collection.artwork, subtitle: header.subtitle ?? collection.subtitle };
   return (
     <div className="page">
@@ -65,7 +67,8 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           {header.subtitle && <p className="muted">{header.subtitle}</p>}
           {header.description && <p className="description">{header.description}</p>}
           <div className="row-buttons">
-            <PlayShuffle tracks={data.tracks} />
+            <PlayShuffle tracks={tracks} />
+            <SortButton state={sort} manualLabel={isAlbum ? 'Ordre de l’album' : 'Ordre de la playlist'} />
             <button className="button secondary" onClick={() => toggleSaved(saved)}>
               <Icon name={isSaved(collection.id) ? 'check' : 'plus'} size={16} /> {isSaved(collection.id) ? 'Dans la bibliothèque' : 'Ajouter'}
             </button>
@@ -89,7 +92,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           <button className="button secondary" onClick={() => void reload(true)}>Actualiser</button>
         </div>
       )}
-      <TrackList tracks={data.tracks} numbered={isAlbum} />
+      <TrackList tracks={tracks} numbered={isAlbum && sort.manual} />
       {data.related.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
     </div>
   );

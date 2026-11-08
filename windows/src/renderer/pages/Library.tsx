@@ -13,13 +13,16 @@ import {
 import { player } from '../lib/player';
 import { root } from '../lib/router';
 import { useStore } from '../lib/store';
-import { Empty, PageTitle, PlayShuffle, TrackList } from './common';
+import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
 
 export function UserPlaylistPage({ id }: { id: string }) {
   const state = useStore(library);
   const [dragged, setDragged] = useState<number | null>(null);
+  const sort = useTrackSort(`playlist.${id}`);
   const playlist = state.playlists.find((p) => p.id === id);
   if (!playlist) return <Empty icon="list" title="Playlist introuvable" />;
+  const order = sortOrder(playlist.tracks, sort.sort, sort.reversed, state.stats);
+  const shown = order.map((i) => playlist.tracks[i]);
   return (
     <div className="page">
       <div className="collection-header">
@@ -28,7 +31,8 @@ export function UserPlaylistPage({ id }: { id: string }) {
           <p className="eyebrow">Playlist{playlist.youtubeId ? ' · synchronisée avec YouTube' : ''}</p>
           <h1>{playlist.name}</h1>
           <div className="row-buttons">
-            <PlayShuffle tracks={playlist.tracks} />
+            <PlayShuffle tracks={shown} />
+            <SortButton state={sort} />
             <button className="button secondary" onClick={async () => {
               const name = await ask('Renommer la playlist', playlist.name, 'Renommer');
               if (name) renamePlaylist(playlist.id, name);
@@ -41,10 +45,10 @@ export function UserPlaylistPage({ id }: { id: string }) {
       </div>
       {!playlist.tracks.length && <p className="muted">Ajoute des titres avec le menu « … » d’un titre, puis « Ajouter à une playlist ».</p>}
       <div className="track-list">
-        {playlist.tracks.map((track, i) => (
-          <div key={`${track.id}-${i}`} draggable onDragStart={() => setDragged(i)} onDragOver={(e) => e.preventDefault()}
-            onDrop={() => { if (dragged != null && dragged !== i) moveInPlaylist(playlist.id, dragged, i); setDragged(null); }}>
-            <TrackRow track={track} index={i} onPlay={() => player.play(playlist.tracks, i)}
+        {shown.map((track, i) => (
+          <div key={`${track.id}-${order[i]}`} draggable={sort.manual} onDragStart={() => setDragged(i)} onDragOver={(e) => e.preventDefault()}
+            onDrop={() => { if (sort.manual && dragged != null && dragged !== i) moveInPlaylist(playlist.id, dragged, i); setDragged(null); }}>
+            <TrackRow track={track} index={i} onPlay={() => player.play(shown, i)}
               extraMenu={[{ label: '', separator: true }, { label: 'Retirer de la playlist', icon: 'trash', danger: true, action: () => removeFromPlaylist(playlist.id, track.id) }]} />
           </div>
         ))}
@@ -70,13 +74,15 @@ export function SongsPage() {
 export function LikedPage() {
   const state = useStore(library);
   const user = useStore(account);
+  const sort = useTrackSort('liked');
+  const shown = sortOrder(state.liked, sort.sort, sort.reversed, state.stats).map((i) => state.liked[i]);
   return (
     <div className="page">
       <PageTitle actions={user.signedIn && <button className="button secondary" onClick={() => void refreshAccount().then(() => notify('Likes synchronisés'))}>Synchroniser</button>}>
         Titres likés
       </PageTitle>
-      <PlayShuffle tracks={state.liked} />
-      {state.liked.length ? <TrackList tracks={state.liked} />
+      <div className="row-buttons"><PlayShuffle tracks={shown} /><SortButton state={sort} manualLabel="Derniers likés" /></div>
+      {state.liked.length ? <TrackList tracks={shown} />
         : <Empty icon="heart" title="Aucun titre liké" text="Clique sur le cœur d’un titre. Connecté à YouTube, tes likes sont les mêmes que sur l’iPhone." />}
     </div>
   );

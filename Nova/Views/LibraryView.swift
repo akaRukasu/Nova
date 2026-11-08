@@ -315,45 +315,80 @@ struct LibraryView: View {
 
 /// Liste de titres locale avec Lecture / Aléatoire.
 struct LocalTracksList: View {
-    @Environment(PlayerModel.self) private var player
     let tracks: [Track]
     var emptyTitle = "Aucun titre"
     var emptyIcon = "music.note"
     var emptyMessage = ""
     var onDelete: ((IndexSet) -> Void)?
     var onMove: ((IndexSet, Int) -> Void)?
+    /// Liste triable (bouton « Trier »), tri mémorisé sous cette clé.
+    var sortKey: String?
+    var manualSortLabel = "Ordre de la playlist"
 
     var body: some View {
+        if let sortKey {
+            SortedTracksList(list: self, state: SortState(key: sortKey))
+        } else {
+            TracksListBody(list: self, order: Array(tracks.indices), sorted: false)
+        }
+    }
+}
+
+private struct SortedTracksList: View {
+    @Environment(LibraryStore.self) private var library
+    let list: LocalTracksList
+    let state: SortState
+
+    var body: some View {
+        TracksListBody(list: list, order: state.sort.order(list.tracks, stats: library.stats, reversed: state.reversed), sorted: !state.isManual)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SortMenu(state: state, manualLabel: list.manualSortLabel)
+                }
+            }
+    }
+}
+
+/// Liste des titres dans l'ordre affiché (`order` : positions dans la liste d'origine).
+private struct TracksListBody: View {
+    @Environment(PlayerModel.self) private var player
+    let list: LocalTracksList
+    let order: [Int]
+    /// Trié autrement que dans l'ordre de la liste : on ne peut pas déplacer les titres à la main.
+    let sorted: Bool
+
+    var body: some View {
+        let shown = order.map { list.tracks[$0] }
         List {
-            if !tracks.isEmpty {
+            if !shown.isEmpty {
                 Section {
                     PlayShuffleButtons {
-                        player.play(tracks)
+                        player.play(shown)
                     } shuffle: {
-                        player.play(tracks, shuffled: true)
+                        player.play(shown, shuffled: true)
                     }
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                 }
                 Section {
-                    ForEach(Array(tracks.enumerated()), id: \.offset) { position, track in
-                        TrackRowButton(track: track, onRemove: onDelete == nil ? nil : { onDelete?(IndexSet(integer: position)) }) {
-                            player.play(tracks, startAt: position)
+                    ForEach(Array(shown.enumerated()), id: \.offset) { position, track in
+                        TrackRowButton(track: track, onRemove: list.onDelete == nil ? nil : { list.onDelete?(IndexSet(integer: order[position])) }) {
+                            player.play(shown, startAt: position)
                         }
                     }
-                    .onDelete(perform: onDelete)
-                    .onMove(perform: onMove)
+                    .onDelete(perform: list.onDelete.map { delete in { (positions: IndexSet) in delete(IndexSet(positions.map { order[$0] })) } })
+                    .onMove(perform: sorted ? nil : list.onMove)
                 } footer: {
-                    let total = tracks.compactMap(\.duration).reduce(0, +)
-                    let count = tracks.count == 1 ? "1 titre" : "\(tracks.count) titres"
+                    let total = shown.compactMap(\.duration).reduce(0, +)
+                    let count = shown.count == 1 ? "1 titre" : "\(shown.count) titres"
                     Text(total > 0 ? "\(count) • \(total.longDurationString)" : count)
                 }
             }
         }
         .listStyle(.plain)
         .overlay {
-            if tracks.isEmpty {
-                ContentUnavailableView(emptyTitle, systemImage: emptyIcon, description: Text(emptyMessage))
+            if shown.isEmpty {
+                ContentUnavailableView(list.emptyTitle, systemImage: list.emptyIcon, description: Text(list.emptyMessage))
             }
         }
     }
@@ -367,7 +402,9 @@ struct LikedTracksView: View {
                         emptyTitle: "Aucun titre liké",
                         emptyIcon: "heart",
                         emptyMessage: "Appuie sur le cœur dans le lecteur ou dans le menu d'un titre.",
-                        onDelete: { library.removeLiked(at: $0) })
+                        onDelete: { library.removeLiked(at: $0) },
+                        sortKey: "liked",
+                        manualSortLabel: "Derniers likés")
             .navigationTitle("Titres likés")
     }
 }
@@ -499,7 +536,9 @@ struct DownloadsView: View {
                         onDelete: { offsets in
                             let ids = offsets.map { downloads.tracks[$0].id }
                             ids.forEach { downloads.remove($0) }
-                        })
+                        },
+                        sortKey: "downloads",
+                        manualSortLabel: "Ordre de téléchargement")
             .safeAreaInset(edge: .top) {
                 if !downloads.pending.isEmpty {
                     HStack(spacing: 12) {
@@ -537,7 +576,8 @@ struct UserPlaylistView: View {
                         emptyIcon: "music.note.list",
                         emptyMessage: "Ajoute des titres avec le menu « … » › Ajouter à une playlist.",
                         onDelete: { library.removeTracks(at: $0, from: id) },
-                        onMove: { library.moveTracks(from: $0, to: $1, in: id) })
+                        onMove: { library.moveTracks(from: $0, to: $1, in: id) },
+                        sortKey: "playlist.\(id.uuidString)")
             .navigationTitle(playlist?.name ?? "Playlist")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {

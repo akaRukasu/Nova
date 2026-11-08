@@ -26,10 +26,19 @@ struct CollectionView: View {
                         artworkURL: header.artworkURL ?? collection.artworkURL)
     }
 
+    /// Tri choisi pour cette collection (bouton « Trier »), mémorisé.
+    private let sort: SortState
+
+    init(collection: MusicCollection) {
+        self.collection = collection
+        sort = SortState(key: "collection.\(collection.id)")
+    }
+
     var body: some View {
+        let tracks = sort.sort.order(self.tracks, stats: library.stats, reversed: sort.reversed).map { self.tracks[$0] }
         List {
             Section {
-                headerView
+                headerView(tracks)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
@@ -53,7 +62,7 @@ struct CollectionView: View {
             if content != nil {
                 Section {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { position, track in
-                        TrackRowButton(track: track, number: isAlbum ? position + 1 : nil) {
+                        TrackRowButton(track: track, number: isAlbum && sort.isManual ? position + 1 : nil) {
                             player.play(tracks, startAt: position)
                         }
                     }
@@ -90,6 +99,7 @@ struct CollectionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                SortMenu(state: sort, manualLabel: isAlbum ? "Ordre de l'album" : "Ordre de la playlist")
                 Button {
                     library.toggleSaved(savable)
                 } label: {
@@ -122,7 +132,7 @@ struct CollectionView: View {
         .task { if content == nil { await load() } }
     }
 
-    private var headerView: some View {
+    private func headerView(_ tracks: [Track]) -> some View {
         VStack(spacing: 10) {
             ArtworkThumb(urls: header.artworkURL.map { [$0] } ?? collection.artworkURLs, size: 230, corner: 18)
                 .shadow(color: .black.opacity(0.25), radius: 18, y: 10)

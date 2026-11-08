@@ -656,3 +656,6 @@ html.mini-window, html.mini-window body { background: var(--bg); }
 .mini-controls .mini-expand { color: var(--muted); margin-left: 4px; }
 .mini-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--line); cursor: pointer; }
 .mini-progress div { height: 100%; background: var(--accent); }
+.button.accent-text { color: var(--accent); }
+.row-buttons { align-items: center; }
+.row-buttons .play-shuffle { margin: 0; }
