@@ -295,8 +295,6 @@ final class LibraryStore {
         return playlist.id
     }
 
-    /// Import : remplace la playlist du même nom si elle existe (sans doublons), sinon la crée.
-    @discardableResult
     /// Bilan d'un import : titres ajoutés, déjà présents, doublons de la liste d'origine.
     struct ImportOutcome {
         var added = 0
@@ -347,6 +345,8 @@ final class LibraryStore {
         return ImportOutcome(added: fresh.count, alreadyPresent: incoming.count - fresh.count, duplicates: tracks.count - incoming.count)
     }
 
+    /// Remplace la playlist du même nom si elle existe (sans doublons), sinon la crée.
+    @discardableResult
     func upsertPlaylist(name: String, tracks: [Track]) -> UUID {
         var seenIDs = Set<String>()
         var seenKeys = Set<String>()
