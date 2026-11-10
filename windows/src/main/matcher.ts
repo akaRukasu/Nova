@@ -79,12 +79,16 @@ async function run(attempts: [string, SearchScope][], wanted: ImportedTrack): Pr
   let best: Scored | undefined;
   for (const [query, scope] of attempts) {
     if (!query.trim()) continue;
+    // Le réseau ou YouTube peuvent échouer : nouvel essai, sinon le titre passerait pour introuvable.
     let shelves;
-    try {
-      shelves = await search(query, scope);
-    } catch {
-      continue;
+    for (let attempt = 0; attempt < 3 && !shelves; attempt++) {
+      try {
+        shelves = await search(query, scope);
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1500 : 4000));
+      }
     }
+    if (!shelves) continue;
     const tracks = shelves.flatMap((s) => s.items.flatMap((i) => (i.type === 'track' ? [i.track] : [])));
     const found = bestCandidate(tracks, wanted, scope === 'video' ? 0.6 : scope === 'all' ? 0.2 : 0);
     if (found && (!best || found.score > best.score)) best = found;

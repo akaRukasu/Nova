@@ -82,6 +82,8 @@ class Engine {
   /** Transition préparée : titre suivant chargé, calé sur son premier temps, départ programmé. */
   private pending: { plan: MixPlan; deck: Deck; timer?: Timer } | null = null;
   private tempoTimer: Timer;
+  /** Lecteur YouTube Music : titre suivant déjà chargé (son coupé, en pause) dans l'autre lecteur. */
+  private preloaded: { id: string; deck: Deck; ready: boolean } | null = null;
   private analyzing = new Set<string>();
   private analysisChain: Promise<unknown> = Promise.resolve();
 
@@ -326,11 +328,21 @@ class Engine {
     setTime({ time: startAt, duration: known ?? 0 });
     if (!known) void this.fetchDuration(track);
     if (!track.square) void this.resolveArtwork(track);
+    // Titre préchargé dans l'autre lecteur (YouTube Music) : il prend le relais tout de suite.
+    const ready = this.preloaded?.id === track.id && this.preloaded.ready && startAt < 1 && this.decks.includes(this.preloaded.deck) ? this.preloaded : null;
+    this.preloaded = null;
+    if (ready) {
+      this.deck.pause();
+      this.deck.removeAttribute('src');
+      this.active = this.decks.indexOf(ready.deck);
+    } else {
+      this.dropPreloaded();
+    }
     const deck = this.deck;
     this.gain = gainFor(savedAnalysis(track.id), normalize());
     deck.playbackRate = 1;
     deck.volume = playerState.get().volume * this.gain;
-    deck.src = `nova-stream://audio/${encodeURIComponent(track.id)}`;
+    if (!ready) deck.src = `nova-stream://audio/${encodeURIComponent(track.id)}`;
     if (startAt > 1) deck.currentTime = startAt;
     if (paused) {
       set({ loading: false, playing: false });
@@ -416,6 +428,12 @@ class Engine {
         return this.prepareMix(plan);
       }
     }
+    // Lecteur YouTube Music sans AutoMix : le titre suivant est chargé 15 s avant la fin (sa page met quelques
+    // secondes à s'ouvrir), puis mis en pause : le passage au titre suivant est alors immédiat.
+    if (canMix && settings.transition !== 'automix' && this.deck instanceof WebDeck && time >= expected - 15) {
+      const next = queue[index + 1];
+      if (next && this.preloaded?.id !== next.id) this.preload(next);
+    }
     // Fondu enchaîné : il se termine avec le dernier son entendu (silence de fin ignoré quand le titre est analysé).
     if (canMix && settings.transition === 'crossfade') {
       const fade = settings.crossfadeSeconds;
@@ -450,7 +468,10 @@ class Engine {
     const incoming = this.deck;
     incoming.volume = 0;
     incoming.playbackRate = 1;
-    incoming.src = `nova-stream://audio/${encodeURIComponent(nextTrack.id)}`;
+    // Déjà chargé (lecteur YouTube Music) : on reprend la page ouverte au lieu de la recharger.
+    const reuse = this.preloaded?.id === nextTrack.id && this.preloaded.deck === incoming && this.preloaded.ready;
+    this.preloaded = null;
+    if (!reuse) incoming.src = `nova-stream://audio/${encodeURIComponent(nextTrack.id)}`;
     const outgoingGain = this.gain;
     this.gain = gainFor(savedAnalysis(nextTrack.id), normalize());
     const incomingGain = this.gain;
@@ -616,6 +637,31 @@ class Engine {
       }).catch(() => { if (this.pending === pending) this.cancelPending(); });
     } else {
       schedule();
+    }
+  }
+
+  private preload(next: Track) {
+    this.dropPreloaded();
+    const deck = this.decks[1 - this.active];
+    const entry = { id: next.id, deck, ready: false };
+    this.preloaded = entry;
+    deck.volume = 0;
+    deck.playbackRate = 1;
+    deck.src = `nova-stream://audio/${encodeURIComponent(next.id)}`;
+    deck.play().then(() => {
+      if (this.preloaded !== entry) return;
+      deck.pause();
+      deck.currentTime = 0;
+      entry.ready = true;
+    }).catch(() => { if (this.preloaded === entry) this.preloaded = null; });
+  }
+
+  private dropPreloaded() {
+    const entry = this.preloaded;
+    this.preloaded = null;
+    if (entry && entry.deck !== this.deck) {
+      entry.deck.pause();
+      entry.deck.removeAttribute('src');
     }
   }
 

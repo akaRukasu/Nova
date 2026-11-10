@@ -172,11 +172,34 @@ export function upsertPlaylist(name: string, tracks: Track[], youtubeId?: string
   return playlist;
 }
 
+/** Import : la playlist du même nom reçoit les titres qui lui manquent, sans doublon et sans rien retirer
+ * (un titre introuvable cette fois-ci n'efface pas l'ancien). Bilan : ajoutés, déjà présents, doublons d'origine. */
+export function importIntoPlaylist(name: string, tracks: Track[], youtubeId?: string) {
+  const incoming = dedupe(tracks);
+  const existing = library.get().playlists.find((p) => p.name.trim().toLowerCase() === name.trim().toLowerCase());
+  const outcome = { added: incoming.length, alreadyPresent: 0, duplicates: tracks.length - incoming.length };
+  if (!existing) {
+    upsertPlaylist(name, incoming, youtubeId);
+    return outcome;
+  }
+  const ids = new Set(existing.tracks.map((t) => t.id)), keys = new Set(existing.tracks.map(dedupeKey));
+  const fresh = incoming.filter((t) => !ids.has(t.id) && !keys.has(dedupeKey(t)));
+  outcome.added = fresh.length;
+  outcome.alreadyPresent = incoming.length - fresh.length;
+  // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
+  const incomingIds = new Set(incoming.map((t) => t.id)), incomingKeys = new Set(incoming.map(dedupeKey));
+  const ordered = incoming.map((t) => existing.tracks.find((e) => e.id === t.id || dedupeKey(e) === dedupeKey(t)) ?? t);
+  const kept = existing.tracks.filter((t) => !incomingIds.has(t.id) && !incomingKeys.has(dedupeKey(t)));
+  upsertPlaylist(name, [...ordered, ...kept], youtubeId ?? existing.youtubeId);
+  return outcome;
+}
+
 export function addToPlaylist(id: string, tracks: Track[]) {
   const playlist = library.get().playlists.find((p) => p.id === id);
   if (!playlist) return;
-  const known = new Set(playlist.tracks.map((t) => t.id));
-  const fresh = tracks.filter((t) => !known.has(t.id));
+  // Sans doublon : ni le même titre, ni une autre version du même morceau.
+  const known = new Set(playlist.tracks.map((t) => t.id)), keys = new Set(playlist.tracks.map(dedupeKey));
+  const fresh = tracks.filter((t) => !known.has(t.id) && !keys.has(dedupeKey(t)) && !!known.add(t.id) && !!keys.add(dedupeKey(t)));
   update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...fresh] } : p)) }));
   if (playlist.youtubeId && fresh.length && account.get().signedIn) {
     void api.addToAccountPlaylist(playlist.youtubeId, fresh.map((t) => t.id)).catch(() => undefined);

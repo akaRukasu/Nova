@@ -7,6 +7,7 @@ import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../s
 import { defaultSettings } from '../shared/types';
 import { searchConcerts } from '../main/concerts';
 import * as importer from '../main/importer';
+import { runImport as runImports } from '../main/importRun';
 import { lyrics } from '../main/lyrics';
 import { loadMatches, match, savedMatches } from '../main/matcher';
 import * as yt from '../main/yt';
@@ -95,40 +96,12 @@ async function configure(cookie?: string | null) {
 
 let importCancelled = false;
 
-async function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
+function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
   importCancelled = false;
-  const results: { name: string; tracks: Track[]; youtubeId?: string; missing: number }[] = [];
-  for (const playlist of playlists) {
-    const progress: ImportProgress = { name: playlist.name, total: playlist.tracks.length, processed: 0, matched: 0, missing: [], done: false };
-    const found: (Track | undefined)[] = new Array(playlist.tracks.length);
-    let next = 0;
-    const worker = async () => {
-      while (!importCancelled && next < playlist.tracks.length) {
-        const position = next++;
-        const wanted = playlist.tracks[position];
-        const track = wanted.youtubeId
-          ? { id: wanted.youtubeId, title: wanted.title, artist: wanted.artist, album: wanted.album, duration: wanted.duration }
-          : await match(wanted).catch(() => undefined);
-        found[position] = track;
-        progress.processed++;
-        if (track) progress.matched++;
-        else progress.missing.push(wanted);
-        if (progress.processed % 5 === 0 || progress.processed === progress.total) emit('import:progress', { ...progress });
-      }
-    };
-    await Promise.all([worker(), worker(), worker()]);
-    const seen = new Set<string>();
-    const tracks = found.filter((t): t is Track => !!t && !seen.has(t.id) && !!seen.add(t.id));
-    let youtubeId: string | undefined;
-    if (toAccount && tracks.length && !importCancelled) {
-      youtubeId = await yt.createAccountPlaylist(playlist.name, tracks.map((t) => t.id)).catch(() => undefined);
-    }
-    results.push({ name: playlist.name, tracks, youtubeId, missing: progress.missing.length });
-    emit('import:progress', { ...progress, done: true, playlistId: youtubeId });
-    await writeJSON('matches.json', savedMatches());
-    if (importCancelled) break;
-  }
-  return results;
+  return runImports(playlists, toAccount, {
+    emit: (progress) => emit('import:progress', progress), cancelled: () => importCancelled,
+    saveMatches: (entries) => writeJSON('matches.json', entries), width: 3,
+  });
 }
 
 /** Sélecteur de fichier du téléphone. */

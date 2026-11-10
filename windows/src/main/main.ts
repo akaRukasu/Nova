@@ -9,6 +9,7 @@ import { defaultSettings } from '../shared/types.js';
 import { searchConcerts } from './concerts.js';
 import { allowEverywhere, networkStatus } from './firewall.js';
 import * as importer from './importer.js';
+import { runImport as runImports } from './importRun.js';
 import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
 import { currentPairing, getRemoteState, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
@@ -134,42 +135,13 @@ async function logout() {
 
 let importCancelled = false;
 
-async function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
+function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
   importCancelled = false;
-  const results: { name: string; tracks: Track[]; youtubeId?: string; missing: number }[] = [];
-  for (const playlist of playlists) {
-    const progress: ImportProgress = { name: playlist.name, total: playlist.tracks.length, processed: 0, matched: 0, missing: [], done: false };
-    const found: (Track | undefined)[] = new Array(playlist.tracks.length);
-    let next = 0;
-    // Quatre recherches en parallèle : rapide, sans saturer YouTube Music.
-    const worker = async () => {
-      while (!importCancelled && next < playlist.tracks.length) {
-        const position = next++;
-        const wanted = playlist.tracks[position];
-        const track = wanted.youtubeId
-          ? { id: wanted.youtubeId, title: wanted.title, artist: wanted.artist, album: wanted.album, duration: wanted.duration }
-          : await match(wanted).catch(() => undefined);
-        found[position] = track;
-        progress.processed++;
-        if (track) progress.matched++;
-        else progress.missing.push(wanted);
-        if (progress.processed % 5 === 0 || progress.processed === progress.total) sendToUI('import:progress', { ...progress });
-      }
-    };
-    await Promise.all([worker(), worker(), worker(), worker()]);
-    const seen = new Set<string>();
-    const tracks = found.filter((t): t is Track => !!t && !seen.has(t.id) && !!seen.add(t.id));
-    let youtubeId: string | undefined;
-    // Compte YouTube connecté : la playlist est aussi créée sur le compte (visible sur l'iPhone).
-    if (toAccount && tracks.length && !importCancelled) {
-      youtubeId = await yt.createAccountPlaylist(playlist.name, tracks.map((t) => t.id)).catch(() => undefined);
-    }
-    results.push({ name: playlist.name, tracks, youtubeId, missing: progress.missing.length });
-    sendToUI('import:progress', { ...progress, done: true, playlistId: youtubeId });
-    await writeJSON('matches.json', savedMatches());
-    if (importCancelled) break;
-  }
-  return results;
+  // Quatre recherches en parallèle : rapide, sans saturer YouTube Music.
+  return runImports(playlists, toAccount, {
+    emit: (progress) => sendToUI('import:progress', progress), cancelled: () => importCancelled,
+    saveMatches: (entries) => writeJSON('matches.json', entries), width: 4,
+  });
 }
 
 // MARK: - Fenêtre

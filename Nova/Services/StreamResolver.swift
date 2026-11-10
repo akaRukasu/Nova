@@ -13,15 +13,16 @@ enum StreamResolver {
     private static let cache = ResolvedCache()
     private static let gate = ResolveGate()
 
-    /// `background` : préparation du titre suivant, téléchargements. Ces extractions passent une par une.
-    enum Urgency: Sendable { case playback, background }
+    /// `next` : titre suivant de la file, prioritaire sur les téléchargements ; `background` : téléchargements.
+    /// Ces deux-là passent une par une (le titre suivant en premier).
+    enum Urgency: Sendable { case playback, next, background }
 
     /// L'extraction exécute le code JavaScript de YouTube (JavaScriptCore) : c'est très gourmand.
     /// iOS ferme une app en arrière-plan qui dépasse 80 % de processeur pendant une minute : on n'en
     /// lance donc jamais deux pour le même titre, et une seule à la fois pour ce qui n'est pas urgent.
     static func audioStream(for videoID: String, urgency: Urgency = .playback) async throws -> Resolved {
         if let hit = await cache.value(for: videoID) { return hit }
-        let resolved = try await gate.run(videoID, urgent: urgency == .playback) {
+        let resolved = try await gate.run(videoID, urgent: urgency == .playback, first: urgency == .next) {
             if let hit = await cache.value(for: videoID) { return hit }
             return try await resolve(videoID)
         }
@@ -69,11 +70,11 @@ private actor ResolveGate {
 
     var isBusy: Bool { !tasks.isEmpty }
 
-    func run(_ id: String, urgent: Bool,
+    func run(_ id: String, urgent: Bool, first: Bool = false,
              work: @escaping @Sendable () async throws -> StreamResolver.Resolved) async throws -> StreamResolver.Resolved {
         if let running = tasks[id] { return try await running.value }
         if !urgent {
-            await acquire()
+            await acquire(first: first)
             // Pendant l'attente, le même titre a pu être lancé ailleurs.
             if let running = tasks[id] {
                 release()
@@ -89,9 +90,10 @@ private actor ResolveGate {
         return try await task.value
     }
 
-    private func acquire() async {
+    private func acquire(first: Bool) async {
         guard backgroundRunning else { backgroundRunning = true; return }
-        await withCheckedContinuation { waiters.append($0) }
+        // Titre suivant : passe devant les téléchargements en attente.
+        await withCheckedContinuation { first ? waiters.insert($0, at: 0) : waiters.append($0) }
     }
 
     private func release() {

@@ -16,6 +16,12 @@ final class ImportManager {
         var processed = 0
         var matched = 0
         var missing: [ImportedTrack] = []
+        /// Deuxième passage, plus lent, sur les titres introuvables (le réseau ou YouTube ont pu échouer).
+        var verifying = false
+        /// Bilan : ajoutés, déjà présents (rien n'est doublé), doublons dans la liste d'origine.
+        var added = 0
+        var alreadyPresent = 0
+        var duplicates = 0
         var isFinished = false
         var isCancelled = false
         var error: String?
@@ -105,26 +111,40 @@ final class ImportManager {
                 $0.total = tracks.count
                 $0.startedAt = Date()
             }
-            found = await match(tracks, jobID: jobID)
+            var results = await match(tracks, jobID: jobID, width: parallel)
+            // Vérification : les introuvables sont recherchés une seconde fois, plus lentement.
+            let missingPositions = results.indices.filter { results[$0] == nil }
+            if !missingPositions.isEmpty, job(jobID)?.isCancelled != true {
+                update(jobID) {
+                    $0.verifying = true
+                    $0.missing = []
+                }
+                let second = await match(missingPositions.map { tracks[$0] }, jobID: jobID, width: 2, verifying: true)
+                for (offset, position) in missingPositions.enumerated() { results[position] = second[offset] }
+                update(jobID) { $0.verifying = false }
+            }
+            found = results.compactMap { $0 }
         }
         guard job(jobID)?.isCancelled != true else { finishIfIdle(); return }
 
-        if playlist.isLiked {
-            library.addLiked(found)
-        } else if !found.isEmpty {
-            let playlistID = library.upsertPlaylist(name: playlist.name, tracks: found)
-            update(jobID) { $0.playlistID = playlistID }
+        let outcome = playlist.isLiked ? library.importIntoLiked(found)
+            : found.isEmpty ? LibraryStore.ImportOutcome() : library.importIntoPlaylist(name: playlist.name, tracks: found)
+        update(jobID) {
+            $0.playlistID = outcome.playlistID ?? $0.playlistID
+            $0.added = outcome.added
+            $0.alreadyPresent = outcome.alreadyPresent
+            $0.duplicates = outcome.duplicates
+            $0.isFinished = true
         }
-        update(jobID) { $0.isFinished = true }
         await MatchCache.shared.flush()
         finishIfIdle()
     }
 
-    /// Recherche les titres (dans l'ordre), `parallel` à la fois, en mettant à jour l'avancement.
-    private func match(_ tracks: [ImportedTrack], jobID: UUID) async -> [Track] {
+    /// Recherche les titres (dans l'ordre), `width` à la fois, en mettant à jour l'avancement.
+    /// `verifying` : second passage sur des titres déjà comptés (seuls les trouvés changent les chiffres).
+    private func match(_ tracks: [ImportedTrack], jobID: UUID, width: Int, verifying: Bool = false) async -> [Track?] {
         var results = [Track?](repeating: nil, count: tracks.count)
         let client = self.client
-        let width = parallel
         await withTaskGroup(of: (Int, Track?).self) { group in
             let first = min(width, tracks.count)
             for index in 0..<first {
@@ -134,7 +154,7 @@ final class ImportManager {
             for await (index, match) in group {
                 results[index] = match
                 update(jobID) { job in
-                    job.processed += 1
+                    if !verifying { job.processed += 1 }
                     if match != nil { job.matched += 1 } else { job.missing.append(tracks[index]) }
                 }
                 if job(jobID)?.isCancelled == true {
@@ -148,7 +168,7 @@ final class ImportManager {
                 }
             }
         }
-        return results.compactMap { $0 }
+        return results
     }
 
     /// Relance la recherche des titres introuvables (le réseau ou YouTube ont pu échouer).
@@ -164,7 +184,7 @@ final class ImportManager {
         }
         beginBackgroundTime()
         tasks[id] = Task {
-            let found = await match(missing, jobID: id)
+            let found = await match(missing, jobID: id, width: 2).compactMap { $0 }
             add(found, toJob: id, library: library)
             update(id) { $0.isFinished = true }
             await MatchCache.shared.flush()
@@ -184,13 +204,18 @@ final class ImportManager {
 
     private func add(_ tracks: [Track], toJob id: UUID, library: LibraryStore) {
         guard !tracks.isEmpty, let job = job(id) else { return }
+        let outcome: LibraryStore.ImportOutcome
         if job.isLiked {
-            library.addLiked(tracks)
-        } else if let playlistID = job.playlistID {
-            library.add(tracks, to: playlistID)
+            outcome = library.importIntoLiked(tracks)
+        } else if let playlistID = job.playlistID, let name = library.playlist(playlistID)?.name {
+            outcome = library.importIntoPlaylist(name: name, tracks: tracks)
         } else {
-            let playlistID = library.upsertPlaylist(name: job.name, tracks: tracks)
-            update(id) { $0.playlistID = playlistID }
+            outcome = library.importIntoPlaylist(name: job.name, tracks: tracks)
+        }
+        update(id) {
+            $0.playlistID = outcome.playlistID ?? $0.playlistID
+            $0.added += outcome.added
+            $0.alreadyPresent += outcome.alreadyPresent
         }
     }
 

@@ -659,3 +659,15 @@ html.mini-window, html.mini-window body { background: var(--bg); }
 .button.accent-text { color: var(--accent); }
 .row-buttons { align-items: center; }
 .row-buttons .play-shuffle { margin: 0; }
+
+/* Barre latérale masquée (bouton en haut à gauche, Ctrl+B) */
+@media (min-width: 761px) {
+  .app.sidebar-hidden { grid-template-columns: 0 1fr; }
+  .app.sidebar-hidden .sidebar { display: none; }
+  .app.sidebar-hidden main { grid-column: 2; grid-row: 1; }
+  .app.sidebar-hidden .titlebar { left: 0; }
+  .app.sidebar-hidden .toast { left: 50%; }
+}
+@media (max-width: 760px) {
+  .sidebar-toggle { display: none; }
+}

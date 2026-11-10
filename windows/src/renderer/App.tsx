@@ -44,6 +44,12 @@ export function App() {
   const nav = useStore(router);
   const route = currentRoute();
   const [drawer, setDrawer] = useState(false);
+  // Barre latérale masquée (bouton en haut à gauche, Ctrl+B) : choix mémorisé.
+  const [sidebarHidden, setSidebarHidden] = useState(() => localStorage.getItem('sidebarHidden') === '1');
+  const toggleSidebar = () => setSidebarHidden((hidden) => {
+    localStorage.setItem('sidebarHidden', hidden ? '0' : '1');
+    return !hidden;
+  });
   useEffect(() => setDrawer(false), [nav.position]);
 
   // Android : bouton Retour (lecteur plein écran, menu, page précédente) et touches multimédia de la télécommande.
@@ -75,6 +81,7 @@ export function App() {
       if (e.ctrlKey && e.key === 'ArrowRight') player.next();
       if (e.ctrlKey && e.key === 'ArrowLeft') player.previous();
       if (e.ctrlKey && e.key.toLowerCase() === 'l') nowPlayingOpen.set(nowPlayingOpen.get() === 'lyrics' ? false : 'lyrics');
+      if (e.ctrlKey && e.key.toLowerCase() === 'b' && !typing) { e.preventDefault(); toggleSidebar(); }
     };
     const onMouse = (e: MouseEvent) => {
       if (e.button === 3) back();
@@ -89,9 +96,11 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app ${drawer ? 'drawer-open' : ''}`}>
+    <div className={`app ${drawer ? 'drawer-open' : ''} ${sidebarHidden ? 'sidebar-hidden' : ''}`}>
       <div className="titlebar">
         <button className="icon-button menu-button" onClick={() => setDrawer(!drawer)} aria-label="Menu"><Icon name="list" size={20} /></button>
+        <button className="icon-button sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarHidden ? 'Afficher la barre latérale' : 'Masquer la barre latérale'}
+          title={`${sidebarHidden ? 'Afficher' : 'Masquer'} la barre latérale (Ctrl+B)`}><Icon name="sidebar" size={18} /></button>
         <button className="icon-button" disabled={nav.position === 0} onClick={back} aria-label="Retour"><Icon name="back" size={18} /></button>
         <button className="icon-button" disabled={nav.position >= nav.stack.length - 1} onClick={forward} aria-label="Avancer"><Icon name="forward" size={18} /></button>
       </div>

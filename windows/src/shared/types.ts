@@ -196,6 +196,8 @@ export interface ImportProgress {
   matched: number;
   missing: ImportedTrack[];
   done: boolean;
+  /** Seconde recherche des titres pas encore trouvés. */
+  verifying?: boolean;
   playlistId?: string;
 }
 

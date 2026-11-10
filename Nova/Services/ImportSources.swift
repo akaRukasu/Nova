@@ -559,7 +559,7 @@ enum TrackMatcher {
         var best: Scored?
         for (query, scope) in attempts where !query.trimmingCharacters(in: .whitespaces).isEmpty {
             if Task.isCancelled { return best }
-            guard let shelves = try? await client.search(query, scope: scope) else { continue }
+            guard let shelves = await searchWithRetry(query, scope: scope, client: client) else { continue }
             let penalty = scope == .videos ? 0.6 : (scope == .all ? 0.2 : 0)
             if let found = bestCandidate(shelves.flatMap(\.tracks), for: track, penalty: penalty),
                best == nil || found.score > best!.score {
@@ -569,6 +569,16 @@ enum TrackMatcher {
             if let best, best.score >= 4.5 { break }
         }
         return best
+    }
+
+    /// Recherche qui réessaie quand le réseau ou YouTube échoue (sinon le titre passerait pour introuvable).
+    private static func searchWithRetry(_ query: String, scope: SearchScope, client: InnerTubeClient) async -> [Shelf]? {
+        for attempt in 0..<3 {
+            if Task.isCancelled { return nil }
+            if let shelves = try? await client.search(query, scope: scope) { return shelves }
+            try? await Task.sleep(for: .seconds(attempt == 0 ? 1.5 : 4))
+        }
+        return nil
     }
 
     /// Correspondance retenue : bon score, ou score moyen confirmé par une durée identique.

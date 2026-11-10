@@ -12,8 +12,12 @@ final class PlayerModel {
 
     // MARK: État visible
 
-    private(set) var queue: [Track] = []
-    private(set) var index: Int = 0
+    private(set) var queue: [Track] = [] {
+        didSet { upcomingChanged() }
+    }
+    private(set) var index: Int = 0 {
+        didSet { upcomingChanged() }
+    }
     private(set) var isPlaying = false
     private(set) var isLoading = false
     private(set) var currentTime: TimeInterval = 0
@@ -894,19 +898,44 @@ final class PlayerModel {
     /// Seulement le titre suivant (plus le processeur ne suit pas en arrière-plan), après un délai
     /// pour ne pas concurrencer le démarrage du titre en cours, et jamais en double.
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
+    @ObservationIgnored private var prefetchTarget: String?
 
+    /// Titre suivant changé (lecture d'un autre titre, file modifiée, aléatoire…) : on le prépare.
+    private func upcomingChanged() {
+        guard !RemoteControl.shared.isActive else { return }
+        let next = queue.indices.contains(index + 1) ? queue[index + 1].id : nil
+        if next != prefetchTarget { prefetchNext() }
+    }
+
+    /// Le titre suivant est prêt bien avant la fin du titre en cours : lien du flux trouvé (prioritaire sur les
+    /// téléchargements), puis fichier mis en cache. Le passage au titre suivant est alors immédiat.
     private func prefetchNext() {
+        guard let next = queue.dropFirst(index + 1).first else {
+            prefetchTask?.cancel()
+            prefetchTarget = nil
+            return
+        }
+        // Déjà en préparation : on ne recommence pas.
+        if prefetchTarget == next.id, prefetchTask != nil { return }
         prefetchTask?.cancel()
-        guard let next = queue.dropFirst(index + 1).first, downloads.localURL(for: next.id) == nil else { return }
-        prefetchTask = Task.detached(priority: .background) {
-            try? await Task.sleep(for: .seconds(15))
-            guard !Task.isCancelled, await !AudioCache.shared.contains(next.id),
-                  let stream = try? await StreamResolver.audioStream(for: next.id, urgency: .background) else { return }
-            guard stream.isM4A else { return }
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled, NetworkMonitor.shared.allowsCaching else { return }
+        prefetchTarget = next.id
+        guard downloads.localURL(for: next.id) == nil else { return }
+        prefetchTask = Task.detached(priority: .utility) { [weak self] in
+            // Quelques secondes pour laisser démarrer le titre en cours.
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, await !AudioCache.shared.contains(next.id) else { return }
+            guard let stream = try? await StreamResolver.audioStream(for: next.id, urgency: .next) else {
+                // Échec (réseau…) : la préparation pourra être relancée au prochain titre.
+                await self?.prefetchFailed(next.id)
+                return
+            }
+            guard stream.isM4A, !Task.isCancelled, NetworkMonitor.shared.allowsCaching else { return }
             await AudioCache.shared.store(remote: stream.url, id: next.id)
         }
+    }
+
+    private func prefetchFailed(_ id: String) {
+        if prefetchTarget == id { prefetchTask = nil }
     }
 
     private func extendWithRadio(from seed: Track, thenAdvance: Bool = false) {
@@ -1115,10 +1144,29 @@ final class PlayerModel {
         if RemoteControl.shared.isActive { return }
         guard force || Date().timeIntervalSince(lastSessionSave) > 1 else { return }
         lastSessionSave = Date()
-        let session = Session(queue: queue, index: index, time: currentTime,
-                              repeatMode: repeatMode, unshuffledQueue: unshuffledQueue)
-        try? FileManager.default.createDirectory(at: sessionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(session).write(to: sessionURL, options: .atomic)
+        // Très longue file : seuls les titres autour du titre en cours sont gardés, et l'écriture se fait hors du
+        // fil principal (des milliers de titres réécrits toutes les 15 s ralentissaient l'app, écran verrouillé).
+        let start = min(max(0, index - 100), queue.count), end = max(start, min(queue.count, index + 1500))
+        let session = Session(queue: Array(queue[start..<end]), index: index - start, time: currentTime,
+                              repeatMode: repeatMode, unshuffledQueue: unshuffledQueue.map { Array($0.prefix(3000)) })
+        sessionVersion += 1
+        let version = sessionVersion, url = sessionURL
+        Task.detached(priority: .utility) { await SessionWriter.shared.write(session, version: version, to: url) }
+    }
+
+    @ObservationIgnored private var sessionVersion = 0
+
+    /// Écriture de la session, une à la fois, la plus récente seulement.
+    private actor SessionWriter {
+        static let shared = SessionWriter()
+        private var written = 0
+
+        func write<T: Encodable>(_ session: T, version: Int, to url: URL) {
+            guard version > written, let data = try? JSONEncoder().encode(session) else { return }
+            written = version
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     private func restoreSession() {

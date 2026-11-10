@@ -297,6 +297,56 @@ final class LibraryStore {
 
     /// Import : remplace la playlist du même nom si elle existe (sans doublons), sinon la crée.
     @discardableResult
+    /// Bilan d'un import : titres ajoutés, déjà présents, doublons de la liste d'origine.
+    struct ImportOutcome {
+        var added = 0
+        var alreadyPresent = 0
+        var duplicates = 0
+        var playlistID: UUID?
+    }
+
+    /// Titres sans doublon (même identifiant, ou même titre et artiste sous une autre version).
+    private static func unique(_ tracks: [Track]) -> [Track] {
+        var seenIDs = Set<String>(), seenKeys = Set<String>()
+        return tracks.filter { seenIDs.insert($0.id).inserted && seenKeys.insert(dedupeKey($0)).inserted }
+    }
+
+    /// Import dans une playlist : créée si besoin ; si elle existe déjà, les titres manquants y sont ajoutés
+    /// sans doublon et rien n'en est retiré (un titre introuvable cette fois-ci n'efface pas l'ancien).
+    func importIntoPlaylist(name: String, tracks: [Track]) -> ImportOutcome {
+        let incoming = Self.unique(tracks)
+        var outcome = ImportOutcome(duplicates: tracks.count - incoming.count)
+        let key = name.trimmingCharacters(in: .whitespaces)
+        guard let index = playlists.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(key) == .orderedSame }) else {
+            outcome.added = incoming.count
+            outcome.playlistID = createPlaylist(name: name, tracks: incoming)
+            markAdded(incoming)
+            return outcome
+        }
+        let existing = playlists[index].tracks
+        let knownIDs = Set(existing.map(\.id)), knownKeys = Set(existing.map(Self.dedupeKey))
+        let fresh = incoming.filter { !knownIDs.contains($0.id) && !knownKeys.contains(Self.dedupeKey($0)) }
+        outcome.alreadyPresent = incoming.count - fresh.count
+        outcome.added = fresh.count
+        // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
+        let incomingIDs = Set(incoming.map(\.id)), incomingKeys = Set(incoming.map(Self.dedupeKey))
+        let mapped = incoming.map { track in existing.first { $0.id == track.id || Self.dedupeKey($0) == Self.dedupeKey(track) } ?? track }
+        playlists[index].tracks = mapped + existing.filter { !incomingIDs.contains($0.id) && !incomingKeys.contains(Self.dedupeKey($0)) }
+        markAdded(fresh)
+        save()
+        outcome.playlistID = playlists[index].id
+        return outcome
+    }
+
+    /// Import dans les titres likés, sans doublon.
+    func importIntoLiked(_ tracks: [Track]) -> ImportOutcome {
+        let incoming = Self.unique(tracks)
+        let knownKeys = Set(liked.map(Self.dedupeKey))
+        let fresh = incoming.filter { !likedIDs.contains($0.id) && !knownKeys.contains(Self.dedupeKey($0)) }
+        addLiked(fresh)
+        return ImportOutcome(added: fresh.count, alreadyPresent: incoming.count - fresh.count, duplicates: tracks.count - incoming.count)
+    }
+
     func upsertPlaylist(name: String, tracks: [Track]) -> UUID {
         var seenIDs = Set<String>()
         var seenKeys = Set<String>()
@@ -330,8 +380,9 @@ final class LibraryStore {
     func add(_ tracks: [Track], to id: UUID) {
         markAdded(tracks)
         edit(id) { playlist in
-            let known = Set(playlist.tracks.map(\.id))
-            playlist.tracks += tracks.filter { !known.contains($0.id) }
+            // Sans doublon : ni le même titre, ni une autre version du même morceau.
+            var known = Set(playlist.tracks.map(\.id)), keys = Set(playlist.tracks.map(Self.dedupeKey))
+            playlist.tracks += tracks.filter { known.insert($0.id).inserted && keys.insert(Self.dedupeKey($0)).inserted }
         }
     }
 

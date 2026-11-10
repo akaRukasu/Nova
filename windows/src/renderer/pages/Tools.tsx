@@ -4,7 +4,7 @@ import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } 
 import { Icon } from '../components/icons';
 import { api, isAndroid, on } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
-import { account, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
@@ -24,6 +24,7 @@ export function ImportPage() {
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({});
   const [running, setRunning] = useState(false);
   const [toAccount, setToAccount] = useState(true);
+  const [outcomes, setOutcomes] = useState<Record<string, { added: number; alreadyPresent: number; duplicates: number }>>({});
 
   useEffect(() => on('import:progress', (p: ImportProgress) => setProgress((all) => ({ ...all, [p.name]: p }))), []);
 
@@ -47,9 +48,12 @@ export function ImportPage() {
     setProgress({});
     try {
       const results = await api.runImport(chosen, toAccount && user.signedIn);
-      for (const result of results) if (result.tracks.length) upsertPlaylist(result.name, result.tracks, result.youtubeId);
-      const total = results.reduce((sum, r) => sum + r.tracks.length, 0);
-      notify(`${total} titres importés dans ${results.length} playlist${results.length > 1 ? 's' : ''}`);
+      const done: typeof outcomes = {};
+      for (const result of results) if (result.tracks.length) done[result.name] = importIntoPlaylist(result.name, result.tracks, result.youtubeId);
+      setOutcomes(done);
+      const added = Object.values(done).reduce((sum, o) => sum + o.added, 0);
+      const present = Object.values(done).reduce((sum, o) => sum + o.alreadyPresent, 0);
+      notify(`${added} titre${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''}${present ? `, ${present} déjà présent${present > 1 ? 's' : ''}` : ''} dans ${results.length} playlist${results.length > 1 ? 's' : ''}`);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -63,7 +67,7 @@ export function ImportPage() {
       <PhoneTransfer />
       <h3 className="section-title">Depuis une autre plateforme</h3>
       <p className="muted">Copie le lien d’une playlist ou d’un album <b>Spotify</b>, <b>Deezer</b> (ou ton profil Deezer), <b>Apple Music</b> ou <b>YouTube</b>,
-        ou ouvre un export (CSV d’Exportify, TuneMyMusic, Soundiiz ; TXT « Artiste - Titre » ; JSON Spotify). Une playlist du même nom est remplacée, sans doublons.</p>
+        ou ouvre un export (CSV d’Exportify, TuneMyMusic, Soundiiz ; TXT « Artiste - Titre » ; JSON Spotify). Une playlist du même nom reçoit les titres qui lui manquent, sans doublons ; les titres pas trouvés du premier coup sont recherchés une seconde fois.</p>
       <form className="import-form" onSubmit={(e) => { e.preventDefault(); if (link.trim()) void load(() => api.importLink(link)); }}>
         <input placeholder="https://open.spotify.com/playlist/…" value={link} onChange={(e) => setLink(e.target.value)} />
         <button className="button" disabled={busy || !link.trim()}>Lire le lien</button>
@@ -85,7 +89,14 @@ export function ImportPage() {
                   {state && (
                     <div className="import-progress">
                       <progress max={state.total} value={state.processed} />
-                      <span className="muted small">{state.matched} trouvés{state.missing.length ? `, ${state.missing.length} introuvables` : ''}{state.done ? ' · terminé' : ''}</span>
+                      <span className="muted small">
+                        {state.verifying ? `Vérification : nouvelle recherche des titres pas encore trouvés… (${state.matched} / ${state.total} trouvés)`
+                          : state.done && !state.missing.length ? `✓ tous les titres trouvés (${state.matched} / ${state.total})`
+                          : `${state.matched} / ${state.total} trouvés${state.missing.length ? `, ${state.missing.length} introuvables` : ''}${state.done ? ' · terminé' : ''}`}
+                        {outcomes[playlist.name] && ` · ${outcomes[playlist.name].added} ajoutés`}
+                        {outcomes[playlist.name]?.alreadyPresent ? ` · ${outcomes[playlist.name].alreadyPresent} déjà présents (non doublés)` : ''}
+                        {outcomes[playlist.name]?.duplicates ? ` · ${outcomes[playlist.name].duplicates} doublons ignorés` : ''}
+                      </span>
                       {state.done && state.missing.length > 0 && <MissingTracks missing={state.missing} playlistName={playlist.name} />}
                     </div>
                   )}

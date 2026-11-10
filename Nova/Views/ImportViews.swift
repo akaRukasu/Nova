@@ -276,11 +276,15 @@ struct ImportJobsSection: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else if job.isFinished {
-                            Text(job.missing.isEmpty
-                                 ? "\(job.matched) titres importés"
-                                 : "\(job.matched) titres importés, \(job.missing.count) introuvables")
+                            Text(Self.summary(job))
                                 .font(.caption)
                                 .foregroundStyle(job.missing.isEmpty ? Color.secondary : Color.orange)
+                        } else if job.verifying {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Vérification : nouvelle recherche des titres pas encore trouvés…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else {
                             ProgressView(value: job.progress)
                             HStack {
@@ -319,6 +323,17 @@ struct ImportJobsSection: View {
         }
     }
 
+    /// Bilan : tout est là, ce qui était déjà présent (rien n'est doublé), ce qui reste introuvable.
+    static func summary(_ job: ImportManager.Job) -> String {
+        var parts: [String] = []
+        if job.missing.isEmpty { parts.append("✓ tous les titres trouvés (\(job.matched))") } else { parts.append("\(job.matched) / \(job.total) trouvés") }
+        if job.added > 0 { parts.append("\(job.added) ajoutés") }
+        if job.alreadyPresent > 0 { parts.append("\(job.alreadyPresent) déjà présents") }
+        if job.duplicates > 0 { parts.append("\(job.duplicates) doublons ignorés") }
+        if !job.missing.isEmpty { parts.append("\(job.missing.count) introuvables") }
+        return parts.joined(separator: " · ")
+    }
+
     static func format(_ seconds: TimeInterval) -> String {
         let minutes = Int(seconds / 60)
         return minutes >= 1 ? "\(minutes) min" : "\(Int(seconds)) s"
@@ -337,7 +352,12 @@ struct MissingTracksView: View {
         List {
             if let job {
                 Section {
-                    LabeledContent("Trouvés", value: "\(job.matched)")
+                    LabeledContent("Trouvés", value: "\(job.matched) / \(job.total)")
+                    if job.isFinished {
+                        LabeledContent("Ajoutés", value: "\(job.added)")
+                        if job.alreadyPresent > 0 { LabeledContent("Déjà présents (non doublés)", value: "\(job.alreadyPresent)") }
+                        if job.duplicates > 0 { LabeledContent("Doublons de la liste d'origine", value: "\(job.duplicates)") }
+                    }
                     LabeledContent("Introuvables", value: "\(job.missing.count)")
                     if !job.isFinished {
                         ProgressView(value: job.progress)
