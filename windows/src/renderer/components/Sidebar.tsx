@@ -10,6 +10,12 @@ import { ask, showMenu } from './menus';
 import { deletePlaylist, movePlaylist, renamePlaylist, saveSmartPlaylist } from '../lib/library';
 import { newSmartPlaylist } from '../pages/Library';
 
+const playlistSorts = [
+  ['manual', 'Ordre manuel'], ['az', 'Nom A à Z'], ['za', 'Nom Z à A'],
+  ['played', 'Écoutées récemment'], ['added', 'Ajoutées récemment'],
+] as const;
+type PlaylistSort = typeof playlistSorts[number][0];
+
 function Entry({ route, icon, label, active }: { route: Route; icon: string; label: string; active: boolean }) {
   return (
     <button className={`side-entry ${active ? 'active' : ''}`} onClick={() => root(route)}>
@@ -33,7 +39,19 @@ export function Sidebar() {
   const route = currentRoute();
   const [query, setQuery] = useState('');
   const [sorting, setSorting] = useState(false);
+  const [sort, setSort] = useState<PlaylistSort>(() => {
+    const saved = localStorage.getItem('novaPlaylistSort');
+    return playlistSorts.find(([id]) => id === saved)?.[0] ?? 'manual';
+  });
   const [draggedPlaylist, setDraggedPlaylist] = useState<string>();
+  const compareName = (a: { name: string }, b: { name: string }) =>
+    a.name.localeCompare(b.name, 'fr', { sensitivity: 'base', numeric: true });
+  const playlists = sort === 'manual' ? state.playlists : [...state.playlists].sort((a, b) => {
+    if (sort === 'az') return compareName(a, b);
+    if (sort === 'za') return compareName(b, a);
+    if (sort === 'played') return (b.lastPlayedAt ?? 0) - (a.lastPlayedAt ?? 0) || b.created - a.created;
+    return b.created - a.created || compareName(a, b);
+  });
   // Rubriques repliées (Bibliothèque, Playlists, Playlists partagées) : mémorisé.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('sidebarCollapsed') ?? '{}'); } catch { return {}; }
@@ -74,8 +92,16 @@ export function Sidebar() {
       </nav>}
       <div className="side-title">
         <SectionToggle id="playlists" label="Playlists" collapsed={collapsed} toggle={toggleSection} />
-        {state.playlists.length > 1 && <button className="icon-button playlist-sort-toggle" aria-label="Réorganiser les playlists"
-          title="Réorganiser les playlists" aria-pressed={sorting} onClick={() => { if (collapsed.playlists) toggleSection('playlists'); setSorting(!sorting); }}>
+        {state.playlists.length > 1 && <button className="icon-button playlist-sort-toggle" aria-label="Trier les playlists"
+          title="Trier les playlists" onClick={(event) => showMenu(event, playlistSorts.map(([id, label]) => ({
+            label: (sort === id ? '✓  ' : '') + label,
+            action: () => {
+              setSort(id);
+              localStorage.setItem('novaPlaylistSort', id);
+              setSorting(id === 'manual');
+              if (collapsed.playlists) toggleSection('playlists');
+            },
+          })))}>
           <Icon name="list" size={15} />
         </button>}
         <button className="icon-button" aria-label="Nouvelle playlist" onClick={(e) => showMenu(e, [
@@ -95,20 +121,20 @@ export function Sidebar() {
         {(state.smartPlaylists ?? []).map((p) => (
           <Entry key={p.id} route={{ name: 'smart', id: p.id }} icon="smart" label={p.name} active={is('smart', p.id)} />
         ))}
-        {state.playlists.map((p, position) => (
-          <div key={p.id} className="side-playlist-row" draggable={!isAndroid} data-dragging={draggedPlaylist === p.id}
+        {playlists.map((p, position) => (
+          <div key={p.id} className="side-playlist-row" draggable={sort === 'manual' && !isAndroid} data-dragging={draggedPlaylist === p.id}
             onDragStart={(event) => { event.dataTransfer.setData('text/plain', p.id); setDraggedPlaylist(p.id); }}
             onDragEnd={() => setDraggedPlaylist(undefined)}
             onDragOver={event => { if (draggedPlaylist) event.preventDefault(); }}
             onDrop={(event) => { event.preventDefault(); if (draggedPlaylist) movePlaylist(draggedPlaylist, position); setDraggedPlaylist(undefined); }}
             onContextMenu={(e) => showMenu(e, [
-            ...(position > 0 ? [{ label: 'Monter', action: () => movePlaylist(p.id, position - 1) }] : []),
-            ...(position + 1 < state.playlists.length ? [{ label: 'Descendre', action: () => movePlaylist(p.id, position + 1) }] : []),
+            ...(sort === 'manual' && position > 0 ? [{ label: 'Monter', action: () => movePlaylist(p.id, position - 1) }] : []),
+            ...(sort === 'manual' && position + 1 < state.playlists.length ? [{ label: 'Descendre', action: () => movePlaylist(p.id, position + 1) }] : []),
             { label: 'Renommer…', action: async () => { const name = await ask('Renommer la playlist', p.name, 'Renommer'); if (name) renamePlaylist(p.id, name); } },
             { label: 'Supprimer', icon: 'trash', danger: true, action: () => { deletePlaylist(p.id); notify(`« ${p.name} » supprimée`); } },
           ])}>
             <Entry route={{ name: 'playlist', id: p.id }} icon="list" label={p.name} active={is('playlist', p.id)} />
-            {sorting && <div className="playlist-sort-controls">
+            {sort === 'manual' && sorting && <div className="playlist-sort-controls">
               <button className="icon-button" aria-label={'Monter ' + p.name} disabled={!position} onClick={() => movePlaylist(p.id, position - 1)}>↑</button>
               <button className="icon-button" aria-label={'Descendre ' + p.name} disabled={position + 1 === state.playlists.length} onClick={() => movePlaylist(p.id, position + 1)}>↓</button>
             </div>}

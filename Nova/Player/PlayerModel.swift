@@ -38,6 +38,7 @@ final class PlayerModel {
     var showsOctaveAccount = false
     @ObservationIgnored private(set) lazy var octave = OctaveWebPlayer()
     @ObservationIgnored private var preferredSource: PlaybackSource = .octave
+    @ObservationIgnored private var playingPlaylistID: UUID?
     @ObservationIgnored private var octaveTrack: Track?
     @ObservationIgnored private var octaveNext: (original: Track, recording: Track)?
     @ObservationIgnored private var octaveMonitor: Task<Void, Never>?
@@ -454,7 +455,7 @@ final class PlayerModel {
         isLoading = false
         failureCount = 0
         currentGain = plan.incomingGain
-        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
+        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory, playlistID: playingPlaylistID)
         saveSession(force: true)
         updateNowPlaying()
         loadArtwork(for: track)
@@ -499,12 +500,13 @@ final class PlayerModel {
     // MARK: Commandes
 
     /// Lance une liste à partir d'un index, puis complète la file avec la radio du titre.
-    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false, source: PlaybackSource = .octave) {
+    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false, source: PlaybackSource = .octave, playlistID: UUID? = nil) {
         guard !tracks.isEmpty else { return }
         if RemoteControl.shared.isActive {
             Task { await RemoteControl.shared.send(["action": "playTracks", "index": start, "shuffled": shuffled, "playbackSource": source.rawValue], tracks: tracks) }
             return
         }
+        playingPlaylistID = playlistID
         preferredSource = source
         if shuffled {
             unshuffledQueue = tracks
@@ -953,7 +955,7 @@ final class PlayerModel {
                     updateNowPlaying()
                     return
                 }
-                if sample.mixing == true || sample.fading == true {
+                if sample.fading == true {
                     if let position = sample.outgoingPosition, position >= currentTime, position <= duration + 1 {
                         currentTime = position
                     }
@@ -1012,7 +1014,7 @@ final class PlayerModel {
                         recorded = true
                         var entry = current
                         entry.artworkURL = entry.artworkURL ?? selected.artworkURL ?? sample.artwork
-                        library.recordPlay(entry, addToHistory: PlaybackSettings.recordHistory)
+                        library.recordPlay(entry, addToHistory: PlaybackSettings.recordHistory, playlistID: playingPlaylistID)
                         recordOctaveHistory(current)
                     }
                 }
@@ -1086,7 +1088,7 @@ final class PlayerModel {
         isLoading = false
         failureCount = 0
         endLoadingBackgroundTask()
-        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory)
+        library.recordPlay(track, addToHistory: PlaybackSettings.recordHistory, playlistID: playingPlaylistID)
         updateNowPlaying()
         prefetchNext()
     }

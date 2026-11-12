@@ -1,4 +1,4 @@
-import type { LibraryState, Track } from '../../shared/types';
+import type { Collection, LibraryState, Track } from '../../shared/types';
 import { songs } from './library';
 
 export type LibraryGroupKind = 'album' | 'artist';
@@ -20,7 +20,7 @@ export function libraryGroups(state: LibraryState, kind: LibraryGroupKind, singl
   const byCatalogID = new Map<string, string>();
   const importedAt = new Map<string, number>();
   for (const playlist of state.playlists) {
-    for (const track of playlist.tracks) importedAt.set(track.id, Math.max(playlist.created, importedAt.get(track.id) ?? 0));
+    for (const track of playlist.tracks) importedAt.set(track.id, Math.min(playlist.created, importedAt.get(track.id) ?? Infinity));
   }
   for (const track of songs(state)) {
     const title = kind === 'artist' ? track.artist.trim() : track.album?.trim() || (singles ? track.title : '');
@@ -40,6 +40,22 @@ export function libraryGroups(state: LibraryState, kind: LibraryGroupKind, singl
     }
   }
   return [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' }));
+}
+
+export function recentLibraryEntries(state: LibraryState) {
+  const groups = libraryGroups(state, 'album', true);
+  const byId = new Map(groups.flatMap(group => group.tracks.flatMap(track => track.albumId ? [[track.albumId, group] as const] : [])));
+  const saved: Collection[] = [];
+  for (const album of state.saved) {
+    if (album.kind !== 'album') continue;
+    const existing = byId.get(album.id) ?? groups.find(group => group.id === [key(album.title), key(album.subtitle ?? '')].join('|'));
+    if (existing) existing.addedAt = Math.max(existing.addedAt, album.addedAt ?? 0);
+    else saved.push(album);
+  }
+  return [
+    ...groups.map(group => ({ kind: 'group' as const, addedAt: group.addedAt, title: group.title, group })),
+    ...saved.map(album => ({ kind: 'album' as const, addedAt: album.addedAt ?? 0, title: album.title, album })),
+  ].sort((a, b) => b.addedAt - a.addedAt || a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' }));
 }
 
 export function releaseType(group: LibraryGroup) {

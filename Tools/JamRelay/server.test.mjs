@@ -38,3 +38,39 @@ test('two clients discover, join and share a Jam through a private relay', async
   await send({ action: 'leave', room: host.id, token: host.token });
   assert.equal((await send({ action: 'poll', room: host.id, token: guest.token, after: 0 }))[0], 404);
 });
+
+test('an invitation grants guest access to one room and expires when the host ends it', async t => {
+  const key = randomBytes(24).toString('hex');
+  const track = { id: 'octave:15523772', title: 'Deer Dance', artist: 'System Of A Down' };
+  const server = createJamRelay(key, async query => {
+    assert.equal(query, 'Deer Dance');
+    return [track];
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/nova-jam';
+  async function send(action, secret, fields = {}) {
+    const response = await fetch(endpoint, { method: 'POST', body: JSON.stringify({ action, ...fields }),
+      headers: { Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json' } });
+    return [response.status, await response.json()];
+  }
+  assert.equal((await fetch(endpoint + '/app/')).status, 200);
+  assert.equal((await fetch(endpoint + '/app/manifest.webmanifest')).status, 200);
+  const [, host] = await send('host', key, { name: 'Hôte' });
+  const [, other] = await send('host', key, { name: 'Autre' });
+  assert.notEqual(host.invite, key);
+  assert.equal((await send('list', host.invite))[0], 401);
+  assert.equal((await send('host', host.invite))[0], 401);
+  assert.equal((await send('join', host.invite, { room: other.id }))[0], 403);
+  const room = host.id;
+  const [, guest] = await send('join', host.invite, { room, name: 'Invité Web' });
+  assert.deepEqual(await send('search', host.invite, { room, token: guest.token, query: 'Deer Dance' }), [200, { tracks: [track] }]);
+  assert.equal((await send('leave', host.invite, { room, token: host.token }))[0], 403);
+  assert.equal((await send('send', host.invite, { room, token: guest.token, event: { type: 'add', track } }))[0], 200);
+  const [, polled] = await send('poll', key, { room, token: host.token });
+  assert.deepEqual(polled.events[0].event.track, track);
+  assert.equal((await send('leave', host.invite, { room, token: guest.token }))[0], 200);
+  assert.equal((await send('poll', host.invite, { room, token: guest.token }))[0], 403);
+  assert.equal((await send('leave', key, { room, token: host.token }))[0], 200);
+  assert.equal((await send('join', host.invite, { room }))[0], 404);
+});

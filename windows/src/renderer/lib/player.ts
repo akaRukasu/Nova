@@ -169,8 +169,11 @@ class Engine {
 
   // MARK: Commandes
 
-  play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false) {
+  private playlistId?: string;
+
+  play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false, playlistId?: string) {
     if (!tracks.length) return;
+    this.playlistId = playlistId;
     this.preferredSource = source ?? (supportsOctave ? 'octave' : undefined);
     start = Math.min(Math.max(Math.trunc(start) || 0, 0), tracks.length - 1);
     if (shuffle) {
@@ -186,8 +189,14 @@ class Engine {
     if (!paused && playerState.get().queue.length - playerState.get().index <= 1) void this.extendWithRadio();
   }
 
-  playPlaylist(tracks: Track[], start = 0, shuffle = false) {
-    this.play(tracks, start, shuffle, supportsOctave ? library.get().settings.playlistSource ?? 'octave' : undefined);
+  playPlaylist(tracks: Track[], start = 0, shuffle = false, playlistId?: string) {
+    this.play(tracks, start, shuffle, supportsOctave ? library.get().settings.playlistSource ?? 'octave' : undefined, 0, false, playlistId);
+  }
+
+  recordListen(track: Track, playedAt = Date.now()) {
+    const playlist = this.playlistId && library.get().playlists.find(p => p.id === this.playlistId);
+    const fromPlaylist = playlist && playlist.tracks.some(t => t.id === track.id || (t.youtubeId && t.youtubeId === track.youtubeId));
+    recordPlay(track, playedAt, fromPlaylist ? playlist.id : undefined);
   }
 
   switchSource(source: PlaybackSource) {
@@ -304,13 +313,15 @@ class Engine {
         if (matches) return { ...state, index: index + 1 };
         return { ...state, index: index + 1, queue: [...queue.slice(0, index + 1), next, ...queue.slice(index + 1)] };
       });
-      this.updateMediaSession();
-      this.saveSession();
       this.octaveNext = undefined;
       this.prepareOctaveNext(status.request);
     }
     setTime({ time: status.time, duration: status.duration || timeState.get().duration });
     if (status.playing !== playerState.get().playing) set({ playing: status.playing });
+    if (status.track) {
+      this.updateMediaSession();
+      this.saveSession();
+    }
     if (status.ended) {
       this.octaveLoaded = false;
       if (playerState.get().repeat === 'one') this.load();
@@ -598,7 +609,7 @@ class Engine {
   private started(track: Track) {
     if (currentTrack()?.id !== track.id || this.usingOctave) return;
     set({ playing: true, loading: false });
-    recordPlay(track);
+    this.recordListen(track);
     this.updateMediaSession();
     // Titre suivant préparé après 15 s (une seule extraction à la fois, côté processus principal).
     clearTimeout(this.prefetchTimer);
@@ -1125,5 +1136,5 @@ on('media:key', (action: string, seconds?: number) => {
 on('webplayer:consent', (visible: boolean) => {
   if (visible) notify('YouTube demande ton choix pour les cookies : réponds dans la fenêtre YouTube, la musique démarre ensuite.');
 });
-if (supportsOctave) on('octave:played', (track: Track, playedAt: number) => recordPlay(track, playedAt));
+if (supportsOctave) on('octave:played', (track: Track, playedAt: number) => player.recordListen(track, playedAt));
 if (supportsOctave) on('octave:sync-error', () => notify('Écoute gardée dans Nova. YouTube Music n’a pas accepté la synchronisation.'));

@@ -34,6 +34,7 @@ if (process.isMainFrame && location.origin === 'https://music.octavestreaming.co
       const positionState = session.setPositionState;
       const setActionHandler = session.setActionHandler;
       let active: WeakRef<HTMLAudioElement> | undefined;
+      let stable: WeakRef<HTMLAudioElement> | undefined;
       let seekHandler: MediaSessionActionHandler | null = null;
 
       window.Audio = new Proxy(window.Audio, {
@@ -73,10 +74,16 @@ if (process.isMainFrame && location.origin === 'https://music.octavestreaming.co
             const players = availablePlayers();
             const playing = players.filter((audio) => !audio.paused && !audio.ended);
             const anchored = active?.deref();
+            const outgoing = stable?.deref();
+            const engine = (window as Window & { __octaveEngine?: { isFading?: boolean } }).__octaveEngine;
+            const fading = Boolean(engine?.isFading && outgoing && !outgoing.paused && !outgoing.ended
+              && outgoing.duration - outgoing.currentTime > 0.08 && outgoing.duration - outgoing.currentTime <= 28);
             const audio = playing.length === 1 ? playing[0]
               : anchored && players.includes(anchored) ? anchored
                 : players.length === 1 ? players[0] : undefined;
-            return audio ? { position: audio.currentTime, duration: audio.duration, ended: audio.ended } : undefined;
+            if (audio && !fading && playing.includes(audio)) stable = new WeakRef(audio);
+            return audio ? { position: audio.currentTime, duration: audio.duration, ended: audio.ended,
+              playing: playing.length > 0, fading, outgoingPosition: fading ? outgoing?.currentTime : undefined } : undefined;
           },
           seek(seconds: number) {
             if (!seekHandler || !Number.isFinite(seconds) || seconds < 0) return false;

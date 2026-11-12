@@ -1,5 +1,5 @@
 // Bibliothèque : playlists, morceaux, titres likés, historique, albums, ajouts récents, playlists intelligentes.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Item, SmartField, SmartOperator, SmartPlaylist, SmartRule, Track } from '../../shared/types';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
@@ -12,7 +12,7 @@ import {
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open, root } from '../lib/router';
-import { libraryGroups, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
+import { libraryGroups, recentLibraryEntries, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
 import { useStore } from '../lib/store';
 import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
 
@@ -33,7 +33,7 @@ export function UserPlaylistPage({ id }: { id: string }) {
           <p className="eyebrow">Playlist{playlist.youtubeId ? ' · synchronisée avec YouTube' : ''}</p>
           <h1>{playlist.name}</h1>
           <div className="row-buttons">
-            <PlayShuffle tracks={shown} playlist />
+            <PlayShuffle tracks={shown} playlist playlistId={id} />
             <SortButton state={sort} />
             <button className="button secondary" disabled={!!verification || !playlist.tracks.length} onClick={() => {
               setVerification('Vérification…');
@@ -57,7 +57,7 @@ export function UserPlaylistPage({ id }: { id: string }) {
         {shown.map((track, i) => (
           <div key={`${track.id}-${order[i]}`} draggable={sort.manual} onDragStart={() => setDragged(i)} onDragOver={(e) => e.preventDefault()}
             onDrop={() => { if (sort.manual && dragged != null && dragged !== i) moveInPlaylist(playlist.id, dragged, i); setDragged(null); }}>
-            <TrackRow track={track} index={i} onPlay={() => player.playPlaylist(shown, i)}
+            <TrackRow track={track} index={i} onPlay={() => player.playPlaylist(shown, i, false, id)}
               extraMenu={[{ label: '', separator: true }, { label: 'Retirer de la playlist', icon: 'trash', danger: true, action: () => removeFromPlaylist(playlist.id, track.id) }]} />
           </div>
         ))}
@@ -143,13 +143,17 @@ export function HistoryPage() {
 
 function GroupCards({ groups, kind }: { groups: LibraryGroup[]; kind: LibraryGroupKind }) {
   return <div className="card-grid">
-    {groups.map(group => <button className="library-group-card" key={group.id}
+    {groups.map(group => <GroupCard key={group.id} group={group} kind={kind} />)}
+  </div>;
+}
+
+function GroupCard({ group, kind }: { group: LibraryGroup; kind: LibraryGroupKind }) {
+  return <button className="library-group-card"
       onClick={() => open({ name: 'libraryGroup', kind, id: group.id })}>
       <Artwork track={group.artworkTrack} size={176} radius={12} round={kind === 'artist'} />
       <span className="card-title">{group.title}</span>
       <span className="card-subtitle">{kind === 'artist' ? group.tracks.length + ' titres' : group.subtitle + ' · ' + releaseType(group)}</span>
-    </button>)}
-  </div>;
+    </button>;
 }
 
 export function AlbumsPage({ kind = 'album' }: { kind?: LibraryGroupKind }) {
@@ -201,19 +205,32 @@ export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupK
 export function RecentPage() {
   const state = useStore(library);
   const [limit, setLimit] = useState(60);
-  const groups = useMemo(() => libraryGroups(state, 'album', true)
-    .sort((a, b) => b.addedAt - a.addedAt || a.title.localeCompare(b.title, 'fr')), [state]);
-  const known = new Set(groups.flatMap(group => group.tracks.map(track => track.albumId)));
-  const saved: Item[] = state.saved.filter(collection => collection.kind === 'album' && !known.has(collection.id))
-    .map(collection => ({ type: 'collection', collection }));
+  const sentinel = useRef<HTMLDivElement>(null);
+  const entries = useMemo(() => recentLibraryEntries(state), [state.playlists, state.liked, state.added, state.saved, state.stats]);
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target || limit >= entries.length) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setLimit(current => Math.min(current + 60, entries.length));
+    }, { rootMargin: '480px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [limit, entries.length]);
   return (
     <div className="page">
       <PageTitle>Ajouts récents</PageTitle>
-      {groups.length ? <>
-        <GroupCards groups={groups.slice(0, limit)} kind="album" />
-        {groups.length > limit && <button className="button secondary" onClick={() => setLimit(limit + 60)}>Afficher la suite</button>}
-      </> : !saved.length && <Empty icon="clock" title="Rien d’ajouté récemment" />}
-      {saved.length > 0 && <section className="shelf"><header className="shelf-header"><h2>Albums enregistrés</h2></header><CardGrid items={saved} /></section>}
+      {entries.length ? <div className="card-grid">
+        {entries.slice(0, limit).map(entry => entry.kind === 'group'
+          ? <GroupCard key={'group:' + entry.group.id} group={entry.group} kind="album" />
+          : <button key={'album:' + entry.album.id} className="library-group-card"
+            onClick={() => open({ name: 'collection', collection: entry.album })}>
+            <Artwork track={{ id: entry.album.id, title: entry.title, artist: entry.album.subtitle ?? '', artwork: entry.album.artwork, square: true }}
+              size={176} radius={12} />
+            <span className="card-title">{entry.title}</span>
+            <span className="card-subtitle">{[entry.album.subtitle, 'Album'].filter(Boolean).join(' · ')}</span>
+          </button>)}
+      </div> : <Empty icon="clock" title="Rien d’ajouté récemment" />}
+      {entries.length > limit && <div ref={sentinel} aria-hidden="true" style={{ height: 1 }} />}
     </div>
   );
 }

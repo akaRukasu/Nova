@@ -370,7 +370,20 @@ function handle(channel: string, listener: (...args: any[]) => unknown) {
   ipcMain.handle(channel, (_event, ...args) => listener(...args));
 }
 
-app.on('second-instance', () => {
+function invitationArgument(args: string[]) {
+  for (const value of args) {
+    if (!value.startsWith('nova://jam/invite?')) continue;
+    try { return new URL(value).searchParams.get('link') ?? undefined; } catch { return; }
+  }
+}
+
+let pendingJamInvitation = invitationArgument(process.argv);
+app.on('second-instance', (_event, args) => {
+  const link = invitationArgument(args);
+  if (link) {
+    if (uiReady) sendToUI('jam:invitation', link);
+    else pendingJamInvitation = link;
+  }
   // Nova relancé : si la fenêtre existante est vide ou plantée, elle est rechargée (ou recréée).
   if (!window || window.isDestroyed()) return void createWindow();
   log(`Nova relancé alors qu'il est ouvert (interface prête : ${uiReady})`);
@@ -379,7 +392,7 @@ app.on('second-instance', () => {
   window.show();
   window.focus();
   // Relancé peu après l'ouverture : souvent parce que la fenêtre reste vide. On demande (fenêtre de Windows, toujours visible).
-  if (Date.now() - windowCreatedAt < 10 * 60_000) void askAboutBlankWindow(window);
+  if (!link && Date.now() - windowCreatedAt < 10 * 60_000) void askAboutBlankWindow(window);
 });
 
 async function askAboutBlankWindow(target: BrowserWindow) {
@@ -405,6 +418,12 @@ async function askAboutBlankWindow(target: BrowserWindow) {
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.akarukasu.nova');
   handleStreams();
+  if (app.isPackaged) app.setAsDefaultProtocolClient('nova');
+  handle('jam:initialInvitation', () => {
+    const link = pendingJamInvitation;
+    pendingJamInvitation = undefined;
+    return link;
+  });
   loadMatches(await readJSON('matches.json', {}));
   const cookie = await loadCookie();
   await configureYouTube(cookie);
@@ -479,6 +498,10 @@ app.whenReady().then(async () => {
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;
+    if (pendingJamInvitation) {
+      sendToUI('jam:invitation', pendingJamInvitation);
+      pendingJamInvitation = undefined;
+    }
     log(`Interface prête en ${Date.now() - windowCreatedAt} ms`);
     setTimeout(() => void checkDisplay(), 2500);
   });

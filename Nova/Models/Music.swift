@@ -148,6 +148,7 @@ struct UserPlaylist: Identifiable, Codable, Hashable {
     var name: String
     var tracks: [Track] = []
     var createdAt = Date()
+    var lastPlayedAt: Date?
 
     var totalDuration: TimeInterval { tracks.compactMap(\.duration).reduce(0, +) }
 }

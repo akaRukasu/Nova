@@ -21,8 +21,9 @@ type Sample = {
   upcoming?: Track[];
   mixing?: boolean;
   fading?: boolean;
+  outgoingPosition?: number;
 };
-type OctaveMedia = { read(): { position: number; duration: number; ended: boolean } | undefined; seek(seconds: number): boolean };
+type OctaveMedia = { read(): { position: number; duration: number; ended: boolean; playing: boolean; fading: boolean; outgoingPosition?: number } | undefined; seek(seconds: number): boolean };
 type Playback = {
   request: number; track: Track; source: Track; position: number; duration: number; heard: number; recorded: boolean; playing: boolean;
   stoppedAt?: number;
@@ -35,6 +36,7 @@ type Playback = {
 function readPlayback(targetId?: string): Sample {
   const player = navigator.mediaSession;
   const metadata = player?.metadata;
+  const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
   const media = (window as Window & { __novaOctaveMedia?: OctaveMedia }).__novaOctaveMedia?.read();
   const position = [...document.querySelectorAll<HTMLInputElement>('input[aria-label="Seek"]')]
     .find((slider) => slider.getClientRects().length && Number(slider.max) > 0);
@@ -56,17 +58,19 @@ function readPlayback(targetId?: string): Sample {
     }) : [];
   return {
     id: document.querySelector<HTMLElement>('[data-track-id][data-active="true"]')?.dataset.trackId,
-    title: metadata?.title ?? '', artist: metadata?.artist ?? '',
+    title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
+    artist: nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '',
     album: metadata?.album || undefined, artwork: metadata?.artwork.find((item) => item.src.startsWith('https://'))?.src,
     position: media?.position ?? (position ? Number(position.value) : undefined),
     duration: media?.duration ?? Number(position?.max ?? 0),
-    playing: player?.playbackState === 'playing',
+    playing: media ? media.playing : player?.playbackState === 'playing',
     ended: media?.ended,
     blocked: gate?.getClientRects().length ? 'sign-in' : notice?.getClientRects().length ? 'interaction' : undefined,
     targetRow: targetId ? Boolean(document.querySelector(`main [data-track-id="${targetId}"]`)) : undefined,
     upcoming,
-    mixing: Boolean(document.querySelector('[data-automix-indicator]')),
-    fading: Boolean((window as Window & { __octaveEngine?: { isFading: boolean } }).__octaveEngine?.isFading),
+    mixing: media?.fading ?? false,
+    fading: media?.fading,
+    outgoingPosition: media?.outgoingPosition,
   };
 }
 
@@ -545,7 +549,7 @@ export class OctavePlayer {
 
   private matches(track: Track, sample: Sample): boolean {
     const id = octaveCatalogId(track.id);
-    if (id && sample.id && sample.id !== id) return false;
+    if (!sample.title) return !!id && sample.id === id;
     return sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist});
   }
 
@@ -562,18 +566,18 @@ export class OctavePlayer {
         this.status({ request: playback.request, time: playback.position, duration: playback.duration, playing: false, signIn: true });
         return;
       }
-      if (!sample.title || sample.position === undefined) return;
-      if (sample.mixing || sample.fading) {
+      if (sample.position === undefined) return;
+      if (sample.fading) {
         // Octave peut publier les métadonnées du titre entrant avant la fin du fondu.
         // Attendre la fin de sa transition avant de déplacer la file Nova.
-        if (this.matches(playback.source, sample)) playback.position = sample.position;
+        if (sample.outgoingPosition != null && sample.outgoingPosition >= playback.position) playback.position = sample.outgoingPosition;
         this.status({request:playback.request,time:playback.position,duration:playback.duration,
           playing:sample.playing, mixing:sample.mixing, upcoming:sample.upcoming});
         return;
       }
       const delta = sample.position - playback.position;
       let next: Track | undefined;
-      if (!this.matches(playback.source, sample) && sample.playing) {
+      if (sample.title && !this.matches(playback.source, sample) && sample.playing) {
         playback.metadataChangedAt ??= Date.now();
         if (Date.now() - playback.metadataChangedAt < 1200 && Math.abs(sample.duration - playback.duration) < 1.1
           && playback.position > 3 && Math.abs(sample.position - playback.position) < 2) return;

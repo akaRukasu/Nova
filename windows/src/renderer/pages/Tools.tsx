@@ -5,13 +5,14 @@ import { octaveAudioDefaults } from '../../shared/octave';
 import { Icon } from '../components/icons';
 import { EQ_PRESETS } from '../lib/equalizer';
 import { api, isAndroid, on, supportsOctave } from '../lib/api';
-import { jam, jamCommand, joinJam, joinRemoteJam, leaveJam, refreshJamCircle, saveJamCircle, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
+import { jam, jamCommand, joinJam, joinJamInvitation, joinRemoteJam, leaveJam, openJamInvitation, refreshJamCircle, saveJamCircle, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import { player } from '../lib/player';
 import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
+import { ask } from '../components/menus';
 import { Empty, PageTitle } from './common';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -374,6 +375,10 @@ export function JamPage() {
         <span className="jam-hero-icon"><Icon name="jam" size={30} /></span>
         <div><p>Jam Nova</p><h1>Écoutez ensemble</h1><span>Une file commune. Chacun peut proposer le prochain titre.</span></div>
       </header>
+      {state.pendingInvitation && <section className="jam-panel">
+        <h2>Invitation à un Jam</h2>
+        <button className="button" disabled={state.connecting} onClick={() => void joinJamInvitation()}>Rejoindre la session</button>
+      </section>}
       {state.role === 'none' && (
         <div className="jam-start">
           <label className="field">Ton prénom
@@ -383,6 +388,10 @@ export function JamPage() {
             <section className="jam-panel">
               <h2>À distance</h2>
               <p className="muted">Retrouve les Jams des amis de ton cercle, où qu’ils soient.</p>
+              <button className="button secondary" onClick={async () => {
+                const link = await ask('Lien d’invitation à un Jam', '', 'Ouvrir');
+                if (link && !openJamInvitation(link)) notify('Ce lien ne correspond pas à une invitation Jam.');
+              }}>J’ai un lien d’invitation</button>
               <form onSubmit={event => {
                 event.preventDefault();
                 try { saveJamCircle(circle); setCircleError(undefined); } catch (error) { setCircleError(errorText(error)); }
@@ -391,7 +400,7 @@ export function JamPage() {
                 <button className="button secondary" type="submit">Enregistrer</button>
               </form>
               {(circleError || state.relayError) && <p role="status" className="muted">{circleError ?? state.relayError}</p>}
-              {state.circleLink && <button className="button" disabled={launching || state.connecting || !!state.relayError} onClick={() => void launch(true)}>Lancer à distance</button>}
+              {state.circleLink && <button className="button" disabled={launching || state.connecting || !!state.relayError} onClick={() => void launch(true)}>Créer un Jam à distance</button>}
               {state.circleLink && !state.relayError && !state.remoteRooms?.length && <p className="muted">Aucun Jam ouvert dans ton cercle.</p>}
               {state.remoteRooms?.map(room => <div className="jam-row" key={room.id}>
                 <Icon name="jam" size={18} /><strong>{room.name} <small className="muted">· {room.people} en ligne</small></strong>
@@ -417,12 +426,12 @@ export function JamPage() {
         <>
           <p className="eyebrow">Ton Jam est ouvert</p>
           <p className="muted">{state.remote ? 'Les membres de ton cercle voient ton Jam dans Nova.' : 'Tes amis sur le même réseau voient ton Jam dans Nova.'}</p>
-          {state.remote && state.circleLink && <button className="button secondary" onClick={() => void navigator.clipboard.writeText(state.circleLink!)
-            .then(() => notify('Lien d’invitation copié')).catch(() => notify('Impossible de copier le lien'))}>Copier le lien du cercle</button>}
+          {state.invitation && <button className="button secondary" onClick={() => void navigator.clipboard.writeText(state.invitation!)
+            .then(() => notify('Lien d’invitation copié')).catch(() => notify('Impossible de copier le lien'))}>Copier l’invitation</button>}
           <div className="chips">{(shared?.participants ?? []).map((p) => <span key={p} className="chip on"><Icon name="person" size={13} /> {p}</span>)}
             {!shared?.participants.length && <span className="muted">En attente d’amis…</span>}</div>
           <label className="toggle-row"><input type="checkbox" checked={state.guestsCanControl} onChange={(e) => setGuestsCanControl(e.target.checked)} /> Les invités contrôlent la lecture</label>
-          <button className="button secondary danger" onClick={() => void leaveJam()}>Terminer le Jam</button>
+          <button className="button secondary danger" onClick={() => void leaveJam(true)}>Terminer le Jam</button>
         </>
       )}
       {state.role === 'guest' && (
@@ -437,7 +446,7 @@ export function JamPage() {
             </div>
           )}
           <p className="muted">Pour ajouter un titre : clic droit sur un titre → « Ajouter au Jam ».</p>
-          <button className="button secondary danger" onClick={() => void leaveJam()}>Quitter le Jam</button>
+          <button className="button secondary danger" onClick={() => void leaveJam(true)}>Quitter le Jam</button>
         </>
       )}
       {queue.length > 0 && (

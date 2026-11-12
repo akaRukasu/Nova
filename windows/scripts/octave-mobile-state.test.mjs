@@ -30,8 +30,8 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.playing, true);
   assert.equal(state.audible, true);
   assert.equal(queueOpened, true);
-  assert.equal(state.fading, true);
-  assert.equal(state.mixing, false); // La transition commence avant l'indicateur visuel.
+  assert.equal(state.fading, false);
+  assert.equal(state.mixing, false); // Un drapeau moteur obsolète ne suspend pas la progression.
   window.__octaveEngine.isFading = false;
   audio.paused = true;
   audio.currentTime = 18;
@@ -43,16 +43,21 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   audio.paused = false;
   window.__octaveEngine.active = audio;
   window.novaOctave('sample');
-  const incoming = { duration: 178, currentTime: 1.2, paused: false, ended: false, readyState: 4 };
+  const incoming = new window.Audio();
+  Object.assign(incoming, { duration: 178, currentTime: 1.2, paused: false, ended: false, readyState: 4 });
   window.__octaveEngine.active = incoming;
   window.__octaveEngine.isFading = true;
-  audio.currentTime = 21;
+  audio.currentTime = 249;
   state = window.novaOctave('sample');
-  assert.equal(state.outgoingPosition, 21);
+  assert.equal(state.outgoingPosition, 249);
   assert.equal(state.position, 1.2);
-  window.__octaveEngine.isFading = false;
+  audio.paused = true;
+  title.textContent = 'Titre suivant';
+  incoming.currentTime = 4;
   state = window.novaOctave('sample');
+  assert.equal(state.fading, false);
   assert.equal(state.outgoingPosition, undefined);
+  assert.equal(state.title, 'Titre suivant');
   assert.equal(state.duration, 178);
-  assert.equal(state.position, 1.2);
+  assert.equal(state.position, 4);
 });

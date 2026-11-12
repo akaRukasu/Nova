@@ -6,6 +6,7 @@ struct JamView: View {
     @Environment(\.dismiss) private var dismiss
     private let jam = JamSession.shared
     @State private var circleDraft = ""
+    @State private var invitationDraft = ""
 
     var body: some View {
         @Bindable var jam = jam
@@ -15,6 +16,14 @@ struct JamView: View {
                     Section {
                         Label(message, systemImage: "info.circle")
                             .foregroundStyle(.secondary)
+                    }
+                }
+                if jam.pendingInvitation != nil {
+                    Section("Invitation à un Jam") {
+                        Button("Rejoindre la session", systemImage: "person.crop.circle.badge.plus") {
+                            Task { await jam.joinInvitation() }
+                        }
+                        .disabled(jam.isConnecting)
                     }
                 }
                 switch jam.role {
@@ -78,6 +87,20 @@ struct JamView: View {
                 .submitLabel(.done)
         }
         Section("À distance") {
+            TextField("Lien d’invitation reçu", text: $invitationDraft)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !invitationDraft.isEmpty {
+                Button("Ouvrir l’invitation", systemImage: "link") {
+                    guard let url = URL(string: invitationDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
+                          jam.receiveInvitation(url) else {
+                        jam.message = "Ce lien ne correspond pas à une invitation Jam."
+                        return
+                    }
+                    invitationDraft = ""
+                }
+            }
             SecureField("Lien du cercle Jam", text: $circleDraft)
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
@@ -87,7 +110,7 @@ struct JamView: View {
                 Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
             }
             if !jam.circleLink.isEmpty {
-                Button("Lancer à distance", systemImage: "globe") { Task { await jam.connectRemote() } }
+                Button("Créer un Jam à distance", systemImage: "globe") { Task { await jam.connectRemote() } }
                     .disabled(jam.isConnecting || jam.relayError != nil)
                 if jam.remoteRooms.isEmpty && jam.relayError == nil {
                     Text("Aucun Jam ouvert dans ton cercle.").foregroundStyle(.secondary)
@@ -190,14 +213,14 @@ struct JamView: View {
                 Text("Tes amis scannent ce code avec l'appareil photo de leur iPhone : Nova s'ouvre et rejoint ton Jam.")
             }
         }
-        if jam.isRemote, let url = URL(string: jam.circleLink) {
+        if let url = jam.invitationURL {
             Section("Invitation") {
-                ShareLink(item: url) { Label("Partager le lien du cercle", systemImage: "square.and.arrow.up") }
+                ShareLink(item: url) { Label("Partager l’invitation", systemImage: "square.and.arrow.up") }
             }
         }
         queueSections(jam.state)
         Section {
-            Button("Terminer le Jam", role: .destructive) { jam.leave() }
+            Button("Terminer le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
         }
     }
 
@@ -234,7 +257,7 @@ struct JamView: View {
         }
         queueSections(state)
         Section {
-            Button("Quitter le Jam", role: .destructive) { jam.leave() }
+            Button("Quitter le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
         }
     }
 

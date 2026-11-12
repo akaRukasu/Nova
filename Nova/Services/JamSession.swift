@@ -51,6 +51,8 @@ final class JamSession: NSObject {
     private(set) var remoteRooms: [RemoteJamRoom] = []
     private(set) var relayError: String?
     private(set) var circleLink = UserDefaults.standard.string(forKey: "novaJamCircle") ?? ""
+    private(set) var invitationURL: URL?
+    private(set) var pendingInvitation: URL?
     /// Code du Jam lancé (dans le QR code et le lien « nova://jam/CODE »).
     private(set) var code: String?
     /// Page Jam ouverte depuis un QR code.
@@ -222,26 +224,47 @@ final class JamSession: NSObject {
     }
 
     func connectRemote(room: RemoteJamRoom? = nil) async {
-        guard !isConnecting, let circle = JamCircle(circleLink) else { return }
+        guard let circle = JamCircle(circleLink) else { return }
+        await connectRemote(circle, roomID: room?.id)
+    }
+
+    private func connectRemote(_ circle: JamCircle, roomID: String?) async {
+        guard !isConnecting else { return }
+        if let roomID, remote?.id == roomID { pendingInvitation = nil; return }
         leave(silently: true)
         isConnecting = true
         defer { isConnecting = false }
         do {
             var fields: [String: Any] = ["name": publicName]
-            if let room { fields["room"] = room.id }
-            let reply = try await circle.request(room == nil ? "host" : "join", fields: fields)
+            if let roomID { fields["room"] = roomID }
+            let reply = try await circle.request(roomID == nil ? "host" : "join", fields: fields)
             guard let id = reply.id, let token = reply.token else { throw JamRelayError(status: 0, reason: "Réponse du relais invalide.") }
             let connection = RemoteConnection(circle: circle, id: id, token: token)
             remote = connection
             remoteParticipants = []
             isRemote = true
-            role = room == nil ? .host : .guest
+            role = roomID == nil ? .host : .guest
+            pendingInvitation = nil
+            invitationURL = role == .host ? reply.invite.flatMap { JamInvitation.link(circle: circle, room: id, key: $0) } : nil
             addedBy = [:]
             if role == .host { broadcastState(); startHeartbeat() }
             remotePoll = Task { [weak self] in await self?.poll(connection) }
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    @discardableResult
+    func receiveInvitation(_ url: URL) -> Bool {
+        guard JamInvitation(url) != nil else { return false }
+        pendingInvitation = url
+        isPresented = true
+        return true
+    }
+
+    func joinInvitation() async {
+        guard let pendingInvitation, let invitation = JamInvitation(pendingInvitation) else { return }
+        await connectRemote(invitation.circle, roomID: invitation.room)
     }
 
     private func poll(_ connection: RemoteConnection) async {
@@ -281,6 +304,11 @@ final class JamSession: NSObject {
     /// Lien « nova://jam/CODE » ouvert depuis l'appareil photo : on rejoint ce Jam.
     @discardableResult
     func open(_ url: URL) -> Bool {
+        if url.scheme == "nova", url.host == "jam", url.path == "/invite",
+           let link = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "link" })?.value,
+           let invitation = URL(string: link) {
+            return receiveInvitation(invitation)
+        }
         guard url.scheme == "nova", url.host == "jam",
               let scanned = url.pathComponents.last?.uppercased(), scanned.count >= 4 else { return false }
         isPresented = true
@@ -371,12 +399,29 @@ final class JamSession: NSObject {
 
     // MARK: Fin
 
+    func leaveConfirmed() async {
+        if let connection = remote {
+            do {
+                _ = try await connection.circle.request("leave", fields: ["room": connection.id, "token": connection.token])
+            } catch let error as JamRelayError where [403, 404].contains(error.status) {
+                // La session a déjà expiré.
+            } catch {
+                message = "Le relais ne répond pas. Réessaie dans un instant."
+                return
+            }
+            guard remote?.token == connection.token else { return }
+            remote = nil
+        }
+        leave()
+    }
+
     func leave(silently: Bool = false) {
         if let connection = remote {
             Task { _ = try? await connection.circle.request("leave", fields: ["room": connection.id, "token": connection.token]) }
             remote = nil
         }
         isRemote = false
+        invitationURL = nil
         remotePoll?.cancel()
         remotePoll = nil
         remotePublish?.cancel()

@@ -37,12 +37,14 @@ interface NovaPlayer {
   jamJoin(options: { address: string; port: number; name: string }): Promise<void>;
   jamToHost(options: { message: string }): Promise<void>;
   jamStop(): Promise<void>;
+  initialJamInvitation(): Promise<{ link?: string }>;
   startTicker(options: { interval: number }): Promise<void>;
   stopTicker(): Promise<void>;
   octaveNavigate(options: { url: string }): Promise<void>;
   octaveCall(options: { operation: string; args?: object }): Promise<{ value: string }>;
   octavePanel(options: { visible: boolean }): Promise<void>;
   addListener(event: 'octaveConnected', listener: () => void): Promise<PluginListenerHandle>;
+  addListener(event: 'jamInvitation', listener: (data: { link: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'tick', listener: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'relay', listener: (data: { channel: string; args: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'event', listener: (data: { deck: number; payload: unknown }) => void): Promise<PluginListenerHandle>;
@@ -141,6 +143,7 @@ function pickFiles(accept: string, multiple: boolean): Promise<{ name: string; t
 let lastMedia = '';
 
 const handlers: Record<string, (...args: any[]) => unknown> = {
+  'jam:initialInvitation': () => native.initialJamInvitation().then(({ link }) => link),
   'yt:search': (query, scope) => scope === 'video' ? yt.search(query, scope) : octave.search(query, scope),
   'yt:suggestions': (query) => octave.suggestions(query),
   'yt:home': () => octave.charts(true),
@@ -301,6 +304,7 @@ localStorage.setItem('engineMode', 'web');
 void native.addListener('event', ({ deck, payload }) => emit('webplayer:event', deck, payload)).catch(() => undefined);
 native.addListener('media', ({ action, seconds }) => emit('media:key', action, seconds)).catch(() => undefined);
 native.addListener('octaveConnected', () => emit('octave:connected')).catch(() => undefined);
+native.addListener('jamInvitation', ({ link }) => emit('jam:invitation', link)).catch(() => undefined);
 // Messages du réseau local (iPhone, Jam) : mêmes canaux que sur PC.
 native.addListener('relay', ({ channel, args }) => {
   try { emit(channel, ...JSON.parse(args)); } catch { /* message illisible */ }

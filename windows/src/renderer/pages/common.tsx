@@ -72,9 +72,9 @@ export function PageTitle({ children, actions }: { children: ReactNode; actions?
   return <div className="page-title"><h1>{children}</h1>{actions && <div className="page-actions">{actions}</div>}</div>;
 }
 
-export function PlayShuffle({ tracks, playlist = false }: { tracks: Track[]; playlist?: boolean }) {
+export function PlayShuffle({ tracks, playlist = false, playlistId }: { tracks: Track[]; playlist?: boolean; playlistId?: string }) {
   const play = (shuffle: boolean) => {
-    if (playlist) player.playPlaylist(tracks, 0, shuffle);
+    if (playlist) player.playPlaylist(tracks, 0, shuffle, playlistId);
     else player.play(tracks, 0, shuffle);
   };
   return (

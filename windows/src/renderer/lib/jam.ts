@@ -5,7 +5,8 @@ import { api, on } from './api';
 import { library, notify } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
 import { Store } from './store';
-import { jamRelay, JamRelayError, parseJamCircle, type JamCircle, type RemoteRoom } from './jamRelay';
+import { jamInvitation, jamRelay, JamRelayError, parseJamCircle, parseJamInvitation, type JamCircle, type RemoteRoom } from './jamRelay';
+import { root } from './router';
 
 export interface JamView {
   role: 'none' | 'host' | 'guest';
@@ -20,6 +21,8 @@ export interface JamView {
   circleLink?: string;
   remoteRooms?: RemoteRoom[];
   relayError?: string;
+  invitation?: string;
+  pendingInvitation?: string;
 }
 
 export const jam = new Store<JamView>({ role: 'none', nearby: [], addresses: [], guestsCanControl: true, listenAlong: false, connecting: false,
@@ -88,14 +91,15 @@ export async function refreshJamCircle() {
   }
 }
 
-async function connectRemote(host: boolean, room?: string) {
-  const circle = parseJamCircle(jam.get().circleLink ?? '');
+async function connectRemote(host: boolean, room?: string, invitedCircle?: JamCircle) {
+  const circle = invitedCircle ?? parseJamCircle(jam.get().circleLink ?? '');
   if (!circle) throw new Error('Configure le lien du cercle pour jouer à distance.');
-  const connection = await jamRelay<{ id: string; token: string }>(circle, { action: host ? 'host' : 'join', room, name: name() });
+  const connection = await jamRelay<{ id: string; token: string; invite?: string }>(circle, { action: host ? 'host' : 'join', room, name: name() });
   remote = { circle, ...connection, after: 0, host, polling: false, publishing: false };
   const session = remote;
   pollTimer = setInterval(() => void pollRemote(session), 1400);
-  set({ role: host ? 'host' : 'guest', remote: true, addresses: [] });
+  set({ role: host ? 'host' : 'guest', remote: true, addresses: [], pendingInvitation: undefined,
+    invitation: host && connection.invite ? jamInvitation(circle, connection.id, connection.invite) : undefined });
   void pollRemote(session);
 }
 
@@ -154,6 +158,25 @@ export async function joinRemoteJam(room: RemoteRoom) {
   finally { set({ connecting: false }); }
 }
 
+export function openJamInvitation(link: string) {
+  if (!parseJamInvitation(link)) return false;
+  root({ name: 'jam' });
+  set({ pendingInvitation: link });
+  return true;
+}
+
+export async function joinJamInvitation() {
+  const invitation = parseJamInvitation(jam.get().pendingInvitation ?? '');
+  if (!invitation || jam.get().connecting) return;
+  if (remote?.id === invitation.id) return set({ pendingInvitation: undefined });
+  set({ connecting: true });
+  try {
+    await leaveJam();
+    await connectRemote(false, invitation.id, invitation.circle);
+  } catch (error) { notify(error instanceof JamRelayError ? error.message : 'Connexion au Jam impossible.'); }
+  finally { set({ connecting: false }); }
+}
+
 export function setGuestsCanControl(value: boolean) {
   set({ guestsCanControl: value });
   if (jam.get().role === 'host') broadcast();
@@ -205,16 +228,26 @@ function sendToHost(event: object) {
   else void api.jamToHost(event);
 }
 
-export async function leaveJam() {
+export async function leaveJam(confirmRemote = false) {
+  const session = remote;
+  if (session && confirmRemote) {
+    try { await jamRelay(session.circle, { action: 'leave', room: session.id, token: session.token }); }
+    catch (error) {
+      if (!(error instanceof JamRelayError && [403, 404].includes(error.status))) {
+        notify('Le relais ne répond pas. Réessaie dans un instant.');
+        return;
+      }
+    }
+    if (remote !== session) return;
+  }
   clearInterval(heartbeat);
   heartbeat = undefined;
   clearInterval(pollTimer);
-  const session = remote;
   remote = undefined;
-  if (session) void jamRelay(session.circle, { action: 'leave', room: session.id, token: session.token }).catch(() => undefined);
+  if (session && !confirmRemote) void jamRelay(session.circle, { action: 'leave', room: session.id, token: session.token }).catch(() => undefined);
   await api.jamStop();
   player.followingJam = false;
-  set({ role: 'none', state: undefined, listenAlong: false, port: undefined, remote: false });
+  set({ role: 'none', state: undefined, listenAlong: false, port: undefined, remote: false, invitation: undefined });
 }
 
 // Messages du processus principal.
@@ -256,5 +289,9 @@ on('jam:ended', () => {
     notify('Connexion au Jam perdue');
   }
 });
+on('jam:invitation', (link: string) => openJamInvitation(link));
+void window.nova.invoke<string | undefined>('jam:initialInvitation').then(link => {
+  if (link) openJamInvitation(link);
+}).catch(() => undefined);
 
 export const jamCurrent = () => currentTrack();

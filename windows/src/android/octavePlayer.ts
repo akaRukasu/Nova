@@ -21,9 +21,9 @@ type Playback = {
 };
 const settingsURL = octaveOrigin + '/settings';
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const matches = (track: Track, sample: Sample) => sample.id && octaveCatalogId(track.id)
-  ? octaveCatalogId(track.id) === sample.id && sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist})
-  : sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist});
+const matches = (track: Track, sample: Sample) => sample.title
+  ? sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist})
+  : !!sample.id && octaveCatalogId(track.id) === sample.id;
 
 export class AndroidOctavePlayer {
   settings = octaveAudioDefaults;
@@ -205,15 +205,15 @@ export class AndroidOctavePlayer {
         this.publish({ request: active.request, time: active.position, duration: sample.duration, playing: false, signIn: true });
         return;
       }
-      if (sample.position == null || !sample.title) return;
-      if (sample.mixing || sample.fading) {
+      if (sample.position == null) return;
+      if (sample.fading) {
         if (sample.outgoingPosition != null && sample.outgoingPosition >= active.position) active.position = sample.outgoingPosition;
         this.publish({request:active.request,time:active.position,duration:active.source.duration ?? sample.duration,
           playing:sample.playing,mixing:sample.mixing,upcoming:sample.upcoming});
         return;
       }
       let next: Track | undefined;
-      if (sample.playing && !matches(active.source, sample)) {
+      if (sample.playing && sample.title && !matches(active.source, sample)) {
         active.metadataChangedAt ??= Date.now();
         if (Date.now() - active.metadataChangedAt < 1200 && active.source.duration && Math.abs(sample.duration - active.source.duration) < 1.1
           && active.position > 3 && Math.abs(sample.position - active.position) < 2) return;

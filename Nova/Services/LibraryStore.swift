@@ -156,7 +156,7 @@ final class LibraryStore {
         var catalogKeys: [String: String] = [:]
         var dates: [String: Date] = [:]
         for playlist in playlists {
-            for track in playlist.tracks { dates[track.id] = max(dates[track.id] ?? .distantPast, playlist.createdAt) }
+            for track in playlist.tracks { dates[track.id] = min(dates[track.id] ?? .distantFuture, playlist.createdAt) }
         }
         for track in songs {
             let title = kind == .artist ? track.artist : track.album ?? (singles ? track.title : "")
@@ -177,18 +177,30 @@ final class LibraryStore {
         return groups.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
-    /// Titres, albums, artistes et playlists ajoutés, du plus récent au plus ancien.
-    func recentAdditions(limit: Int = 60) -> [RecentAddition] {
-        let groups = musicGroups(kind: .album, singles: true)
-        let known = Set(groups.flatMap { $0.tracks.compactMap(\.albumID) })
-        var entries: [(date: Date, title: String, entry: RecentAddition)] = groups.map { ($0.added, $0.title, .group($0)) }
-        entries += saved.filter { $0.kind == .album && !known.contains($0.id) }.map {
-            (savedDates[$0.id] ?? .distantPast, $0.title, .collection($0))
+    func recentAdditions() -> [RecentAddition] {
+        var groups = musicGroups(kind: .album, singles: true)
+        var byID: [String: Int] = [:]
+        for index in groups.indices {
+            for id in groups[index].tracks.compactMap(\.albumID) { byID[id] = index }
         }
+        var entries: [(date: Date, title: String, entry: RecentAddition)] = []
+        for album in saved where album.kind == .album {
+            let date = savedDates[album.id] ?? .distantPast
+            let index = byID[album.id] ?? groups.firstIndex {
+                $0.title.localizedStandardCompare(album.title) == .orderedSame
+                    && $0.artist.localizedStandardCompare(album.subtitle ?? "") == .orderedSame
+            }
+            if let index {
+                groups[index].added = max(groups[index].added, date)
+            } else {
+                entries.append((date, album.title, .collection(album)))
+            }
+        }
+        entries += groups.map { ($0.added, $0.title, .group($0)) }
         return entries.sorted {
             if $0.date != $1.date { return $0.date > $1.date }
             return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-        }.prefix(limit).map { $0.entry }
+        }.map { $0.entry }
     }
 
     // MARK: Morceaux
@@ -221,8 +233,12 @@ final class LibraryStore {
     }
 
     /// Enregistre une écoute (statistiques et, si activé, historique).
-    func recordPlay(_ track: Track, addToHistory: Bool) {
+    func recordPlay(_ track: Track, addToHistory: Bool, playlistID: UUID? = nil) {
         let now = Date()
+        if let playlistID, let index = playlists.firstIndex(where: { $0.id == playlistID }),
+           playlists[index].tracks.contains(where: { $0.id == track.id || ($0.youtubeID != nil && $0.youtubeID == track.youtubeID) }) {
+            playlists[index].lastPlayedAt = now
+        }
         var info = stats[track.id] ?? TrackStats()
         info.playCount += 1
         info.lastPlayed = now

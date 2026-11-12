@@ -54,6 +54,33 @@ import java.util.Collections;
  */
 @CapacitorPlugin(name = "NovaPlayer")
 public class NovaPlayerPlugin extends Plugin {
+    private static String jamInvitation(Intent intent) {
+        Uri uri = intent == null ? null : intent.getData();
+        if (uri == null || !"nova".equals(uri.getScheme()) || !"jam".equals(uri.getHost()) || !"/invite".equals(uri.getPath())) return null;
+        return uri.getQueryParameter("link");
+    }
+
+    @PluginMethod
+    public void initialJamInvitation(PluginCall call) {
+        JSObject result = new JSObject();
+        Intent intent = getActivity().getIntent();
+        String link = jamInvitation(intent);
+        if (link != null) {
+            result.put("link", link);
+            intent.setData(null);
+        }
+        call.resolve(result);
+    }
+
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        String link = jamInvitation(intent);
+        if (link == null) return;
+        JSObject data = new JSObject();
+        data.put("link", link);
+        notifyListeners("jamInvitation", data, true);
+    }
     private final Map<Integer, WebView> decks = new HashMap<>();
     private final Map<Integer, String> expected = new HashMap<>();
     private final Map<Integer, Double> volumes = new HashMap<>();

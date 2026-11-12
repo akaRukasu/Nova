@@ -4,6 +4,11 @@ struct JamCircle {
     let endpoint: URL
     let key: String
 
+    init(endpoint: URL, key: String) {
+        self.endpoint = endpoint
+        self.key = key
+    }
+
     init?(_ link: String) {
         guard var url = URLComponents(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
               url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil,
@@ -31,6 +36,34 @@ struct JamCircle {
     }
 }
 
+struct JamInvitation {
+    let room: String
+    let circle: JamCircle
+
+    init?(_ url: URL) {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", parts.host != nil, parts.user == nil, parts.password == nil,
+              parts.path == "/nova-jam/app/", parts.query == nil,
+              let fragment = parts.fragment else { return nil }
+        let keys = fragment.split(separator: ".", omittingEmptySubsequences: false)
+        guard keys.count == 2, keys[0].range(of: "^[a-f0-9]{16}$", options: .regularExpression) != nil,
+              keys[1].range(of: "^[a-f0-9]{48}$", options: .regularExpression) != nil else { return nil }
+        parts.path = "/nova-jam"
+        parts.fragment = nil
+        guard let endpoint = parts.url else { return nil }
+        room = String(keys[0])
+        circle = JamCircle(endpoint: endpoint, key: String(keys[1]))
+    }
+
+    static func link(circle: JamCircle, room: String, key: String) -> URL? {
+        guard var parts = URLComponents(url: circle.endpoint, resolvingAgainstBaseURL: false) else { return nil }
+        parts.path = "/nova-jam/app/"
+        parts.fragment = room + "." + key
+        guard let url = parts.url, JamInvitation(url) != nil else { return nil }
+        return url
+    }
+}
+
 private final class JamNoRedirect: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -55,6 +88,7 @@ struct JamRelayReply: Decodable {
     var rooms: [RemoteJamRoom]?
     var id: String?
     var token: String?
+    var invite: String?
     var version: Int?
     var state: JamWireState?
     var participants: [String]?

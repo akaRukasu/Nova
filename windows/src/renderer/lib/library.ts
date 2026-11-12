@@ -118,17 +118,19 @@ export function togglePlaybackOption(option: 'autoplay' | 'automix', source?: Pl
 
 // MARK: Écoutes
 
-export function recordPlay(track: Track, playedAt = Date.now()) {
+export function recordPlay(track: Track, playedAt = Date.now(), playlistId?: string) {
   update((state) => {
     track = preserveArtwork(track, state.recents.find(t => t.id === track.id) ?? state.liked.find(t => t.id === track.id));
     const stats = { ...state.stats, [track.id]: { ...state.stats[track.id], playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
-    if (!state.settings.recordHistory) return { ...state, stats };
+    const playlists = playlistId ? state.playlists.map(p => p.id === playlistId && playedAt > (p.lastPlayedAt ?? 0)
+      ? { ...p, lastPlayedAt: playedAt } : p) : state.playlists;
+    if (!state.settings.recordHistory) return { ...state, stats, playlists };
     const recents = [track, ...state.recents.filter((t) => t.id !== track.id)].slice(0, 1000);
     const year = String(new Date(playedAt).getFullYear());
     const recorded = state.listeningYears?.[year];
     const entry = { track, plays: (recorded?.[track.id]?.plays ?? 0) + 1 };
     const listeningYears = { ...state.listeningYears, [year]: { ...recorded, [track.id]: entry } };
-    return { ...state, stats, recents, listeningYears };
+    return { ...state, stats, playlists, recents, listeningYears };
   });
 }
 
@@ -393,7 +395,7 @@ export const isSaved = (id: string) => library.get().saved.some((c) => c.id === 
 
 export function toggleSaved(collection: Collection) {
   const saved = !isSaved(collection.id);
-  update((state) => ({ ...state, saved: saved ? [collection, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
+  update((state) => ({ ...state, saved: saved ? [{ ...collection, addedAt: Date.now() }, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
   notify(saved ? `« ${collection.title} » ajouté à la bibliothèque` : `« ${collection.title} » retiré de la bibliothèque`);
 }
 
@@ -477,12 +479,14 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
   const phonePlaylists: UserPlaylist[] = (raw?.playlists ?? []).map((p: any) => ({
     id: crypto.randomUUID(), name: String(p.name ?? 'Playlist'), tracks: dedupe(phoneTracks(p.tracks)),
     created: phoneDate(p.createdAt) ?? Date.now(),
+    lastPlayedAt: phoneDate(p.lastPlayedAt),
   })).filter((p: UserPlaylist) => p.tracks.length);
   const liked = phoneTracks(raw?.liked);
   const recents = phoneTracks(raw?.recents);
   const added = phoneTracks(raw?.addedTracks);
   const saved: Collection[] = (raw?.saved ?? []).filter((c: any) => c?.id && c.title).map((c: any) => ({
     id: c.id, kind: c.kind ?? 'playlist', title: c.title, subtitle: c.subtitle || undefined, artwork: c.artworkURL ?? c.artwork ?? undefined,
+    addedAt: phoneDate(raw?.savedDates?.[c.id]),
   }));
   update((state) => {
     const stats = { ...state.stats };
@@ -491,13 +495,15 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
       stats[id] = {
         playCount: Math.max(current?.playCount ?? 0, value?.playCount ?? 0),
         lastPlayed: Math.max(current?.lastPlayed ?? 0, phoneDate(value?.lastPlayed) ?? 0) || undefined,
+        addedAt: current?.addedAt ?? phoneDate(value?.added),
       };
     }
     // Playlists du même nom remplacées par celles de l'iPhone (le lien avec YouTube est gardé).
     const byName = new Map(state.playlists.map((p) => [p.name.toLowerCase(), p]));
     const merged = phonePlaylists.map((p) => {
       const existing = byName.get(p.name.toLowerCase());
-      return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId } : p;
+      return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId,
+        lastPlayedAt: Math.max(p.lastPlayedAt ?? 0, existing.lastPlayedAt ?? 0) || undefined } : p;
     });
     const replaced = new Set(merged.map((p) => p.id));
     const history = mergeListeningHistory({ ...state, stats }, { version: 1,

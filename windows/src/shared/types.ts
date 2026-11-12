@@ -22,6 +22,7 @@ export interface Collection {
   title: string;
   subtitle?: string;
   artwork?: string;
+  addedAt?: number;
 }
 
 export interface Category {
@@ -86,6 +87,7 @@ export interface UserPlaylist {
   name: string;
   tracks: Track[];
   created: number;
+  lastPlayedAt?: number;
   /** Playlist du compte YouTube correspondante (synchronisée avec l'iPhone). */
   youtubeId?: string;
 }
