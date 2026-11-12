@@ -39,4 +39,20 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.playing, false);
   assert.equal(state.fading, false);
   assert.equal(state.position, 18);
+
+  audio.paused = false;
+  window.__octaveEngine.active = audio;
+  window.novaOctave('sample');
+  const incoming = { duration: 178, currentTime: 1.2, paused: false, ended: false, readyState: 4 };
+  window.__octaveEngine.active = incoming;
+  window.__octaveEngine.isFading = true;
+  audio.currentTime = 21;
+  state = window.novaOctave('sample');
+  assert.equal(state.outgoingPosition, 21);
+  assert.equal(state.position, 1.2);
+  window.__octaveEngine.isFading = false;
+  state = window.novaOctave('sample');
+  assert.equal(state.outgoingPosition, undefined);
+  assert.equal(state.duration, 178);
+  assert.equal(state.position, 1.2);
 });

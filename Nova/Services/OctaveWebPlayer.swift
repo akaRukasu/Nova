@@ -28,6 +28,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var album: String
         var artwork: URL?
         var position: Double?
+        var outgoingPosition: Double?
         var duration: Double
         var playing: Bool
         var audible: Bool
@@ -38,7 +39,10 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var fading: Bool?
 
         func matches(_ track: Track) -> Bool {
-            if let id, let expected = OctaveCatalog.id(track.id), id != expected { return false }
+            if let id, let expected = OctaveCatalog.id(track.id) {
+                guard id == expected else { return false }
+                if title.isEmpty { return true }
+            }
             return OctaveCatalog.sameRecording(track, Track(id: "sample", title: title, artist: artist, duration: duration))
         }
         var track: Track? {

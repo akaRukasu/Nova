@@ -31,6 +31,7 @@
   const session = navigator.mediaSession;
   const players = [];
   let anchored;
+  let lastStableAudio;
   let seek;
   window.Audio = new Proxy(window.Audio, {
     construct(Audio, args, target) {
@@ -65,11 +66,18 @@
     : visible(document.querySelector('[aria-label="Welcome to Octave"], #owner-note-title')) ? 'interaction' : null;
 
   function sample() {
+    const engine = window.__octaveEngine;
+    const fading = Boolean(engine?.isFading);
     const available = media();
     const audible = available.filter(audio => !audio.paused && !audio.ended);
-    const audio = audible.length === 1 ? audible[0] : available.includes(anchored) ? anchored : available.length === 1 ? available[0] : undefined;
-    if (audio) anchored = audio;
+    const active = engine?.active;
+    const audio = Number.isFinite(active?.duration) && active.duration > 0 ? active
+      : audible.length === 1 ? audible[0] : available.includes(anchored) ? anchored : available.length === 1 ? available[0] : undefined;
+    if (audio && !fading) lastStableAudio = anchored = audio;
+    const playing = audio ? (!audio.paused && !audio.ended) || (fading && audible.length > 0)
+      : session?.playbackState === 'playing';
     const position = slider('Seek');
+    const reportedTime = Number(position?.value);
     const metadata = session?.metadata;
     // Android WebView peut lire l'audio sans exposer navigator.mediaSession.
     const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
@@ -78,21 +86,22 @@
       title: metadata?.title || nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || '',
       artist: metadata?.artist || nowPlaying?.querySelector('p')?.textContent?.trim() || '', album: metadata?.album ?? '',
       artwork: metadata?.artwork.find(item => item.src.startsWith('https:'))?.src ?? nowPlaying?.querySelector('img')?.src,
-      position: audio?.currentTime ?? (position ? Number(position.value) : null),
+      position: audio?.currentTime ?? (Number.isFinite(reportedTime) && (reportedTime > 0 || !playing) ? reportedTime : null),
+      outgoingPosition: fading && Number.isFinite(lastStableAudio?.currentTime) ? lastStableAudio.currentTime : undefined,
       duration: audio?.duration ?? Number(position?.max ?? 0),
-      playing: session?.playbackState === 'playing' || Boolean(audio && !audio.paused && !audio.ended),
+      playing,
       audible: Boolean(audio && !audio.paused && !audio.muted && audio.readyState >= 2),
       ended: Boolean(audio?.ended), blocked: blocked(),
       mixing: Boolean(document.querySelector('[data-automix-indicator]')),
-      fading: Boolean(window.__octaveEngine?.isFading),
-      upcoming: upcoming(),
+      fading,
+      upcoming: upcoming(playing),
     };
   }
 
-  function upcoming() {
+  function upcoming(playing) {
     const save = buttons('Save queue as playlist')[0];
     if (!save) {
-      if (session?.playbackState === 'playing' || media().some(audio => !audio.paused && !audio.ended)) {
+      if (playing) {
         buttons('Queue').find(button => !button.closest('main'))?.click();
       }
       return [];

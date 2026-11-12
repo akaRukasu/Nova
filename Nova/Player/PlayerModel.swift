@@ -112,7 +112,7 @@ final class PlayerModel {
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
             Task { @MainActor in
-                guard let self, item === self.player.currentItem, !self.endHandled else { return }
+                guard let self, self.source == .youtube, item === self.player.currentItem, !self.endHandled else { return }
                 self.endHandled = true
                 self.trackDidEnd()
             }
@@ -121,7 +121,7 @@ final class PlayerModel {
         NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
             Task { @MainActor in
-                guard let self, item === self.player.currentItem else { return }
+                guard let self, self.source == .youtube, item === self.player.currentItem else { return }
                 self.recoverPlayback(reason: "fin de flux inattendue")
             }
         }
@@ -890,6 +890,7 @@ final class PlayerModel {
         autoplayQueue = []
         isLoading = false
         isPlaying = state.playing
+        if position == 0, let elapsed = state.position, elapsed < 2 { currentTime = elapsed }
         if state.duration > 0 { duration = state.duration }
         endLoadingBackgroundTask()
         updateNowPlaying()
@@ -923,12 +924,6 @@ final class PlayerModel {
                     if autoplayQueue != tracks { autoplayQueue = tracks }
                 }
                 if let mixing = sample.mixing { isTransitioning = mixing }
-                if sample.mixing == true || sample.fading == true {
-                    if sample.matches(selected), let position = sample.position { currentTime = position }
-                    isPlaying = sample.playing
-                    updateNowPlaying()
-                    continue
-                }
                 if sample.blocked == "sign-in" {
                     await octave.stop()
                     isPlaying = false
@@ -938,14 +933,24 @@ final class PlayerModel {
                     updateNowPlaying()
                     return
                 }
+                if sample.mixing == true || sample.fading == true {
+                    if let position = sample.outgoingPosition, position >= currentTime, position <= duration + 1 {
+                        currentTime = position
+                    }
+                    isPlaying = sample.playing
+                    updateNowPlaying()
+                    continue
+                }
                 guard let position = sample.position else { continue }
                 let previous = currentTime
                 var changed = false
-                if sample.playing && !sample.matches(selected) {
-                    if abs(sample.duration - duration) < 1.1 && position > 1.5 && position >= previous - 1 { continue }
-                    if let planned = octaveNext, upNext.first?.id == planned.original.id, sample.matches(planned.recording) {
+                if sample.playing && !sample.title.isEmpty && !sample.matches(selected) {
+                    if previous > 3, abs(sample.duration - duration) < 1.1, abs(position - previous) < 2 { continue }
+                    let next = upNext.first
+                    let nextRecording = octaveNext.flatMap { $0.original.id == next?.id ? $0.recording : nil } ?? next
+                    if repeatMode != .one, let recording = nextRecording, sample.matches(recording) {
                         index += 1
-                        octaveTrack = planned.recording
+                        octaveTrack = recording
                     } else if hasNext || repeatMode != .off {
                         if repeatMode != .one { index = hasNext ? index + 1 : 0 }
                         load()
@@ -981,7 +986,9 @@ final class PlayerModel {
                     heard += position - previous
                     if heard >= 5, let current {
                         recorded = true
-                        library.recordPlay(current, addToHistory: PlaybackSettings.recordHistory)
+                        var entry = current
+                        entry.artworkURL = entry.artworkURL ?? selected.artworkURL ?? sample.artwork
+                        library.recordPlay(entry, addToHistory: PlaybackSettings.recordHistory)
                         recordOctaveHistory(current)
                     }
                 }
@@ -1065,7 +1072,7 @@ final class PlayerModel {
             let failed = item.status == .failed
             let error = item.error
             Task { @MainActor in
-                guard let self, failed, self.current?.id == track.id else { return }
+                guard let self, self.source == .youtube, failed, self.current?.id == track.id else { return }
                 // Échec après le début du titre : on le relance là où il en était plutôt que de le sauter.
                 if self.currentTime > 2 {
                     self.recoverPlayback(reason: "flux en échec")
@@ -1172,7 +1179,7 @@ final class PlayerModel {
 
     private func tick(_ time: CMTime) {
         // Transition en préparation : l'ancien titre joue encore, mais l'état est déjà celui du suivant.
-        guard !crossfadeStarting else { return }
+        guard source == .youtube, !crossfadeStarting, player.currentItem != nil else { return }
         let seconds = time.seconds
         if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
         let canMix = isPlaying && !isLoading && fadingOut == nil && pendingMix == nil && repeatMode != .one && hasNext

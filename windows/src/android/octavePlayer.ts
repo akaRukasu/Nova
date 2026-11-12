@@ -7,6 +7,7 @@ import type { OctaveAudioSettings, Track } from '../shared/types';
 type Sample = {
   id?: string; title: string; artist: string; album?: string; artwork?: string;
   position: number | null; duration: number; playing: boolean; audible: boolean; ended: boolean;
+  outgoingPosition?: number;
   blocked?: 'sign-in' | 'interaction';
   upcoming?: Track[];
   mixing?: boolean;
@@ -188,7 +189,7 @@ export class AndroidOctavePlayer {
       }
       if (sample.position == null || !sample.title) return;
       if (sample.mixing || sample.fading) {
-        if (matches(active.source, sample)) active.position = sample.position;
+        if (sample.outgoingPosition != null && sample.outgoingPosition >= active.position) active.position = sample.outgoingPosition;
         this.publish({request:active.request,time:active.position,duration:active.source.duration ?? sample.duration,
           playing:sample.playing,mixing:sample.mixing,upcoming:sample.upcoming});
         return;
