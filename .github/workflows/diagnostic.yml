@@ -26,6 +26,7 @@ jobs:
             Nova/Models/*.swift \
             Nova/Services/InnerTubeParser.swift \
             Nova/Services/InnerTubeClient.swift \
+            Nova/Services/OctaveCatalog.swift \
             Nova/Services/Account.swift \
             Nova/Services/ImportSources.swift \
             Nova/Services/PlaybackSettings.swift \
@@ -43,6 +44,7 @@ jobs:
             Nova/Models/*.swift \
             Nova/Services/InnerTubeParser.swift \
             Nova/Services/InnerTubeClient.swift \
+            Nova/Services/OctaveCatalog.swift \
             Nova/Services/Account.swift \
             Nova/Services/ImportSources.swift \
             Nova/Services/PlaybackSettings.swift \
