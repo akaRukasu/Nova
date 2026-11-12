@@ -226,7 +226,10 @@ final class JamSession: NSObject {
     }
 
     func connectRemote(room: RemoteJamRoom? = nil) async {
-        guard let circle = JamCircle(circleLink) else { return }
+        guard let circle = JamCircle(circleLink) else {
+            message = "Configure le lien du cercle hôte pour créer un Jam à distance."
+            return
+        }
         await connectRemote(circle, roomID: room?.id)
     }
 
@@ -241,13 +244,23 @@ final class JamSession: NSObject {
             if let roomID { fields["room"] = roomID }
             let reply = try await circle.request(roomID == nil ? "host" : "join", fields: fields)
             guard let id = reply.id, let token = reply.token else { throw JamRelayError(status: 0, reason: "Réponse du relais invalide.") }
+            let invitation: URL?
+            if roomID == nil {
+                do { invitation = try reply.hostInvitation(circle: circle, room: id) }
+                catch {
+                    _ = try? await circle.request("leave", fields: ["room": id, "token": token])
+                    throw error
+                }
+            } else {
+                invitation = nil
+            }
             let connection = RemoteConnection(circle: circle, id: id, token: token)
             remote = connection
             remoteParticipants = []
             isRemote = true
-            role = roomID == nil ? .host : .guest
             pendingInvitation = nil
-            invitationURL = role == .host ? reply.invite.flatMap { JamInvitation.link(circle: circle, room: id, key: $0) } : nil
+            invitationURL = invitation
+            role = roomID == nil ? .host : .guest
             addedBy = [:]
             if role == .host { broadcastState(); startHeartbeat() }
             remotePoll = Task { [weak self] in await self?.poll(connection) }

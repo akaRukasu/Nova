@@ -1,4 +1,5 @@
 // Pages d'artiste, d'album et de playlist YouTube Music.
+import type { ReactNode } from 'react';
 import type { Collection } from '../../shared/types';
 import { octaveCollectionUrl } from '../../shared/octave';
 import { Artwork } from '../components/Artwork';
@@ -10,6 +11,17 @@ import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { useStore } from '../lib/store';
 import { ErrorState, Loading, PlayShuffle, SortButton, TrackList, sortOrder, useCached, useTrackSort } from './common';
+
+export function ArtistHero({ name, artwork, details, children }: { name: string; artwork?: string; details?: string; children: ReactNode }) {
+  return <header className="artist-hero">
+    <Artwork url={artwork} size={184} round />
+    <div className="artist-hero-copy">
+      <h1>{name}</h1>
+      {details && <p>{details}</p>}
+      <div className="row-buttons">{children}</div>
+    </div>
+  </header>;
+}
 
 export function ArtistPage({ id, title }: { id: string; title: string }) {
   useStore(library);
@@ -25,10 +37,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
   };
   return (
     <div className="page artist-page">
-      <div className="artist-banner" style={{ backgroundImage: data.header.artwork ? `url("${data.header.artwork.replace(/=w\d+-h\d+/, '=w1400-h1400')}")` : undefined }}>
-        <div className="artist-banner-content">
-          <h1>{name}</h1>
-          <div className="row-buttons">
+      <ArtistHero name={name} artwork={data.header.artwork}>
             <button className="button" onClick={() => void playAll(false)}><Icon name="play" size={16} /> Lecture</button>
             <button className="button secondary" onClick={() => void playAll(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
             {data.tracks[0] && <button className="button secondary" onClick={() => player.startRadio(data.tracks[0])}><Icon name="radio" size={16} /> Radio</button>}
@@ -36,9 +45,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
               <Icon name={isSaved(id) ? 'check' : 'plus'} size={16} /> {isSaved(id) ? 'Suivi' : 'Suivre'}
             </button>
             <button className="button secondary" onClick={() => open({ name: 'concerts', artist: name })}><Icon name="ticket" size={16} /> Concerts</button>
-          </div>
-        </div>
-      </div>
+      </ArtistHero>
       {data.header.description && <p className="artist-description">{data.header.description}</p>}
       {data.shelves.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} limit={5} />)}
     </div>

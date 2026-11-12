@@ -1,5 +1,6 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
+import { artistNameKey } from '../shared/artistNames.js';
 import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries, sameRecordingCredits } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
@@ -92,10 +93,13 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
   if (!query.trim() || scope === 'video') return [];
   const params = new URLSearchParams({ query: query.trim(), limit: '30' });
   const data = await request<Catalog>(`/search/page?${params}`);
+  const wantedArtist = artistNameKey(query);
+  const artistRank = (entry: OctaveEntry) => Number(artistNameKey(entry.name ?? '') === wantedArtist);
+  const artists = [...(data.artists ?? [])].sort((a, b) => artistRank(b) - artistRank(a));
   const shelves = {
     song: trackShelf('tracks', 'Titres', tracks(data.tracks)),
     album: collectionShelf('album', 'Albums', data.albums),
-    artist: collectionShelf('artist', 'Artistes', data.artists),
+    artist: collectionShelf('artist', 'Artistes', artists),
     playlist: collectionShelf('playlist', 'Playlists', data.playlists),
   };
   return (scope === 'all' ? Object.values(shelves) : [shelves[scope]]).filter((shelf) => shelf.items.length);

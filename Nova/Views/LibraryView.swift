@@ -916,7 +916,7 @@ struct SharedPlaylistGuide: View {
     }
 }
 
-/// Bibliothèque › Artistes ou Albums enregistrés.
+/// Bibliothèque › Artistes ou Albums.
 struct LibraryCollectionsView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AccountStore.self) private var account
@@ -924,10 +924,18 @@ struct LibraryCollectionsView: View {
     @State private var query = ""
 
     var body: some View {
-        let groups = library.musicGroups(kind: kind)
-        let visible = groups.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
-        let known = Set(groups.flatMap { $0.tracks.compactMap { kind == .artist ? $0.artistID : $0.albumID } })
-        let items = library.saved.filter { $0.kind == kind && !known.contains($0.id) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
+        let filter = ArtistNames.key(query)
+        let visible = library.libraryCollections(kind: kind).filter { entry in
+            if filter.isEmpty { return true }
+            switch entry {
+            case .group(let group):
+                return ArtistNames.key(group.title + (kind == .album ? " " + group.artist : "")).contains(filter)
+            case .collection(let collection):
+                return ArtistNames.key(collection.title + " " + collection.subtitle).contains(filter)
+            default:
+                return false
+            }
+        }
         ScrollView {
             if account.isSignedIn {
                 NavigationLink(value: Route.account(
@@ -940,55 +948,16 @@ struct LibraryCollectionsView: View {
                 }
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 16)], spacing: 20) {
-                ForEach(visible) { group in
-                    NavigationLink(value: Route.libraryGroup(kind, group.id)) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            RemoteImage(urls: group.artwork.squareArtworkURLs)
-                                .aspectRatio(1, contentMode: .fit)
-                                .clipShape(kind == .artist ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12)))
-                            Text(group.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                            Text(kind == .artist ? "\(group.tracks.count) titres" : group.artist + " · " + group.releaseType)
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                ForEach(visible) { entry in
+                    collectionTile(entry)
                 }
             }
             .padding(16)
-            if kind == .artist {
-                LazyVStack(spacing: 10) {
-                    ForEach(items) { collection in
-                        ItemRow(item: .collection(collection)) { _ in }
-                    }
-                }
-                .padding(.horizontal, 16)
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 20) {
-                    ForEach(items) { collection in
-                        NavigationLink(value: Route.collection(collection)) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                RemoteImage(urls: collection.artworkURLs)
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                Text(collection.title)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(Color.primary)
-                                    .lineLimit(1)
-                                Text(collection.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu { CollectionMenu(collection: collection) }
-                    }
-                }
-                .padding(16)
-            }
         }
         .overlay {
-            if items.isEmpty && visible.isEmpty && !account.isSignedIn {
+            if visible.isEmpty && !filter.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else if visible.isEmpty && !account.isSignedIn {
                 ContentUnavailableView(kind == .artist ? "Aucun artiste" : "Aucun album",
                                        systemImage: kind == .artist ? "music.mic" : "square.stack",
                                        description: Text(kind == .artist
@@ -997,7 +966,37 @@ struct LibraryCollectionsView: View {
             }
         }
         .navigationTitle(kind == .artist ? "Artistes" : "Albums")
-        .searchable(text: $query, prompt: "Filtrer la bibliothèque")
+        .searchable(text: $query, prompt: kind == .artist ? "Rechercher un artiste" : "Rechercher un album")
+    }
+
+    @ViewBuilder private func collectionTile(_ entry: LibraryStore.RecentAddition) -> some View {
+        switch entry {
+        case .group(let group):
+            NavigationLink(value: Route.libraryGroup(kind, group.id)) {
+                tile(urls: group.artwork.squareArtworkURLs, title: group.title,
+                     subtitle: kind == .artist ? "\(group.tracks.count) titres" : group.artist + " · " + group.releaseType)
+            }
+            .buttonStyle(.plain)
+        case .collection(let collection):
+            NavigationLink(value: Route.collection(collection)) {
+                tile(urls: collection.artworkURLs, title: collection.title, subtitle: collection.subtitle)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { CollectionMenu(collection: collection) }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func tile(urls: [URL], title: String, subtitle: String) -> some View {
+        VStack(alignment: kind == .artist ? .center : .leading, spacing: 6) {
+            RemoteImage(urls: urls)
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(kind == .artist ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12)))
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                .multilineTextAlignment(kind == .artist ? .center : .leading)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
     }
 }
 
@@ -1010,24 +1009,83 @@ struct LibraryGroupView: View {
     var body: some View {
         if let group = library.musicGroups(kind: kind, singles: true).first(where: { $0.id == id }) {
             List {
+                if kind == .artist {
+                    artistSections(group)
+                } else {
+                    albumHeader(group)
+                }
                 Section {
+                    ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
+                        TrackRowButton(track: track) { player.play(group.tracks, startAt: index) }
+                    }
+                } header: {
+                    if kind == .artist { Text("Titres") }
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle(group.title)
+            .navigationBarTitleDisplayMode(.inline)
+        } else {
+            ContentUnavailableView("Sortie introuvable", systemImage: "square.stack")
+        }
+    }
+
+    private func albumHeader(_ group: LibraryStore.MusicGroup) -> some View {
+        Section {
                     VStack(alignment: .leading, spacing: 12) {
                         RemoteImage(urls: group.artwork.squareArtworkURLs)
                             .frame(width: 160, height: 160)
                             .clipShape(RoundedRectangle(cornerRadius: 16))
-                        if kind == .album { Text(group.artist + " · " + group.releaseType).foregroundStyle(.secondary) }
+                        Text(group.artist + " · " + group.releaseType).foregroundStyle(.secondary)
                         Button { player.play(group.tracks) } label: { Label("Lecture", systemImage: "play.fill") }
                             .buttonStyle(.borderedProminent)
                     }
                     .padding(.vertical, 8)
-                }
-                ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
-                    TrackRowButton(track: track) { player.play(group.tracks, startAt: index) }
-                }
+        }
+    }
+
+    @ViewBuilder private func artistSections(_ group: LibraryStore.MusicGroup) -> some View {
+        let ids = Set(group.tracks.map(\.id))
+        let releases = library.musicGroups(kind: .album).filter { $0.tracks.contains { ids.contains($0.id) } }
+        let catalogID = group.tracks.compactMap(\.artistID).first
+        ArtistHeader(name: group.title, artwork: group.artwork.squareArtworkURLs,
+                     details: "\(group.tracks.count) titre\(group.tracks.count > 1 ? "s" : "") dans ta bibliothèque") {
+            PlayShuffleButtons {
+                player.play(group.tracks)
+            } shuffle: {
+                player.play(group.tracks, shuffled: true)
             }
-            .navigationTitle(group.title)
-        } else {
-            ContentUnavailableView("Sortie introuvable", systemImage: "square.stack")
+            if let catalogID {
+                NavigationLink(value: Route.collection(MusicCollection(id: catalogID, kind: .artist, title: group.title,
+                                                                       subtitle: "Artiste", artworkURL: group.artwork.artworkURL))) {
+                    Label("Voir dans le catalogue", systemImage: "arrow.up.right")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+        if !releases.isEmpty {
+            Section("Sorties dans ta bibliothèque") {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(releases) { release in
+                            NavigationLink(value: Route.libraryGroup(.album, release.id)) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    RemoteImage(urls: release.artwork.squareArtworkURLs)
+                                        .frame(width: 116, height: 116)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    Text(release.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                                    Text(release.releaseType).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .frame(width: 116, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
         }
     }
 }

@@ -12,9 +12,11 @@ import {
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open, root } from '../lib/router';
-import { libraryGroups, recentLibraryEntries, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
+import { artistNameKey } from '../../shared/artistNames';
+import { libraryEntries, libraryGroups, recentLibraryEntries, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
 import { useStore } from '../lib/store';
 import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
+import { ArtistHero } from './Content';
 
 export function UserPlaylistPage({ id }: { id: string }) {
   const state = useStore(library);
@@ -141,10 +143,23 @@ export function HistoryPage() {
   );
 }
 
-function GroupCards({ groups, kind }: { groups: LibraryGroup[]; kind: LibraryGroupKind }) {
-  return <div className="card-grid">
-    {groups.map(group => <GroupCard key={group.id} group={group} kind={kind} />)}
-  </div>;
+function useScrollLimit(length: number, step: number, search = '') {
+  const [page, setPage] = useState({ search, limit: step });
+  const limit = page.search === search ? page.limit : step;
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const target = sentinel.current;
+    if (!target || limit >= length) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setPage(current => ({
+        search,
+        limit: Math.min((current.search === search ? current.limit : step) + step, length),
+      }));
+    }, { rootMargin: '480px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [search, limit, length, step]);
+  return { limit, sentinel };
 }
 
 function GroupCard({ group, kind }: { group: LibraryGroup; kind: LibraryGroupKind }) {
@@ -156,24 +171,42 @@ function GroupCard({ group, kind }: { group: LibraryGroup; kind: LibraryGroupKin
     </button>;
 }
 
+type LibraryEntry = ReturnType<typeof libraryEntries>[number];
+
+function LibraryGrid({ entries, kind }: { entries: LibraryEntry[]; kind: LibraryGroupKind }) {
+  return <div className={`card-grid library-collection-grid ${kind === 'artist' ? 'library-artist-grid' : ''}`}>
+    {entries.map(entry => {
+      if (entry.kind === 'group') return <GroupCard key={'group:' + entry.group.id} group={entry.group} kind={kind} />;
+      const { collection } = entry;
+      return <button key={'catalog:' + collection.id} className="library-group-card" onClick={() => open(kind === 'artist'
+        ? { name: 'artist', id: collection.id, title: collection.title } : { name: 'collection', collection })}>
+        <Artwork url={collection.artwork} size={176} radius={12} round={kind === 'artist'} />
+        <span className="card-title">{entry.title}</span>
+        <span className="card-subtitle">{kind === 'artist' ? entry.subtitle : [entry.subtitle, 'Album'].filter(Boolean).join(' · ')}</span>
+      </button>;
+    })}
+  </div>;
+}
+
 export function AlbumsPage({ kind = 'album' }: { kind?: LibraryGroupKind }) {
   const state = useStore(library);
-  const groups = useMemo(() => libraryGroups(state, kind), [state, kind]);
-  const [limit, setLimit] = useState(80);
   const [query, setQuery] = useState('');
-  const visible = groups.filter(group => (group.title + ' ' + group.subtitle).toLocaleLowerCase('fr').includes(query.trim().toLocaleLowerCase('fr')));
-  const known = new Set(groups.flatMap(group => group.tracks.map(track => kind === 'artist' ? track.artistId : track.albumId)));
-  const items: Item[] = state.saved.filter(collection => collection.kind === kind && !known.has(collection.id)).map(collection => ({ type: 'collection', collection }));
+  const entries = useMemo(() => libraryEntries(state, kind)
+    .sort((a, b) => a.title.localeCompare(b.title, 'fr', { sensitivity: 'base' })),
+  [state.playlists, state.liked, state.added, state.saved, state.stats, kind]);
+  const filter = artistNameKey(query);
+  const visible = useMemo(() => entries.filter(entry =>
+    artistNameKey(entry.title + ' ' + entry.subtitle).includes(filter)), [entries, filter]);
+  const { limit, sentinel } = useScrollLimit(visible.length, 60, kind + filter);
   return (
     <div className="page">
       <PageTitle>{kind === 'artist' ? 'Artistes' : 'Albums'}</PageTitle>
-      {groups.length > 0 && <label className="field library-group-search">Filtrer
-        <input type="search" value={query} onChange={event => { setQuery(event.target.value); setLimit(80); }} />
+      {entries.length > 0 && <label className="field library-group-search">{kind === 'artist' ? 'Rechercher un artiste' : 'Rechercher un album'}
+        <input type="search" value={query} onChange={event => setQuery(event.target.value)} />
       </label>}
-      <GroupCards groups={visible.slice(0, limit)} kind={kind} />
-      {visible.length > limit && <button className="button secondary" onClick={() => setLimit(limit + 80)}>Afficher la suite</button>}
-      {items.length > 0 && !query && <section className="shelf"><header className="shelf-header"><h2>Enregistrés</h2></header><CardGrid items={items} /></section>}
-      {!visible.length && (!items.length || query) && <Empty icon={kind === 'artist' ? 'mic' : 'album'} title={query ? 'Aucun résultat' : 'Rien pour l’instant'} />}
+      <LibraryGrid entries={visible.slice(0, limit)} kind={kind} />
+      {visible.length > limit && <div ref={sentinel} className="library-scroll-sentinel" aria-hidden="true" />}
+      {!visible.length && <Empty icon={kind === 'artist' ? 'mic' : 'album'} title={filter ? 'Aucun résultat' : 'Rien pour l’instant'} />}
     </div>
   );
 }
@@ -181,20 +214,38 @@ export function AlbumsPage({ kind = 'album' }: { kind?: LibraryGroupKind }) {
 export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupKind }) {
   const state = useStore(library);
   const group = useMemo(() => libraryGroups(state, kind, true).find(group => group.id === id), [state, kind, id]);
+  const releases = useMemo(() => {
+    if (kind !== 'artist' || !group) return [];
+    const ids = new Set(group.tracks.map(track => track.id));
+    return libraryGroups(state, 'album').filter(release => release.tracks.some(track => ids.has(track.id)));
+  }, [state, group, kind]);
   if (!group) return <Empty icon="album" title="Sortie introuvable" />;
   const catalogID = kind === 'album' ? group.tracks.find(track => track.albumId)?.albumId : group.tracks.find(track => track.artistId)?.artistId;
+  if (kind === 'artist') return <div className="page artist-page">
+    <ArtistHero name={group.title} artwork={group.artworkTrack.artwork}
+      details={group.tracks.length + (group.tracks.length === 1 ? ' titre dans ta bibliothèque' : ' titres dans ta bibliothèque')}>
+      <PlayShuffle tracks={group.tracks} />
+      {catalogID && <button className="button secondary" onClick={() => open({ name: 'artist', id: catalogID, title: group.title })}>Voir dans le catalogue</button>}
+    </ArtistHero>
+    {!!releases.length && <section className="shelf">
+      <header className="shelf-header"><h2>Sorties dans ta bibliothèque</h2></header>
+      <div className="artist-release-row">{releases.map(release => <GroupCard key={release.id} group={release} kind="album" />)}</div>
+    </section>}
+    <h2 className="artist-tracks-title">Titres</h2>
+    <TrackList tracks={group.tracks} />
+  </div>;
   return <div className="page">
     <div className="collection-header">
-      <Artwork track={group.artworkTrack} size={200} radius={14} round={kind === 'artist'} />
+      <Artwork track={group.artworkTrack} size={200} radius={14} />
       <div className="collection-info">
-        <p className="eyebrow">{kind === 'artist' ? 'Artiste' : releaseType(group)}</p>
+        <p className="eyebrow">{releaseType(group)}</p>
         <h1>{group.title}</h1>
         {group.subtitle && <p className="muted">{group.subtitle}</p>}
         <div className="row-buttons">
           <PlayShuffle tracks={group.tracks} />
-          {catalogID && <button className="button secondary" onClick={() => open(kind === 'artist'
-            ? { name: 'artist', id: catalogID, title: group.title }
-            : { name: 'collection', collection: { id: catalogID, kind: 'album', title: group.title, subtitle: group.subtitle } })}>Voir dans le catalogue</button>}
+          {catalogID && <button className="button secondary" onClick={() => open({
+            name: 'collection', collection: { id: catalogID, kind: 'album', title: group.title, subtitle: group.subtitle },
+          })}>Voir dans le catalogue</button>}
         </div>
       </div>
     </div>
@@ -204,33 +255,13 @@ export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupK
 
 export function RecentPage() {
   const state = useStore(library);
-  const [limit, setLimit] = useState(60);
-  const sentinel = useRef<HTMLDivElement>(null);
   const entries = useMemo(() => recentLibraryEntries(state), [state.playlists, state.liked, state.added, state.saved, state.stats]);
-  useEffect(() => {
-    const target = sentinel.current;
-    if (!target || limit >= entries.length) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setLimit(current => Math.min(current + 60, entries.length));
-    }, { rootMargin: '480px' });
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [limit, entries.length]);
+  const { limit, sentinel } = useScrollLimit(entries.length, 60);
   return (
     <div className="page">
       <PageTitle>Ajouts récents</PageTitle>
-      {entries.length ? <div className="card-grid">
-        {entries.slice(0, limit).map(entry => entry.kind === 'group'
-          ? <GroupCard key={'group:' + entry.group.id} group={entry.group} kind="album" />
-          : <button key={'album:' + entry.album.id} className="library-group-card"
-            onClick={() => open({ name: 'collection', collection: entry.album })}>
-            <Artwork track={{ id: entry.album.id, title: entry.title, artist: entry.album.subtitle ?? '', artwork: entry.album.artwork, square: true }}
-              size={176} radius={12} />
-            <span className="card-title">{entry.title}</span>
-            <span className="card-subtitle">{[entry.album.subtitle, 'Album'].filter(Boolean).join(' · ')}</span>
-          </button>)}
-      </div> : <Empty icon="clock" title="Rien d’ajouté récemment" />}
-      {entries.length > limit && <div ref={sentinel} aria-hidden="true" style={{ height: 1 }} />}
+      {entries.length ? <LibraryGrid entries={entries.slice(0, limit)} kind="album" /> : <Empty icon="clock" title="Rien d’ajouté récemment" />}
+      {entries.length > limit && <div ref={sentinel} className="library-scroll-sentinel" aria-hidden="true" />}
     </div>
   );
 }

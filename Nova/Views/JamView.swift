@@ -92,7 +92,7 @@ struct JamView: View {
                 .submitLabel(.done)
         }
         Section("À distance") {
-            Button("Créer un Jam à distance", systemImage: "globe") {
+            Button(jam.isConnecting ? "Connexion au Jam…" : "Créer un Jam à distance", systemImage: "globe") {
                 if jam.circleLink.isEmpty {
                     createAfterSetup = true
                     configuringCircle = true
@@ -164,7 +164,7 @@ struct JamView: View {
             Button {
                 jam.startHosting()
             } label: {
-                Label("Lancer en local", systemImage: "play.circle.fill")
+                Label("Créer un Jam local", systemImage: "play.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
@@ -206,6 +206,9 @@ struct JamView: View {
     @ViewBuilder private var hostSections: some View {
         @Bindable var jam = jam
         let participants = jam.state?.participants ?? []
+        if let url = jam.invitationURL {
+            remoteInvitation(url)
+        }
         Section {
             if participants.isEmpty {
                 Label("En attente d'amis… Ils voient ton Jam en ouvrant Jam dans le lecteur de Nova.",
@@ -244,9 +247,6 @@ struct JamView: View {
                 Text("Tes amis scannent ce code avec l'appareil photo de leur iPhone : Nova s'ouvre et rejoint ton Jam.")
             }
         }
-        if let url = jam.invitationURL {
-            remoteInvitation(url)
-        }
         queueSections(jam.state)
         Section {
             Button("Terminer le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
@@ -273,6 +273,10 @@ struct JamView: View {
                 copiedInvitation = url
             }
             ShareLink(item: url) { Label("Partager l’invitation", systemImage: "square.and.arrow.up") }
+            Text(url.absoluteString)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
     }
 

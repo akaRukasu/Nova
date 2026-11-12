@@ -133,7 +133,7 @@ final class LibraryStore {
 
     struct MusicGroup: Hashable, Identifiable {
         let id: String
-        let title: String
+        var title: String
         let artist: String
         var tracks: [Track]
         var added: Date
@@ -162,14 +162,16 @@ final class LibraryStore {
             let title = kind == .artist ? track.artist : track.album ?? (singles ? track.title : "")
             guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             let catalogID = kind == .artist ? track.artistID : track.albumID
-            let fallback = kind == .artist ? key(title) : key(title) + "|" + key(track.artist)
+            let fallback = kind == .artist ? ArtistNames.key(title) : key(title) + "|" + ArtistNames.key(track.artist)
             let id = catalogID.flatMap { catalogKeys[$0] } ?? fallback
             if let catalogID { catalogKeys[catalogID] = id }
             let date = stats[track.id]?.added ?? dates[track.id] ?? .distantPast
             if groups[id] != nil {
                 let latest = max(groups[id]?.added ?? date, date)
+                let name = groups[id]?.title ?? title
                 groups[id]?.tracks.append(track)
                 groups[id]?.added = latest
+                if kind == .artist && title.contains("&") && !name.contains("&") { groups[id]?.title = title }
             } else {
                 groups[id] = MusicGroup(id: id, title: title, artist: track.artist, tracks: [track], added: date)
             }
@@ -177,30 +179,35 @@ final class LibraryStore {
         return groups.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
-    func recentAdditions() -> [RecentAddition] {
-        var groups = musicGroups(kind: .album, singles: true)
+    func libraryCollections(kind: CollectionKind, singles: Bool = false, newestFirst: Bool = false) -> [RecentAddition] {
+        var groups = musicGroups(kind: kind, singles: singles)
         var byID: [String: Int] = [:]
         for index in groups.indices {
-            for id in groups[index].tracks.compactMap(\.albumID) { byID[id] = index }
+            for id in groups[index].tracks.compactMap({ kind == .artist ? $0.artistID : $0.albumID }) { byID[id] = index }
         }
         var entries: [(date: Date, title: String, entry: RecentAddition)] = []
-        for album in saved where album.kind == .album {
-            let date = savedDates[album.id] ?? .distantPast
-            let index = byID[album.id] ?? groups.firstIndex {
-                $0.title.localizedStandardCompare(album.title) == .orderedSame
-                    && $0.artist.localizedStandardCompare(album.subtitle) == .orderedSame
+        for collection in saved where collection.kind == kind {
+            let date = savedDates[collection.id] ?? .distantPast
+            let index = byID[collection.id] ?? groups.firstIndex {
+                if kind == .artist { return ArtistNames.key($0.title) == ArtistNames.key(collection.title) }
+                return $0.title.localizedStandardCompare(collection.title) == .orderedSame
+                    && ArtistNames.key($0.artist) == ArtistNames.key(collection.subtitle)
             }
             if let index {
                 groups[index].added = max(groups[index].added, date)
             } else {
-                entries.append((date, album.title, .collection(album)))
+                entries.append((date, collection.title, .collection(collection)))
             }
         }
         entries += groups.map { ($0.added, $0.title, .group($0)) }
         return entries.sorted {
-            if $0.date != $1.date { return $0.date > $1.date }
+            if newestFirst && $0.date != $1.date { return $0.date > $1.date }
             return $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }.map { $0.entry }
+    }
+
+    func recentAdditions() -> [RecentAddition] {
+        libraryCollections(kind: .album, singles: true, newestFirst: true)
     }
 
     // MARK: Morceaux

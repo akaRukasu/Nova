@@ -14,6 +14,7 @@ struct JamCircle {
               url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil,
               url.path == "/nova-jam" || url.path == "/nova-jam/",
               let key = url.fragment, key.range(of: #"^[a-fA-F0-9]{32,128}$"#, options: .regularExpression) != nil else { return nil }
+        url.path = "/nova-jam"
         url.fragment = nil
         guard let endpoint = url.url else { return nil }
         self.endpoint = endpoint
@@ -30,8 +31,14 @@ struct JamCircle {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request, delegate: JamNoRedirect())
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        let reply = try JSONDecoder().decode(JamRelayReply.self, from: data)
-        guard status == 200 else { throw JamRelayError(status: status, reason: reply.error ?? "Relais Jam indisponible.") }
+        let reply = try? JSONDecoder().decode(JamRelayReply.self, from: data)
+        guard status == 200 else {
+            let fallback = status == 401 || status == 403
+                ? "Vérifie le lien de configuration hôte dans Nova."
+                : "Le relais Jam ne répond pas (HTTP \(status))."
+            throw JamRelayError(status: status, reason: reply?.error ?? fallback)
+        }
+        guard let reply else { throw JamRelayError(status: status, reason: "Réponse du relais Jam illisible.") }
         return reply
     }
 }
@@ -46,8 +53,8 @@ struct JamInvitation {
               parts.path == "/nova-jam/app/", parts.query == nil,
               let fragment = parts.fragment else { return nil }
         let keys = fragment.split(separator: ".", omittingEmptySubsequences: false)
-        guard keys.count == 2, keys[0].range(of: "^[a-f0-9]{16}$", options: .regularExpression) != nil,
-              keys[1].range(of: "^[a-f0-9]{48}$", options: .regularExpression) != nil else { return nil }
+        guard keys.count == 2, keys[0].utf8.count == 16, keys[1].utf8.count == 48,
+              keys.allSatisfy({ part in part.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }) else { return nil }
         parts.path = "/nova-jam"
         parts.fragment = nil
         guard let endpoint = parts.url else { return nil }
@@ -93,6 +100,13 @@ struct JamRelayReply: Decodable {
     var state: JamWireState?
     var participants: [String]?
     var events: [JamWireEvent]?
+
+    func hostInvitation(circle: JamCircle, room: String) throws -> URL {
+        guard let invite, let url = JamInvitation.link(circle: circle, room: room, key: invite) else {
+            throw JamRelayError(status: 200, reason: "Le relais n’a pas fourni d’invitation. Réessaie de créer le Jam.")
+        }
+        return url
+    }
 }
 
 struct JamWireState: Codable {

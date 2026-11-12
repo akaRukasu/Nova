@@ -132,7 +132,12 @@ actor OctaveCatalog {
     }
 
     func search(_ query: String, scope: SearchScope) async throws -> [Shelf] {
-        let result = try await request("search/page", query: [.init(name: "query", value: query), .init(name: "limit", value: "30")])
+        var result = try await request("search/page", query: [.init(name: "query", value: query), .init(name: "limit", value: "30")])
+        if let artists = result.artists, scope == .artists || scope == .all {
+            let wanted = ArtistNames.key(query)
+            let matches = artists.filter { ArtistNames.key($0.name ?? "") == wanted }
+            result.artists = matches + artists.filter { ArtistNames.key($0.name ?? "") != wanted }
+        }
         return shelves(result, scope: scope)
     }
     func suggestions(_ query: String) async throws -> [String] {
