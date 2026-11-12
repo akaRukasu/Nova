@@ -1,9 +1,10 @@
 // Barre de lecture (en bas), lecteur plein écran (pochette, paroles synchronisées, file d'attente).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Lyrics, Track } from '../../shared/types';
+import type { PlaybackSource } from '../../shared/octave';
 import { api, isAndroid, supportsOctave } from '../lib/api';
 import { jam } from '../lib/jam';
-import { isLiked, library, toggleLike } from '../lib/library';
+import { isLiked, library, playbackOptions, toggleLike, togglePlaybackOption } from '../lib/library';
 import { currentTrack, player, playerState, timeState } from '../lib/player';
 import { open } from '../lib/router';
 import { Store, useStore } from '../lib/store';
@@ -23,9 +24,11 @@ function Progress({ compact }: { compact?: boolean }) {
     <div className={`progress ${compact ? 'compact' : ''}`}>
       <span className="time">{formatTime(value) || '0:00'}</span>
       <input type="range" min={0} max={max} step={0.5} value={Math.min(value, max)}
+        aria-label="Position dans le morceau"
         style={{ '--fill': `${(Math.min(value, max) / max) * 100}%` } as React.CSSProperties}
         onChange={(e) => setDragging(Number(e.target.value))}
-        onMouseUp={() => { if (dragging != null) player.seek(dragging); setDragging(null); }}
+        onPointerUp={() => { if (dragging != null) player.seek(dragging); setDragging(null); }}
+        onPointerCancel={() => setDragging(null)}
         onKeyUp={() => { if (dragging != null) player.seek(dragging); setDragging(null); }} />
       <span className="time">{duration ? `-${formatTime(Math.max(0, duration - value)) || '0:00'}` : ''}</span>
     </div>
@@ -38,6 +41,7 @@ function Volume() {
     <div className="volume">
       <button onClick={() => player.setVolume(volume > 0 ? 0 : 0.8)} aria-label="Volume"><Icon name={volume > 0 ? 'volume' : 'mute'} size={18} /></button>
       <input type="range" min={0} max={1} step={0.01} value={volume}
+        aria-label="Niveau du volume"
         style={{ '--fill': `${volume * 100}%` } as React.CSSProperties}
         onChange={(e) => player.setVolume(Number(e.target.value))} />
     </div>
@@ -54,7 +58,7 @@ function Controls({ large }: { large?: boolean }) {
   const size = large ? 34 : 22;
   return (
     <div className={`controls ${large ? 'large' : ''}`}>
-      <button className={`mode ${state.shuffled ? 'on' : ''}`} onClick={() => player.toggleShuffle()} aria-label="Aléatoire"><Icon name="shuffle" size={18} /></button>
+      <button className={`mode ${state.shuffled ? 'on' : ''}`} onClick={() => player.toggleShuffle()} aria-label="Aléatoire" aria-pressed={state.shuffled}><Icon name="shuffle" size={18} /></button>
       <button onClick={() => player.previous()} aria-label="Précédent"><Icon name="previous" size={size} /></button>
       <button className="play-button" onClick={() => player.toggle()} aria-label={state.playing ? 'Pause' : 'Lecture'}>
         {state.loading && !state.playing ? <span className="spinner" /> : <Icon name={state.playing ? 'pause' : 'play'} size={large ? 34 : 24} />}
@@ -64,6 +68,35 @@ function Controls({ large }: { large?: boolean }) {
         <Icon name="repeat" size={18} />{state.repeat === 'one' && <small>1</small>}
       </button>
     </div>
+  );
+}
+
+function PlaybackOptions({ source }: { source?: PlaybackSource }) {
+  const { settings } = useStore(library);
+  const options = playbackOptions(settings, source);
+  return (
+    <div className="playback-options" aria-label="Modes de lecture" role="group">
+      {(['autoplay', 'automix'] as const).map((option) => {
+        const name = option === 'autoplay' ? 'AutoPlay' : 'AutoMix';
+        const description = option === 'autoplay' ? 'Enchaîner avec des titres similaires' : 'Mélanger les transitions';
+        return <button key={option} className="playback-option" onClick={() => togglePlaybackOption(option, source)}
+          aria-pressed={options[option]} aria-label={name} title={`${name} · ${description}`}>
+          <Icon name={option === 'autoplay' ? 'infinity' : 'mix'} size={18} /><span>{name}</span>
+        </button>;
+      })}
+    </div>
+  );
+}
+
+function SourceSelector({ source }: { source?: PlaybackSource }) {
+  if (!supportsOctave || !source) return null;
+  return (
+    <button className="badge source-selector" title="Changer la source de lecture" aria-haspopup="menu" onClick={(event) => showMenu(event, [
+      { label: 'Lire avec Octave', icon: source === 'octave' ? 'check' : undefined, action: () => player.switchSource('octave') },
+      { label: 'Lire avec YouTube Music', icon: source === 'youtube' ? 'check' : undefined, action: () => player.switchSource('youtube') },
+      { label: '', separator: true },
+      { label: 'Compte et réglages Octave', icon: 'settings', action: () => { nowPlayingOpen.set(false); player.openOctave(); } },
+    ])}>{source === 'octave' ? 'Octave' : 'YouTube Music'}</button>
   );
 }
 
@@ -109,14 +142,8 @@ export function PlayerBar() {
         <Progress compact />
       </div>
       <div className="right">
-        {supportsOctave && state.source && (
-          <button className="badge source-selector" title="Changer la source de lecture" aria-haspopup="menu" onClick={(event) => showMenu(event, [
-            { label: 'Lire avec Octave', icon: state.source === 'octave' ? 'check' : undefined, action: () => player.switchSource('octave') },
-            { label: 'Lire avec YouTube Music', icon: state.source === 'youtube' ? 'check' : undefined, action: () => player.switchSource('youtube') },
-            { label: '', separator: true },
-            { label: 'Compte et réglages Octave', icon: 'settings', action: () => player.openOctave() },
-          ])}>{state.source === 'octave' ? 'Octave' : 'YouTube Music'}</button>
-        )}
+        <SourceSelector source={state.source} />
+        <PlaybackOptions source={state.source} />
         {state.ad && <button className="badge" onClick={() => void window.nova.invoke('webplayer:show', 0)}>Publicité YouTube</button>}
         {state.transitioning && <span className="badge"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu'}</span>}
         <button className={`icon-button ${jamState.role !== 'none' ? 'accent' : ''}`} onClick={() => open({ name: 'jam' })} aria-label="Jam"><Icon name="jam" size={19} /></button>
@@ -186,12 +213,14 @@ function LyricsPanel({ track }: { track?: Track }) {
 
 function QueuePanel() {
   const state = useStore(playerState);
+  const { settings } = useStore(library);
+  const { autoplay } = playbackOptions(settings, state.source);
   const upcoming = state.queue.map((track, position) => ({ track, position })).slice(state.index + 1, state.index + 101);
   const [dragged, setDragged] = useState<number | null>(null);
   return (
     <div className="queue">
       <h3>À suivre</h3>
-      {!upcoming.length && <p className="muted">La file est vide : la lecture automatique enchaînera des titres similaires.</p>}
+      {!upcoming.length && <p className="muted">{autoplay ? 'AutoPlay enchaînera des titres similaires.' : 'La file d’attente est vide.'}</p>}
       {upcoming.map(({ track, position }) => (
         <div key={`${track.id}-${position}`} className="queue-row" draggable
           onDragStart={() => setDragged(position)} onDragOver={(e) => e.preventDefault()}
@@ -227,30 +256,37 @@ export function NowPlaying() {
     <div className="now-playing">
       <div className="np-background" style={{ backgroundImage: background ? `url("${background}")` : undefined }} />
       <div className="np-titlebar">
-        <button className="icon-button" onClick={() => nowPlayingOpen.set(false)} aria-label="Fermer"><Icon name="chevronDown" size={22} /></button>
-        <div className="np-tabs">
-          <button className={mode === 'artwork' ? 'on' : ''} onClick={() => nowPlayingOpen.set('artwork')}>Lecture</button>
-          <button className={mode === 'lyrics' ? 'on' : ''} onClick={() => nowPlayingOpen.set('lyrics')}>Paroles</button>
-          <button className={mode === 'queue' ? 'on' : ''} onClick={() => nowPlayingOpen.set('queue')}>À suivre</button>
+        <button className="np-dismiss" onClick={() => nowPlayingOpen.set(false)} aria-label="Fermer le plein écran" title="Fermer le plein écran"><Icon name="chevronDown" size={20} /></button>
+        <div className="np-tabs" role="group" aria-label="Vue du lecteur">
+          {([['artwork', 'album', 'Lecture'], ['lyrics', 'lyrics', 'Paroles'], ['queue', 'list', 'À suivre']] as const).map(([value, icon, label]) =>
+            <button key={value} aria-pressed={mode === value} onClick={() => nowPlayingOpen.set(value)}><Icon name={icon} size={17} />{label}</button>
+          )}
         </div>
       </div>
       <div className={`np-body ${mode}`}>
         <div className="np-left">
           <div className="np-art">
-            <Artwork track={track} size={mode === 'artwork' ? 440 : 340} radius={14} />
+            <Artwork track={track} size={mode === 'artwork' ? 560 : 340} radius={20} />
             {state.transitioning && <span className="badge floating"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu enchaîné'}</span>}
           </div>
-          <div className="np-meta">
-            <div>
-              <h1>{track.title}</h1>
-              <p className="link" onClick={() => { if (track.artistId) { nowPlayingOpen.set(false); open({ name: 'artist', id: track.artistId, title: track.artist }); } }}>{track.artist}</p>
+          <div className="np-details">
+            <SourceSelector source={state.source} />
+            <div className="np-meta">
+              <div>
+                <h1>{track.title}</h1>
+                <p>{track.artistId ? <button className="link" onClick={() => { nowPlayingOpen.set(false); open({ name: 'artist', id: track.artistId!, title: track.artist }); }}>{track.artist}</button> : track.artist}</p>
+              </div>
+              <button className={`round-button ${liked ? 'on' : ''}`} onClick={() => toggleLike(track)} aria-label="J’aime" aria-pressed={liked}><Icon name="heart" size={20} solid={liked} /></button>
+              <button className="round-button" onClick={(e) => showMenu(e, trackMenu(track))} aria-label="Plus"><Icon name="more" size={20} strokeWidth={3} /></button>
             </div>
-            <button className={`round-button ${liked ? 'on' : ''}`} onClick={() => toggleLike(track)} aria-label="J’aime"><Icon name="heart" size={20} solid={liked} /></button>
-            <button className="round-button" onClick={(e) => showMenu(e, trackMenu(track))} aria-label="Plus"><Icon name="more" size={20} strokeWidth={3} /></button>
+            {state.error && <div className="np-error" role="status">{state.error}</div>}
+            <Progress />
+            <Controls large />
+            <div className="np-options">
+              <PlaybackOptions source={state.source} />
+              <Volume />
+            </div>
           </div>
-          <Progress />
-          <Controls large />
-          <Volume />
         </div>
         {mode !== 'artwork' && <div className="np-right">{mode === 'lyrics' ? <LyricsPanel track={track} /> : <QueuePanel />}</div>}
       </div>

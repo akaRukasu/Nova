@@ -48,7 +48,15 @@ export class AndroidOctavePlayer {
     }
   }
 
-  setSettings(value?: OctaveAudioSettings) { this.settings = { ...octaveAudioDefaults, ...value }; }
+  setSettings(value?: OctaveAudioSettings) {
+    const next = { ...octaveAudioDefaults, ...value };
+    const changed = JSON.stringify(next) !== JSON.stringify(this.settings);
+    this.settings = next;
+    if (changed && this.active) {
+      this.audio = undefined;
+      void this.call('settingsLive', next);
+    }
+  }
 
   warmUp() { void this.prepare().catch(() => undefined); }
 

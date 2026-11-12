@@ -115,7 +115,13 @@ extension URL {
             components?.queryItems = [URLQueryItem(name: "px", value: String(pixels))]
             return components?.url ?? self
         }
-        guard let host, host.contains("googleusercontent") || host.contains("ggpht") else { return self }
+        guard let host else { return self }
+        if host == "dzcdn.net" || host.hasSuffix(".dzcdn.net") {
+            let size = pixels <= 56 ? 56 : pixels <= 250 ? 250 : pixels <= 500 ? 500 : 1000
+            return URL(string: absoluteString.replacingOccurrences(of: #"/\d+x\d+(?=-)"#,
+                with: "/\(size)x\(size)", options: .regularExpression)) ?? self
+        }
+        guard host.contains("googleusercontent") || host.contains("ggpht") else { return self }
         let size = Swift.max(60, Swift.min(pixels, 1600))
         let text = absoluteString
         let resized: String

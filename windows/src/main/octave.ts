@@ -101,25 +101,33 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
   const cached = recordings.get(track.id);
   if (cached) return cached;
   const queries = recordingSearchQueries(track);
+  const album = normalize(track.album ?? '');
+  const lead = normalize(mainArtist(track.artist));
+  if (track.album) queries.push(`${track.album} ${mainArtist(track.artist)}`);
   const possibleAudio = new Map<string, Track>();
-  for (const query of queries) {
+  const checkedReleases = new Set<string>();
+  let fallback: Track | undefined;
+  for (const query of new Set(queries)) {
     const items = (await search(query, 'all')).flatMap((shelf) => shelf.items);
     const candidates = items.flatMap((item) =>
       item.type === 'track' && item.track.albumId ? [item.track] : []);
     const exactId = candidates.find((candidate) => candidate.id === track.id);
     if (exactId) return rememberRecording(track.id, exactId);
     const found = matchRecording(track, candidates);
-    const album = normalize(track.album ?? '');
-    if (album && normalize(found?.album ?? '') !== album) {
+    if (found && (!album || normalize(found.album ?? '') === album)) return rememberRecording(track.id, found);
+    if (album) {
       const release = items.flatMap(item => item.type === 'collection' ? [item.collection] : []).find(item =>
-        item.kind === 'album' && normalize(item.title) === album && normalize(item.subtitle ?? '') === normalize(mainArtist(track.artist)));
+        item.kind === 'album' && !checkedReleases.has(item.id)
+        && normalize(item.title) === album && normalize(item.subtitle ?? '') === lead);
       if (release) {
+        checkedReleases.add(release.id);
         const page = await collection(release).catch(() => undefined);
         const sameRelease = page && matchRecording(track, page.tracks);
         if (sameRelease) return rememberRecording(track.id, sameRelease);
       }
     }
-    if (found) return rememberRecording(track.id, found);
+    if (found && !track.id.startsWith('octave:played-')) return rememberRecording(track.id, found);
+    fallback ??= found;
     if (track.square === false) {
       for (const candidate of candidates) {
         if (candidate.square && normalize(candidate.title) === normalize(track.title)
@@ -127,6 +135,7 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
       }
     }
   }
+  if (fallback) return rememberRecording(track.id, fallback);
   if (!possibleAudio.size) return undefined;
   // Le clip peut inclure une scène ou un générique. Confirmer l'édition avec la piste audio YouTube Music.
   const shelves = await searchYouTube(`${track.title} ${track.artist}`, 'song').catch(() => []);

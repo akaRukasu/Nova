@@ -222,9 +222,11 @@ function openMini() {
   if (!window || window.isDestroyed()) return;
   if (mini && !mini.isDestroyed()) return mini.show();
   const dark = nativeTheme.shouldUseDarkColors;
+  const width = 428;
+  const height = 142;
   mini = new BrowserWindow({
-    width: 380,
-    height: 104,
+    width,
+    height,
     frame: false,
     resizable: false,
     maximizable: false,
@@ -238,7 +240,7 @@ function openMini() {
   mini.setAlwaysOnTop(true, 'floating');
   // En bas à droite de l'écran où se trouvait Nova.
   const area = screen.getDisplayMatching(window.getBounds()).workArea;
-  mini.setPosition(area.x + area.width - 400, area.y + area.height - 124);
+  mini.setPosition(area.x + area.width - width - 20, area.y + area.height - height - 20);
   const current = mini;
   current.webContents.on('did-finish-load', async () => {
     current.webContents.send('mini:state', getRemoteState());

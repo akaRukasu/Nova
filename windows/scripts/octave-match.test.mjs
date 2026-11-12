@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { confirmClipRecording, matchRecording } from '../dist/main/matcher.js';
+import { sizedArtwork } from '../dist/shared/artwork.js';
 
 const clip = { id: 'Tk9TM7-eTmw', title: 'Joseph', artist: 'Falling In Reverse', duration: 258, square: false };
 const joseph = { id: 'octave:4283830192', title: 'Joseph', artist: 'Falling in Reverse', duration: 249, square: true };
@@ -32,4 +33,22 @@ test('guest credits in the title and artist line identify the same recording in 
   assert.equal(matchRecording(previous, [{ ...youtube, title: 'Cross Off (avec autre artiste)' }]), undefined);
   assert.equal(matchRecording(previous, [{ ...youtube, title: 'Cross Off (Live)' }]), undefined);
   assert.equal(matchRecording(previous, [{ ...youtube, duration: 310 }]), undefined);
+});
+
+test('a saved autoplay entry can recover its exact edition when the old duration was wrong', () => {
+  const saved = { id: 'octave:played-old', title: 'Old School Hollywood', artist: 'System of A Down',
+    album: 'Mezmerize', duration: 220, square: true };
+  const studio = { ...saved, id: 'octave:559726', duration: 177 };
+  const live = { ...studio, title: 'Old School Hollywood (Live)' };
+  assert.equal(matchRecording(saved, [live, studio]), studio);
+  assert.equal(matchRecording(saved, [{ ...studio, album: 'Another Release' }]), undefined);
+  assert.equal(matchRecording(saved, [{ ...studio, artist: 'Vitamin String Quartet' }]), undefined);
+  assert.equal(matchRecording({ ...saved, id: 'Mi5oHdNAa4Q' }, [studio]), undefined);
+});
+
+test('old Octave covers request the native image size for each surface', () => {
+  const cover = 'https://e-cdns-images.dzcdn.net/images/cover/art/56x56-000000-80-0-0.jpg';
+  assert.equal(sizedArtwork(cover, 176), cover.replace('/56x56-', '/250x250-'));
+  assert.equal(sizedArtwork(cover, 780), cover.replace('/56x56-', '/1000x1000-'));
+  assert.equal(sizedArtwork(cover.replace('dzcdn.net', 'other.example'), 780), cover.replace('dzcdn.net', 'other.example'));
 });

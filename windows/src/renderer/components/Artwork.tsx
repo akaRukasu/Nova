@@ -2,6 +2,7 @@
 // (version audio, album), sinon la grande miniature vidéo, recadrée au centre.
 import { useEffect, useState } from 'react';
 import type { Track } from '../../shared/types';
+import { sizedArtwork as sized } from '../../shared/artwork';
 import { api } from '../lib/api';
 import { Icon } from './icons';
 
@@ -29,10 +30,7 @@ async function resolve(id: string): Promise<string | null> {
   }
 }
 
-export function sized(url: string | undefined, pixels: number) {
-  if (!url) return url;
-  return /googleusercontent|ggpht/.test(url) ? url.replace(/=w\d+-h\d+/, `=w${pixels}-h${pixels}`).replace(/=s\d+/, `=s${pixels}`) : url;
-}
+export { sized };
 
 export function trackArtwork(track: Track | undefined, pixels: number): string | undefined {
   if (!track) return undefined;
@@ -67,6 +65,7 @@ export function Artwork({ track, url, size, round, radius = 8, className }: {
     <img className={`artwork ${className ?? ''}`} style={style} src={src} alt="" loading="lazy" draggable={false}
       onError={() => {
         if (track && src.includes('hq720')) setSrc(`https://i.ytimg.com/vi/${track.id}/hqdefault.jpg`);
+        else if (src !== (track?.artwork ?? url) && (track?.artwork ?? url)) setSrc(track?.artwork ?? url);
         else setFailed(true);
       }} />
   );

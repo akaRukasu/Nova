@@ -57,6 +57,7 @@
 
   function settings(options) {
     if (blocked()) return blocked();
+    if (location.pathname !== '/settings') return false;
     const controls = [...document.querySelectorAll('main button')];
     const quality = controls.find(button => button.textContent.trim() === ({low: 'Low', high: 'High', lossless: 'Lossless'})[options.quality]);
     const transition = controls.find(button => button.textContent.trim() === ({off: 'Off', crossfade: 'Crossfade', automix: 'AutoMix'})[options.transition]);
@@ -68,6 +69,35 @@
       if (button && typeof options[key] === 'boolean' && button.getAttribute('aria-checked') !== String(options[key])) button.click();
     }
     return true;
+  }
+
+  let pendingSettings;
+  let updatingSettings = false;
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function applyLiveSettings() {
+    updatingSettings = true;
+    const original = location.href;
+    const link = () => document.querySelector('a[href="/settings"]');
+    let opened = false;
+    try {
+      if (location.pathname !== '/settings') {
+        if (!link()) buttons('Account')[0]?.click();
+        for (let i = 0; i < 8 && !link() && location.href === original; i++) await wait(80);
+        if (location.href !== original || !link()) return;
+        link().click();
+        opened = true;
+      }
+      for (let i = 0; i < 20; i++) {
+        if (location.href !== original && location.pathname !== '/settings') return;
+        const options = pendingSettings;
+        if (settings(options) === true && options === pendingSettings) return;
+        await wait(100);
+      }
+    } finally {
+      if (opened && location.pathname === '/settings') history.back();
+      updatingSettings = false;
+    }
   }
 
   function command({type, value}) {
@@ -93,6 +123,11 @@
 
   const calls = {
     sample, settings, command,
+    settingsLive(options) {
+      pendingSettings = options;
+      if (!updatingSettings) void applyLiveSettings();
+      return true;
+    },
     select({id, retry}) {
       const track = row(id);
       const title = track?.querySelector('[data-cell="title"]') ?? track;

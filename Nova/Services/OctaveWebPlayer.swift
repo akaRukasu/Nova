@@ -92,6 +92,12 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         Task { try? await prepare() }
     }
 
+    func refreshSettings() {
+        guard !panel else { return }
+        prepared = nil
+        Task { _ = await call("settingsLive", args: PlaybackSettings.octaveAudio) }
+    }
+
     private func call(_ operation: String, args: [String: Any] = [:]) async -> Any? {
         guard view.url?.host == OctaveCatalog.origin.host else { return nil }
         return try? await view.callAsyncJavaScript(

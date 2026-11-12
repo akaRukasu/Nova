@@ -4,7 +4,7 @@ import type {
   Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
-import { isOctaveId } from '../../shared/octave';
+import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
 import { api, on } from './api';
 import { Store } from './store';
 
@@ -90,6 +90,26 @@ export function updateSettings(change: Partial<Settings>) {
   void api.applySettings(settings);
   if (change.engine && change.engine !== 'auto') {
     void import('./player').then(({ player }) => player.setMode(change.engine as 'direct' | 'web'));
+  }
+}
+
+export function playbackOptions(settings: Settings, source?: PlaybackSource) {
+  const octave = { ...octaveAudioDefaults, ...settings.octaveAudio };
+  return source === 'octave'
+    ? { autoplay: octave.autoplay, automix: octave.transition === 'automix' }
+    : { autoplay: settings.autoplayRadio, automix: settings.transition === 'automix' };
+}
+
+export function togglePlaybackOption(option: 'autoplay' | 'automix', source?: PlaybackSource) {
+  const settings = library.get().settings;
+  const enabled = !playbackOptions(settings, source)[option];
+  if (source === 'octave') {
+    const octaveAudio = { ...octaveAudioDefaults, ...settings.octaveAudio };
+    if (option === 'autoplay') octaveAudio.autoplay = enabled;
+    else octaveAudio.transition = enabled ? 'automix' : 'off';
+    updateSettings({ octaveAudio });
+  } else {
+    updateSettings(option === 'autoplay' ? { autoplayRadio: enabled } : { transition: enabled ? 'automix' : 'off' });
   }
 }
 

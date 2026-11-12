@@ -74,7 +74,12 @@ export function matchRecording(wanted: Track, candidates: Track[]): Track | unde
   const exact = matchingCredits.filter((candidate) =>
     !wanted.duration || !candidate.duration || Math.abs(candidate.duration - wanted.duration) <= 8);
   const album = normalize(wanted.album ?? '');
+  // Les anciennes entrées de lecture automatique pouvaient reprendre la durée du titre précédent.
+  const savedRelease = album && wanted.id.startsWith('octave:played-') ? matchingCredits.find((candidate) =>
+    normalize(candidate.album ?? '') === album && normalize(candidate.artist) === artist
+    && normalize(candidate.title) === normalize(wanted.title)) : undefined;
   const match = (album ? exact.find((candidate) => normalize(candidate.album ?? '') === album) : undefined)
+    ?? savedRelease
     ?? exact.find((candidate) => wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 2)
     ?? exact[0];
   if (match || wanted.square !== false || !wanted.duration) return match;

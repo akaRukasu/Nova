@@ -2,7 +2,7 @@
 import type { Track } from '../../shared/types';
 import { isOctaveId } from '../../shared/octave';
 import { api, on } from './api';
-import { library, notify } from './library';
+import { isLiked, library, notify, playbackOptions, toggleLike, togglePlaybackOption } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
 
 /** Titre au format de l'iPhone (artworkURL, artistID…). */
@@ -29,6 +29,8 @@ function publish() {
     playing: state.playing,
     loading: state.loading,
     source: state.source,
+    ...playbackOptions(library.get().settings, state.source),
+    liked: track ? isLiked(track.id) : false,
     playbackSourceControl: true,
     time: timeState.get().time,
     duration: timeState.get().duration,
@@ -60,6 +62,15 @@ on('remote:command', (command: any) => {
     case 'volume': player.setVolume(Math.min(1, Math.max(0, Number(command.value) || 0))); break;
     case 'shuffle': player.toggleShuffle(); break;
     case 'repeat': player.cycleRepeat(); break;
+    case 'autoplay':
+    case 'automix':
+      if (command.source === 'mini') togglePlaybackOption(command.action, playerState.get().source);
+      break;
+    case 'like': {
+      const track = currentTrack();
+      if (command.source === 'mini' && track) toggleLike(track);
+      break;
+    }
     case 'playTracks': if (tracks.length) player.play(tracks, Number(command.index) || 0, !!command.shuffled, source,
       Math.max(0, Number(command.position) || 0), command.paused === true); break;
     case 'switchSource': if (source) player.switchSource(source); break;

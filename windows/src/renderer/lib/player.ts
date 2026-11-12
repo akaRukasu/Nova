@@ -1,6 +1,7 @@
 // Lecteur : file d'attente, aléatoire, répétition, AutoMix / fondu enchaîné (deux lecteurs audio),
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
+import { sizedArtwork } from '../../shared/artwork';
 import { isOctaveId, type OctavePlayback, type PlaybackSource } from '../../shared/octave';
 import {
   analyzeMeasures, analyzeSamples, bassSwap, gainFor, mixVolumes, planMix, saveAnalysis, savedAnalysis,
@@ -1059,7 +1060,7 @@ class Engine {
   private updateMediaSession() {
     const track = currentTrack();
     if (!track || !navigator.mediaSession) return;
-    const art = track.artwork?.replace(/=w\d+-h\d+/, '=w512-h512');
+    const art = sizedArtwork(track.artwork, 500);
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title, artist: track.artist, album: track.album ?? '',
       artwork: art ? [{ src: art, sizes: '512x512' }] : [],

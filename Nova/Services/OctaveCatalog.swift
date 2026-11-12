@@ -190,6 +190,12 @@ actor OctaveCatalog {
             return true
         }
         if let album = wanted.album, let match = exact.first(where: { Self.normalize($0.album ?? "") == Self.normalize(album) }) { return match }
+        if wanted.id.hasPrefix("octave:played-"), let album = wanted.album, !Self.normalize(album).isEmpty,
+           let match = tracks.first(where: {
+               Self.normalize($0.album ?? "") == Self.normalize(album)
+                   && Self.normalize($0.title) == Self.normalize(wanted.title)
+                   && Self.normalize($0.artist) == Self.normalize(wanted.artist)
+           }) { return match }
         return exact.first
     }
     func recording(_ track: Track) async throws -> Track? {

@@ -77,6 +77,7 @@ function searchInOctave(query: string): boolean {
 }
 
 function applyAudioSettings(settings: OctaveAudioSettings): boolean {
+  if (location.pathname !== '/settings') return false;
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('main button')];
   const quality = { low: 'Low', high: 'High', lossless: 'Lossless' }[settings.quality];
   const transition = { off: 'Off', crossfade: 'Crossfade', automix: 'AutoMix' }[settings.transition];
@@ -94,6 +95,18 @@ function applyAudioSettings(settings: OctaveAudioSettings): boolean {
     if (button && button.getAttribute('aria-checked') !== String(desired)) button.click();
   }
   return true;
+}
+
+async function openSettingsInOctave(): Promise<boolean> {
+  const origin = location.href;
+  const link = () => document.querySelector<HTMLAnchorElement>('a[href="/settings"]');
+  if (!link()) document.querySelector<HTMLButtonElement>('button[aria-label="Account"]')?.click();
+  for (let i = 0; i < 8 && location.href === origin; i++) {
+    const settings = link();
+    if (settings) { settings.click(); return true; }
+    await new Promise(resolve => setTimeout(resolve, 80));
+  }
+  return false;
 }
 
 function controlPlayer(command: OctaveCommand): boolean {
@@ -136,6 +149,7 @@ export class OctavePlayer {
   private audioSettings = octaveAudioDefaults;
   private appliedAudio?: string;
   private preparing?: Promise<Sample['blocked']>;
+  private updatingAudio = false;
 
   constructor(
     private readonly parent: () => BrowserWindow | null,
@@ -147,6 +161,41 @@ export class OctavePlayer {
 
   setAudioSettings(settings?: OctaveAudioSettings): void {
     this.audioSettings = { ...octaveAudioDefaults, ...settings };
+    const contents = this.view?.webContents;
+    const playback = this.playback;
+    if (contents && playback && !this.panelVisible && !this.updatingAudio && this.appliedAudio !== JSON.stringify(this.audioSettings)) {
+      void this.updateAudioDuringPlayback(contents, playback).catch(() => undefined);
+    }
+  }
+
+  private async updateAudioDuringPlayback(contents: WebContents, playback: Playback): Promise<void> {
+    this.updatingAudio = true;
+    let opened = false;
+    let updated = false;
+    try {
+      if (new URL(contents.getURL()).pathname !== '/settings') {
+        opened = await contents.executeJavaScript(`(${openSettingsInOctave.toString()})()`);
+        if (!opened) return;
+      }
+      for (let i = 0; i < 20 && this.playback === playback && !this.panelVisible && !contents.isDestroyed(); i++) {
+        const settings = JSON.stringify(this.audioSettings);
+        const applied = await contents.executeJavaScript(`(${applyAudioSettings.toString()})(${settings})`);
+        if (applied) {
+          updated = true;
+          this.appliedAudio = settings;
+          if (settings === JSON.stringify(this.audioSettings)) return;
+        }
+        await wait(100);
+      }
+    } finally {
+      if (opened && this.playback === playback && !this.panelVisible && !contents.isDestroyed()) {
+        await contents.executeJavaScript("if (location.pathname === '/settings') history.back()").catch(() => undefined);
+      }
+      this.updatingAudio = false;
+      if (updated && this.playback === playback && this.appliedAudio !== JSON.stringify(this.audioSettings)) {
+        this.setAudioSettings(this.audioSettings);
+      }
+    }
   }
 
   private resize = () => {
