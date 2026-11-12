@@ -422,6 +422,7 @@ app.whenReady().then(async () => {
   handle('yt:radio', (id: string) => isOctaveId(id) ? octave.radio(id) : yt.radio(id));
   handle('yt:related', (id: string) => isOctaveId(id) ? octave.related(id) : yt.related(id));
   handle('yt:squareArtwork', (id: string) => yt.squareArtwork(id));
+  handle('art:track', (track: Track) => isOctaveId(track.id) ? octave.trackArtwork(track) : yt.squareArtwork(track.id));
   handle('art:palette', (url: string) => palette(url));
   handle('lyrics:get', (track: Track, duration?: number) => lyrics(track, duration));
   handle('stream:prefetch', (id: string) => prefetch(id));

@@ -336,6 +336,7 @@ struct SettingsView: View {
     @AppStorage("playlistSource") private var playlistSource = PlaybackSource.octave
     @AppStorage("octaveQuality") private var octaveQuality = "lossless"
     @AppStorage("octaveTransition") private var octaveTransition = "automix"
+    @AppStorage("octaveAutomixStyle") private var octaveAutomixStyle = "legacy"
     @AppStorage("octaveAutoplay") private var octaveAutoplay = true
     @AppStorage("octaveGapless") private var octaveGapless = true
     @AppStorage("octaveSoundCheck") private var octaveSoundCheck = true
@@ -397,6 +398,13 @@ struct SettingsView: View {
                 }
                 Picker("Transitions Octave", selection: $octaveTransition) {
                     ForEach(PlaybackSettings.Transition.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                if octaveTransition == "automix" {
+                    Picker("Style AutoMix", selection: $octaveAutomixStyle) {
+                        Text("Octave · phrases courtes").tag("legacy")
+                        Text("Automatique").tag("automatic")
+                        Text("Apple · phrases longues").tag("apple")
+                    }
                 }
                 Toggle("Autoplay", isOn: $octaveAutoplay)
                 Toggle("Lecture sans blanc", isOn: $octaveGapless)
@@ -523,6 +531,7 @@ struct SettingsView: View {
                 .presentationDetents([.medium, .large])
         }
         .navigationTitle("Réglages")
+        .onDisappear { if player.source == .octave { player.octave.refreshSettings() } }
         .sheet(isPresented: $showAccount) { AccountSheet() }
         .sheet(isPresented: $showImport) { ImportView() }
         .task { cacheSize = await AudioCache.shared.sizeInBytes() }

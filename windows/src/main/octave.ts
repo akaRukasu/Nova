@@ -103,6 +103,12 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
 
 const recordings = new Map<string, Track>();
 
+export async function trackArtwork(track: Track): Promise<string | undefined> {
+  // Une ancienne entrée AutoPlay peut n'avoir ni identifiant catalogue ni image.
+  const recording = await findRecording({ ...track, albumId: undefined });
+  return recording?.artwork;
+}
+
 export async function findRecording(track: Track, excluding?: string): Promise<Track | undefined> {
   if (octaveCatalogId(track.id) && track.albumId && !excluding) return track;
   const cached = recordings.get(track.id);

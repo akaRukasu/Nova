@@ -4,6 +4,7 @@ import type {
   Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
+import { preserveArtwork } from '../../shared/artwork';
 import { listeningHistory, mergeListeningHistory, type HistorySnapshot } from '../../shared/historySync';
 import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
 import { api, isAndroid, on } from './api';
@@ -119,6 +120,7 @@ export function togglePlaybackOption(option: 'autoplay' | 'automix', source?: Pl
 
 export function recordPlay(track: Track, playedAt = Date.now()) {
   update((state) => {
+    track = preserveArtwork(track, state.recents.find(t => t.id === track.id) ?? state.liked.find(t => t.id === track.id));
     const stats = { ...state.stats, [track.id]: { playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
     if (!state.settings.recordHistory) return { ...state, stats };
     const recents = [track, ...state.recents.filter((t) => t.id !== track.id)].slice(0, 1000);
@@ -172,6 +174,9 @@ export function updateArtwork(id: string, artwork: string) {
     recents: patch(state.recents),
     liked: patch(state.liked),
     playlists: state.playlists.map((p) => (p.tracks.some((t) => t.id === id) ? { ...p, tracks: patch(p.tracks) } : p)),
+    listeningYears: Object.fromEntries(Object.entries(state.listeningYears ?? {}).map(([year, entries]) => [year,
+      Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, key === id
+        ? { ...entry, track: { ...entry.track, artwork, square: true } } : entry]))])),
   }));
 }
 

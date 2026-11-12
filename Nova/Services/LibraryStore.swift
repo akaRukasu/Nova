@@ -247,6 +247,8 @@ final class LibraryStore {
     // MARK: Historique
 
     func addRecent(_ track: Track) {
+        var track = track
+        if track.artworkURL == nil { track.artworkURL = recents.first { $0.id == track.id }?.artworkURL }
         recents.removeAll { $0.id == track.id }
         recents.insert(track, at: 0)
         // Historique : les 1 000 derniers titres (l'Accueil n'en montre que 20).
@@ -323,10 +325,17 @@ final class LibraryStore {
         for (id, date) in incoming.removed ?? [:] { removed[id] = max(removed[id] ?? 0, date) }
         removed = removed.filter { $0.value > cleared }
         var entries: [String: HistorySnapshot.Entry] = [:]
-        for entry in local.entries + incoming.entries {
+        for var entry in local.entries + incoming.entries {
             let id = entry.track.id
             if (cleared > 0 && entry.playedAt <= cleared) || (removed[id].map { entry.playedAt <= $0 } ?? false) { continue }
-            if let previous = entries[id], previous.playedAt >= entry.playedAt { continue }
+            if var previous = entries[id] {
+                if previous.playedAt >= entry.playedAt {
+                    if previous.track.artwork == nil { previous.track.artwork = entry.track.artwork }
+                    entries[id] = previous
+                    continue
+                }
+                if entry.track.artwork == nil { entry.track.artwork = previous.track.artwork }
+            }
             entries[id] = entry
         }
         let recent = entries.values.sorted {

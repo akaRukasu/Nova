@@ -42,7 +42,7 @@ struct NowPlayingView: View {
                 artwork
                     .overlay(alignment: .bottom) {
                         if player.isTransitioning {
-                            Label(PlaybackSettings.transition == .automix ? "AutoMix" : "Fondu enchaîné",
+                            Label((player.source == .octave ? octaveTransition : transition) == "automix" ? "AutoMix" : "Fondu enchaîné",
                                   systemImage: "infinity")
                                 .font(.subheadline.weight(.semibold))
                                 .padding(.horizontal, 14)

@@ -68,12 +68,16 @@
     const available = media();
     const audible = available.filter(audio => !audio.paused && !audio.ended);
     const audio = audible.length === 1 ? audible[0] : available.includes(anchored) ? anchored : available.length === 1 ? available[0] : undefined;
+    if (audio) anchored = audio;
     const position = slider('Seek');
     const metadata = session?.metadata;
+    // Android WebView peut lire l'audio sans exposer navigator.mediaSession.
+    const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
     return {
       id: document.querySelector('[data-track-id][data-active="true"]')?.getAttribute('data-track-id'),
-      title: metadata?.title ?? '', artist: metadata?.artist ?? '', album: metadata?.album ?? '',
-      artwork: metadata?.artwork.find(item => item.src.startsWith('https:'))?.src,
+      title: metadata?.title || nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || '',
+      artist: metadata?.artist || nowPlaying?.querySelector('p')?.textContent?.trim() || '', album: metadata?.album ?? '',
+      artwork: metadata?.artwork.find(item => item.src.startsWith('https:'))?.src ?? nowPlaying?.querySelector('img')?.src,
       position: audio?.currentTime ?? (position ? Number(position.value) : null),
       duration: audio?.duration ?? Number(position?.max ?? 0),
       playing: session?.playbackState === 'playing' || Boolean(audio && !audio.paused && !audio.ended),
@@ -87,7 +91,9 @@
   function upcoming() {
     const save = buttons('Save queue as playlist')[0];
     if (!save) {
-      if (session?.playbackState === 'playing') buttons('Queue').find(button => !button.closest('main'))?.click();
+      if (session?.playbackState === 'playing' || media().some(audio => !audio.paused && !audio.ended)) {
+        buttons('Queue').find(button => !button.closest('main'))?.click();
+      }
       return [];
     }
     return [...document.querySelectorAll('[data-track-id]')].filter(row =>
@@ -111,6 +117,12 @@
     if (!quality || !transition) return false;
     quality.click();
     transition.click();
+    if (options.transition === 'automix') {
+      const label = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[options.automixStyle ?? 'legacy'];
+      const button = controls.find(button => button.textContent.trim() === label);
+      if (!button) return false;
+      button.click();
+    }
     for (const [label, key] of Object.entries({'Autoplay': 'autoplay', 'Gapless Playback': 'gapless', 'Sound Check': 'soundCheck', 'Smart Shuffle': 'smartShuffle'})) {
       const button = buttons(label)[0];
       if (button && typeof options[key] === 'boolean' && button.getAttribute('aria-checked') !== String(options[key])) button.click();

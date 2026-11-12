@@ -115,6 +115,7 @@ export function PlayerBar() {
   const track = state.queue[state.index];
   if (!track) return <footer className="player-bar empty"><span>Choisis un titre pour commencer l’écoute.</span></footer>;
   const liked = isLiked(track.id);
+  const { automix } = playbackOptions(library.get().settings, state.source);
   return (
     <footer className="player-bar">
       <div className="beat-aura" />
@@ -145,7 +146,7 @@ export function PlayerBar() {
         <SourceSelector source={state.source} />
         <PlaybackOptions source={state.source} />
         {state.ad && <button className="badge" onClick={() => void window.nova.invoke('webplayer:show', 0)}>Publicité YouTube</button>}
-        {state.transitioning && <span className="badge"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu'}</span>}
+        {state.transitioning && <span className="badge"><Icon name="sparkles" size={14} /> {automix ? 'AutoMix' : 'Fondu'}</span>}
         <button className={`icon-button ${jamState.role !== 'none' ? 'accent' : ''}`} onClick={() => open({ name: 'jam' })} aria-label="Jam"><Icon name="jam" size={19} /></button>
         <button className={`icon-button ${state.sleepAt ? 'accent' : ''}`} onClick={(e) => showMenu(e, sleepMenu())} aria-label="Minuterie"><Icon name="moon" size={18} /></button>
         <button className="icon-button" onClick={() => nowPlayingOpen.set('lyrics')} aria-label="Paroles"><Icon name="lyrics" size={19} /></button>
@@ -260,6 +261,7 @@ export function NowPlaying() {
 
   if (!mode || !track) return null;
   const liked = isLiked(track.id);
+  const { automix } = playbackOptions(library.get().settings, state.source);
   return (
     <div className="now-playing">
       <div className="np-background" style={{ backgroundImage: background ? `url("${background}")` : undefined }} />
@@ -275,7 +277,7 @@ export function NowPlaying() {
         <div className="np-left">
           <div className="np-art">
             <Artwork track={track} size={mode === 'artwork' ? 560 : 340} radius={20} />
-            {state.transitioning && <span className="badge floating"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu enchaîné'}</span>}
+            {state.transitioning && <span className="badge floating"><Icon name="sparkles" size={14} /> {automix ? 'AutoMix' : 'Fondu enchaîné'}</span>}
           </div>
           <div className="np-details">
             <SourceSelector source={state.source} />

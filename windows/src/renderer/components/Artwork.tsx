@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { Track } from '../../shared/types';
 import { sizedArtwork as sized } from '../../shared/artwork';
 import { api } from '../lib/api';
+import { updateArtwork } from '../lib/library';
 import { Icon } from './icons';
 
 const found = new Map<string, string | null>(JSON.parse(localStorage.getItem('artworks') ?? '[]'));
@@ -15,14 +16,16 @@ function persist() {
 }
 
 /** Trois recherches à la fois au plus. */
-async function resolve(id: string): Promise<string | null> {
+async function resolve(track: Track): Promise<string | null> {
+  const { id } = track;
   if (found.has(id)) return found.get(id)!;
   if (running >= 3) await new Promise<void>((resume) => waiting.push(resume));
   running++;
   try {
-    const url = (await api.squareArtwork(id).catch(() => undefined)) ?? null;
+    const url = (await api.trackArtwork(track).catch(() => undefined)) ?? null;
     found.set(id, url);
     persist();
+    if (url) updateArtwork(id, url);
     return url;
   } finally {
     running--;
@@ -34,10 +37,10 @@ export { sized };
 
 export function trackArtwork(track: Track | undefined, pixels: number): string | undefined {
   if (!track) return undefined;
-  if (track.square || /googleusercontent|ggpht/.test(track.artwork ?? '')) return sized(track.artwork, pixels);
+  if (track.artwork && (track.square || /googleusercontent|ggpht/.test(track.artwork))) return sized(track.artwork, pixels);
   const resolved = found.get(track.id);
   if (resolved) return sized(resolved, pixels);
-  return `https://i.ytimg.com/vi/${track.id}/${pixels > 300 ? 'hq720' : 'mqdefault'}.jpg`;
+  return /^[\w-]{11}$/.test(track.id) ? `https://i.ytimg.com/vi/${track.id}/${pixels > 300 ? 'hq720' : 'mqdefault'}.jpg` : sized(track.artwork, pixels);
 }
 
 export function Artwork({ track, url, size, round, radius = 8, className }: {
@@ -50,9 +53,9 @@ export function Artwork({ track, url, size, round, radius = 8, className }: {
   useEffect(() => {
     setFailed(false);
     setSrc(track ? trackArtwork(track, pixels) : sized(url, pixels));
-    if (track && !track.square && !/googleusercontent|ggpht/.test(track.artwork ?? '') && !found.has(track.id)) {
+    if (track && (!track.artwork || (!track.square && !/googleusercontent|ggpht/.test(track.artwork))) && !found.has(track.id)) {
       let alive = true;
-      void resolve(track.id).then((hd) => { if (alive && hd) setSrc(sized(hd, pixels)); });
+      void resolve(track).then((hd) => { if (alive && hd) setSrc(sized(hd, pixels)); });
       return () => { alive = false; };
     }
   }, [track?.id, track?.artwork, url, pixels]);

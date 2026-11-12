@@ -113,6 +113,13 @@ async function applyAudioSettings(settings: OctaveAudioSettings): Promise<boolea
   }
   // Laisser la page appliquer les clics avant de quitter les réglages.
   await new Promise(resolve => setTimeout(resolve, 120));
+  if (settings.transition === 'automix') {
+    const style = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[settings.automixStyle ?? 'legacy'];
+    const button = [...document.querySelectorAll<HTMLButtonElement>('main button')].find(button => button.textContent?.trim() === style);
+    if (!button) return false;
+    button.click();
+    await new Promise(resolve => setTimeout(resolve, 80));
+  }
   return location.pathname === '/settings' && toggles.every(([label, desired]) => {
     const button = document.querySelector(`main button[aria-label="${label}"]`);
     return !button || button.getAttribute('aria-checked') === String(desired);
@@ -569,7 +576,7 @@ export class OctavePlayer {
         playback.heard += delta;
         if (playback.heard >= 5) {
           playback.recorded = true;
-          this.record(playback.track, Date.now());
+          this.record({ ...playback.track, artwork: playback.track.artwork ?? playback.source.artwork }, Date.now());
         }
       }
     } finally {

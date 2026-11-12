@@ -1,3 +1,10 @@
+import type { Track } from './types.js';
+
+export function preserveArtwork(track: Track, previous?: Track): Track {
+  return !track.artwork && previous?.id === track.id && previous.artwork
+    ? { ...track, artwork: previous.artwork, square: previous.square ?? track.square } : track;
+}
+
 export function sizedArtwork(url: string | undefined, pixels: number): string | undefined {
   if (!url) return url;
   if (/^https:\/\/(?:[\w-]+\.)?(?:googleusercontent\.com|ggpht\.com)\//i.test(url)) {

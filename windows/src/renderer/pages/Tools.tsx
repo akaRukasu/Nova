@@ -471,6 +471,13 @@ export function SettingsPage() {
               <option value="automix">AutoMix</option>
             </select>
           </label>
+          {octave.transition === 'automix' && <label className="field">Style AutoMix
+            <select value={octave.automixStyle ?? 'legacy'} onChange={event => setOctave({ automixStyle: event.target.value as OctaveAudioSettings['automixStyle'] })}>
+              <option value="legacy">Octave · phrases courtes</option>
+              <option value="automatic">Automatique</option>
+              <option value="apple">Apple · phrases longues</option>
+            </select>
+          </label>}
           {([
             ['autoplay', 'Autoplay · continuer avec des morceaux similaires'],
             ['gapless', 'Lecture sans blanc entre les morceaux'],
@@ -480,7 +487,7 @@ export function SettingsPage() {
             <label className="toggle-row" key={key}><input type="checkbox" checked={octave[key]}
               onChange={(e) => setOctave({ [key]: e.target.checked })} /> {label}</label>
           ))}
-          <p className="muted small">Les changements s’appliquent au prochain morceau lancé depuis Nova.</p>
+          <p className="muted small">Les changements s’appliquent pendant la lecture Octave.</p>
           <button className="button secondary" onClick={() => player.openOctave()}>Compte et réglages avancés Octave</button>
           <label className="toggle-row"><input type="checkbox" checked={settings.syncOctaveToYouTube !== false}
             disabled={!settings.recordHistory} onChange={(e) => updateSettings({ syncOctaveToYouTube: e.target.checked })} />

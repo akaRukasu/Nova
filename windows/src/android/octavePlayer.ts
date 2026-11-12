@@ -216,7 +216,10 @@ export class AndroidOctavePlayer {
         upcoming: sample.upcoming, mixing: sample.mixing });
       if (!next && !active.recorded && sample.audible && elapsed > 0 && elapsed < 2) {
         active.heard += elapsed;
-        if (active.heard >= 5) { active.recorded = true; this.record(active.track); }
+        if (active.heard >= 5) {
+          active.recorded = true;
+          this.record({ ...active.track, artwork: active.track.artwork ?? active.source.artwork });
+        }
       }
     } finally {
       this.observing = false;

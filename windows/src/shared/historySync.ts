@@ -1,4 +1,5 @@
 import type { LibraryState, Track } from './types.js';
+import { preserveArtwork } from './artwork.js';
 
 export interface HistoryChanges {
   clearedAt?: number;
@@ -41,7 +42,8 @@ export function mergeListeningHistory(state: LibraryState, incoming: HistorySnap
     const date = timestamp(entry.playedAt);
     if ((clearedAt && date <= clearedAt) || (removed.has(track.id) && date <= removed.get(track.id)!)) continue;
     const previous = entries.get(track.id);
-    if (!previous || previous.playedAt < date) entries.set(track.id, { track, playedAt: date });
+    if (!previous || previous.playedAt < date) entries.set(track.id, { track: preserveArtwork(track, previous?.track), playedAt: date });
+    else previous.track = preserveArtwork(previous.track, track);
   }
   const sorted = [...entries.values()].sort((a, b) => b.playedAt - a.playedAt
     || (a.track.id < b.track.id ? -1 : a.track.id > b.track.id ? 1 : 0)).slice(0, 1000);

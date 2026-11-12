@@ -292,7 +292,9 @@ public class NovaPlayerPlugin extends Plugin {
         overlayClose = onClose;
         ViewGroup root = getActivity().findViewById(android.R.id.content);
         root.addView(frame, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        close.requestFocus();
+        view.setFocusable(true);
+        view.setFocusableInTouchMode(true);
+        view.requestFocus();
     }
 
     private void hideOverlay() {
@@ -410,6 +412,7 @@ public class NovaPlayerPlugin extends Plugin {
                 if (parent != null) parent.removeView(view);
                 view.setAlpha(1f);
                 view.setFocusable(true);
+                view.setFocusableInTouchMode(true);
                 view.setImportantForAccessibility(WebView.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
                 octavePanel = true;
                 presentOverlay(view, "Octave", () -> {

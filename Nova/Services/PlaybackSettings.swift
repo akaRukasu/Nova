@@ -49,6 +49,7 @@ enum PlaybackSettings {
         [
             "quality": defaults.string(forKey: "octaveQuality") ?? "lossless",
             "transition": defaults.string(forKey: "octaveTransition") ?? "automix",
+            "automixStyle": defaults.string(forKey: "octaveAutomixStyle") ?? "legacy",
             "autoplay": defaults.object(forKey: "octaveAutoplay") as? Bool ?? true,
             "gapless": defaults.object(forKey: "octaveGapless") as? Bool ?? true,
             "soundCheck": defaults.object(forKey: "octaveSoundCheck") as? Bool ?? true,

@@ -29,3 +29,14 @@ test('removal and clear survive an offline device returning with old history', (
   assert.equal(mergeListeningHistory(deleted,listeningHistory(replay)).recents[0].id,'octave:1');
   assert.equal(mergeListeningHistory(merged,listeningHistory(replay)).recents[0].id,'octave:1');
 });
+
+test('a newer listen without artwork retains the cover from either device', () => {
+  const older = state([track('octave:1')], { 'octave:1': 200 });
+  const missing = { id: 'octave:1', title: 'Cross Off', artist: 'Mark Morton', square: true };
+  const newer = state([missing], { 'octave:1': 300 });
+  const forward = mergeListeningHistory(older, listeningHistory(newer));
+  const backward = mergeListeningHistory(newer, listeningHistory(older));
+  assert.equal(forward.recents[0].artwork, 'https://example.com/cover.jpg');
+  assert.deepEqual(listeningHistory(forward), listeningHistory(backward));
+  assert.equal(forward.recents[0].title, 'Cross Off');
+});

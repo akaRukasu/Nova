@@ -107,6 +107,7 @@ export type ListeningYear = Record<string, { track: Track; plays: number }>;
 export type Transition = 'off' | 'crossfade' | 'automix';
 
 export interface OctaveAudioSettings {
+  automixStyle?: 'automatic' | 'apple' | 'legacy';
   quality: 'low' | 'high' | 'lossless';
   transition: Transition;
   autoplay: boolean;

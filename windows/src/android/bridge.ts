@@ -153,6 +153,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'yt:radio': (id) => isOctaveId(id) ? octave.radio(id) : yt.radio(id),
   'yt:related': (id) => isOctaveId(id) ? octave.related(id) : yt.related(id),
   'yt:squareArtwork': (id) => yt.squareArtwork(id),
+  'art:track': (track) => isOctaveId(track.id) ? octave.trackArtwork(track) : yt.squareArtwork(track.id),
   'art:palette': () => null,
   'lyrics:get': (track, duration) => lyrics(track, duration),
   'stream:prefetch': () => undefined,
