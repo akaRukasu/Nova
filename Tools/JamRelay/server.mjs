@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const token = () => randomBytes(24).toString('hex');
@@ -115,7 +116,7 @@ export function createJamRelay(key) {
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const port = Number(process.env.NOVA_JAM_PORT);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Configure NOVA_JAM_PORT.');
   createJamRelay(process.env.NOVA_JAM_KEY).listen(port, '127.0.0.1', () => {

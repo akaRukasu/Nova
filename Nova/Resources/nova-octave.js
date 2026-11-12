@@ -217,10 +217,17 @@
       return true;
     },
     clearQueue() {
+      const dialog = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+        .find(element => element.textContent.includes('Are you sure you want to clear your queue?'));
+      if (dialog) {
+        const confirm = [...dialog.querySelectorAll('button')].find(button => button.textContent.trim() === 'Clear Queue');
+        confirm?.click();
+        return Boolean(confirm);
+      }
       const clear = buttons('Clear queue')[0];
-      if (clear) {
-        if (!clear.disabled) clear.click();
-        return true;
+      if (clear && !clear.disabled) {
+        clear.click();
+        return false;
       }
       if (buttons('Save queue as playlist').length) return true;
       buttons('Queue').find(button => !button.closest('main'))?.click();

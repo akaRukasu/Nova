@@ -167,8 +167,9 @@ final class LibraryStore {
             if let catalogID { catalogKeys[catalogID] = id }
             let date = stats[track.id]?.added ?? dates[track.id] ?? .distantPast
             if groups[id] != nil {
+                let latest = max(groups[id]?.added ?? date, date)
                 groups[id]?.tracks.append(track)
-                groups[id]?.added = max(groups[id]?.added ?? date, date)
+                groups[id]?.added = latest
             } else {
                 groups[id] = MusicGroup(id: id, title: title, artist: track.artist, tracks: [track], added: date)
             }

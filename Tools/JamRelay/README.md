@@ -11,7 +11,7 @@ Ce petit service Node.js permet à des amis sur des réseaux différents de déc
    cd ~/nova-jam
    umask 077
    printf 'NOVA_JAM_PORT=%s\nNOVA_JAM_KEY=%s\n' PORT_LIBRE "$(node -e 'console.log(require("node:crypto").randomBytes(24).toString("hex"))')" > jam.env
-   nohup node --env-file=jam.env server.mjs > jam.log 2>&1 < /dev/null &
+   nohup node --disable-wasm-trap-handler --env-file=jam.env server.mjs > jam.log 2>&1 < /dev/null &
    ```
 
 3. Dans `~/.apps/nginx/proxy.d/nova-jam.conf`, ajoute la route ci-dessous en remplaçant `PORT_LIBRE`. Le service écoute sur la boucle locale. Le proxy Ultra.cc fournit le HTTPS. Cette route utilise sa propre clé de cercle.

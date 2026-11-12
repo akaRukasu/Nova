@@ -87,10 +87,17 @@ function playNextInOctave(id: string): boolean {
 }
 
 function clearOctaveQueue(): boolean {
+  const dialog = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+    .find(element => element.textContent?.includes('Are you sure you want to clear your queue?'));
+  if (dialog) {
+    const confirm = [...dialog.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Clear Queue');
+    confirm?.click();
+    return Boolean(confirm);
+  }
   const clear = document.querySelector<HTMLButtonElement>('button[aria-label="Clear queue"]');
-  if (clear) {
-    if (!clear.disabled) clear.click();
-    return true;
+  if (clear && !clear.disabled) {
+    clear.click();
+    return false;
   }
   if (document.querySelector('button[aria-label="Save queue as playlist"]')) return true;
   [...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Queue"]')].find(button => !button.closest('main'))?.click();

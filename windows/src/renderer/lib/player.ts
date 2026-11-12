@@ -467,6 +467,7 @@ class Engine {
       const rest = shuffled(queue.filter((_, i) => i !== index));
       set({ queue: [...queue.slice(0, index), current, ...rest.filter((t) => !queue.slice(0, index).includes(t))], shuffled: true });
     }
+    this.queueEdited(queue[index + 1]);
   }
 
   cycleRepeat() {
