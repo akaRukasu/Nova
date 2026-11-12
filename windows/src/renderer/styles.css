@@ -393,7 +393,7 @@ main {
 }
 .player-bar.empty { display: flex; justify-content: center; color: var(--muted); }
 .now { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.now-art { position: relative; border-radius: 6px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.now-art { position: relative; flex: 0 0 auto; border-radius: 6px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
 .now-art .expand { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0; }
 .now-art:hover .expand { opacity: 1; }
 .now-text { min-width: 0; }
@@ -610,7 +610,9 @@ input[type='range']:hover::-webkit-slider-thumb { opacity: 1; }
   .row-album { display: none; }
   .track-row, .track-row:has(.row-index) { grid-template-columns: auto minmax(0, 1fr) 32px 48px 32px; }
   .track-row:has(.rank) { grid-template-columns: auto auto minmax(0, 1fr) 32px 48px 32px; }
-  .player-bar .now .icon-button { display: none; }
+  .player-bar .now { gap: 8px; }
+  .player-bar .now .icon-button, .player-bar .now .row-like { display: none; }
+  .player-bar .now-art .artwork { width: 44px !important; height: 44px !important; }
 }
 
 /* MARK: Android (téléphone) et petites fenêtres : menu en tiroir, barre de lecture compacte */
