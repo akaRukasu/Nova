@@ -534,9 +534,8 @@ export class OctavePlayer {
       let next: Track | undefined;
       if (!this.matches(playback.source, sample) && sample.playing) {
         playback.metadataChangedAt ??= Date.now();
-        if (Math.abs(sample.duration - playback.duration) < 0.2
-          && sample.position > 1.5 && sample.position >= playback.position - 1
-          && Date.now() - playback.metadataChangedAt < 750) return;
+        if (Math.abs(sample.duration - playback.duration) < 1.1
+          && sample.position > 1.5 && sample.position >= playback.position - 1) return;
         const planned = playback.next;
         playback.next = undefined;
         const key = JSON.stringify([sample.title, sample.artist, sample.album]);

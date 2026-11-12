@@ -1,6 +1,33 @@
 (() => {
   'use strict';
   if (location.origin !== 'https://music.octavestreaming.com' || window.novaOctave) return;
+  // Un lecteur hors écran peut perdre ses images d’animation alors que l’audio continue.
+  // Le rappel natif garde la priorité, une minuterie assure la continuité de son horloge.
+  const nativeFrame = window.requestAnimationFrame.bind(window);
+  const nativeCancel = window.cancelAnimationFrame.bind(window);
+  const frames = new Map();
+  let frameId = 0x40000000;
+  window.requestAnimationFrame = callback => {
+    const id = frameId++;
+    const frame = {};
+    frames.set(id, frame);
+    const deliver = time => {
+      if (!frames.delete(id)) return;
+      nativeCancel(frame.native);
+      clearTimeout(frame.timer);
+      callback(time);
+    };
+    frame.native = nativeFrame(deliver);
+    frame.timer = setTimeout(() => deliver(performance.now()), 34);
+    return id;
+  };
+  window.cancelAnimationFrame = id => {
+    const frame = frames.get(id);
+    if (!frame) { nativeCancel(id); return; }
+    frames.delete(id);
+    nativeCancel(frame.native);
+    clearTimeout(frame.timer);
+  };
   const session = navigator.mediaSession;
   const players = [];
   let anchored;
@@ -60,7 +87,7 @@
   function upcoming() {
     const save = buttons('Save queue as playlist')[0];
     if (!save) {
-      buttons('Queue').find(button => !button.closest('main'))?.click();
+      if (session?.playbackState === 'playing') buttons('Queue').find(button => !button.closest('main'))?.click();
       return [];
     }
     return [...document.querySelectorAll('[data-track-id]')].filter(row =>

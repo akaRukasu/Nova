@@ -868,6 +868,7 @@ main { background: transparent; position: relative; z-index: 1; }
 :root[data-theme='light'].ambient .app::before { opacity: 0.35; }
 @media (prefers-color-scheme: light) { :root:not([data-theme='dark']).ambient .app::before { opacity: 0.35; } }
 .sidebar, .player-bar, .titlebar { z-index: 5; }
+.app.drawer-open .sidebar { z-index: 40; }
 
 /* Capsule de lecture flottante, teintée par la pochette. */
 @media (min-width: 761px) { .app { grid-template-rows: 1fr 96px; } }

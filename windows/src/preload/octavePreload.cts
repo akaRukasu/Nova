@@ -3,6 +3,32 @@ import { contextBridge } from 'electron';
 if (process.isMainFrame && location.origin === 'https://music.octavestreaming.com') {
   contextBridge.executeInMainWorld({
     func: () => {
+      // L’audio et les transitions doivent continuer quand le lecteur est hors écran.
+      const nativeFrame = window.requestAnimationFrame.bind(window);
+      const nativeCancel = window.cancelAnimationFrame.bind(window);
+      const frames = new Map<number, { native: number; timer?: ReturnType<typeof setTimeout> }>();
+      let frameId = 0x40000000;
+      window.requestAnimationFrame = callback => {
+        const id = frameId++;
+        const frame: { native: number; timer?: ReturnType<typeof setTimeout> } = { native: 0 };
+        frames.set(id, frame);
+        const deliver = (time: number) => {
+          if (!frames.delete(id)) return;
+          nativeCancel(frame.native);
+          clearTimeout(frame.timer);
+          callback(time);
+        };
+        frame.native = nativeFrame(deliver);
+        frame.timer = setTimeout(() => deliver(performance.now()), 34);
+        return id;
+      };
+      window.cancelAnimationFrame = id => {
+        const frame = frames.get(id);
+        if (!frame) { nativeCancel(id); return; }
+        frames.delete(id);
+        nativeCancel(frame.native);
+        clearTimeout(frame.timer);
+      };
       const players: WeakRef<HTMLAudioElement>[] = [];
       const session = navigator.mediaSession;
       const positionState = session.setPositionState;

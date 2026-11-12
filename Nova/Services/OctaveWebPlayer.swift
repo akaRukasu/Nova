@@ -37,9 +37,8 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var mixing: Bool?
 
         func matches(_ track: Track) -> Bool {
-            if let id, let expected = OctaveCatalog.id(track.id) { return id == expected }
-            return OctaveCatalog.normalize(title) == OctaveCatalog.normalize(track.title)
-                && OctaveCatalog.normalize(OctaveCatalog.lead(artist)) == OctaveCatalog.normalize(OctaveCatalog.lead(track.artist))
+            if let id, let expected = OctaveCatalog.id(track.id), id != expected { return false }
+            return OctaveCatalog.sameRecording(track, Track(id: "sample", title: title, artist: artist, duration: duration))
         }
         var track: Track? {
             guard !title.isEmpty else { return nil }
@@ -110,7 +109,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
     private func call(_ operation: String, args: [String: Any] = [:]) async -> Any? {
         guard view.url?.host == OctaveCatalog.origin.host else { return nil }
         return try? await view.callAsyncJavaScript(
-            "return window.novaOctave?.(operation, args) ?? null",
+            "return JSON.parse(JSON.stringify(window.novaOctave?.(operation, args) ?? null))",
             arguments: ["operation": operation, "args": args], in: nil, contentWorld: .page)
     }
 

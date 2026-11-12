@@ -942,6 +942,7 @@ final class PlayerModel {
                 let previous = currentTime
                 var changed = false
                 if sample.playing && !sample.matches(selected) {
+                    if abs(sample.duration - duration) < 1.1 && position > 1.5 && position >= previous - 1 { continue }
                     if let planned = octaveNext, upNext.first?.id == planned.original.id, sample.matches(planned.recording) {
                         index += 1
                         octaveTrack = planned.recording

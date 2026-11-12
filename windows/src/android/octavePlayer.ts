@@ -192,6 +192,8 @@ export class AndroidOctavePlayer {
       }
       let next: Track | undefined;
       if (sample.playing && !matches(active.source, sample)) {
+        if (active.source.duration && Math.abs(sample.duration - active.source.duration) < 1.1
+          && sample.position > 1.5 && sample.position >= active.position - 1) return;
         const planned = active.next;
         next = planned && matches(planned.source, sample) ? planned.source : {
           id: octaveId(sample.id) ?? `octave:played-${encodeURIComponent([sample.title, sample.artist, sample.album].join('|'))}`,

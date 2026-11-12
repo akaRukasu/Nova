@@ -41,7 +41,8 @@ export async function pairPCHistory(link: string) {
     endpoint = new URL(uri.searchParams.get('u') ?? '');
   } catch { throw new Error('Colle le lien d’association copié dans Nova sur ton PC.'); }
   const token = uri.searchParams.get('t') ?? '';
-  if (uri.protocol !== 'nova:' || uri.hostname !== 'sync' || endpoint.protocol !== 'http:'
+  const syncLink = uri.hostname === 'sync' || (!uri.hostname && /^\/\/sync\/?$/.test(uri.pathname));
+  if (uri.protocol !== 'nova:' || !syncLink || endpoint.protocol !== 'http:'
     || !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(endpoint.hostname) || endpoint.pathname !== '/sync'
     || endpoint.username || endpoint.password || !/^[a-f0-9]{32}$/.test(token)) {
     throw new Error('Ce lien d’association Nova est invalide.');
