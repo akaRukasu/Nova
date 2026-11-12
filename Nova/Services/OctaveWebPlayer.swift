@@ -35,6 +35,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var blocked: String?
         var upcoming: [Upcoming]?
         var mixing: Bool?
+        var fading: Bool?
 
         func matches(_ track: Track) -> Bool {
             if let id, let expected = OctaveCatalog.id(track.id), id != expected { return false }

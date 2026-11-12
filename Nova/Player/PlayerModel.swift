@@ -923,7 +923,7 @@ final class PlayerModel {
                     if autoplayQueue != tracks { autoplayQueue = tracks }
                 }
                 if let mixing = sample.mixing { isTransitioning = mixing }
-                if sample.mixing == true {
+                if sample.mixing == true || sample.fading == true {
                     if sample.matches(selected), let position = sample.position { currentTime = position }
                     isPlaying = sample.playing
                     updateNowPlaying()

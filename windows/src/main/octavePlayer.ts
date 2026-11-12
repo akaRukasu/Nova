@@ -20,6 +20,7 @@ type Sample = {
   ended?: boolean;
   upcoming?: Track[];
   mixing?: boolean;
+  fading?: boolean;
 };
 type OctaveMedia = { read(): { position: number; duration: number; ended: boolean } | undefined; seek(seconds: number): boolean };
 type Playback = {
@@ -64,6 +65,7 @@ function readPlayback(targetId?: string): Sample {
     targetRow: targetId ? Boolean(document.querySelector(`main [data-track-id="${targetId}"]`)) : undefined,
     upcoming,
     mixing: Boolean(document.querySelector('[data-automix-indicator]')),
+    fading: Boolean((window as Window & { __octaveEngine?: { isFading: boolean } }).__octaveEngine?.isFading),
   };
 }
 
@@ -530,12 +532,12 @@ export class OctavePlayer {
         return;
       }
       if (!sample.title || sample.position === undefined) return;
-      if (sample.mixing) {
+      if (sample.mixing || sample.fading) {
         // Octave peut publier les métadonnées du titre entrant avant la fin du fondu.
         // Attendre la fin de sa transition avant de déplacer la file Nova.
         if (this.matches(playback.source, sample)) playback.position = sample.position;
         this.status({request:playback.request,time:playback.position,duration:playback.duration,
-          playing:sample.playing, mixing:true, upcoming:sample.upcoming});
+          playing:sample.playing, mixing:sample.mixing, upcoming:sample.upcoming});
         return;
       }
       const delta = sample.position - playback.position;

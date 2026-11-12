@@ -84,6 +84,7 @@
       audible: Boolean(audio && !audio.paused && !audio.muted && audio.readyState >= 2),
       ended: Boolean(audio?.ended), blocked: blocked(),
       mixing: Boolean(document.querySelector('[data-automix-indicator]')),
+      fading: Boolean(window.__octaveEngine?.isFading),
       upcoming: upcoming(),
     };
   }

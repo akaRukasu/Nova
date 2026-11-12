@@ -17,6 +17,7 @@ test('Android without MediaSession reports the actual track, audio clock and aut
     querySelectorAll: selector => selector === 'button[aria-label]' ? [queue] : [],
   };
   const window = { requestAnimationFrame: () => 1, cancelAnimationFrame() {}, Audio: class {} };
+  window.__octaveEngine = { isFading: true };
   vm.runInNewContext(source, { window, document, navigator: {}, location: {origin:'https://music.octavestreaming.com'},
     performance, setTimeout, clearTimeout, Map, WeakRef });
   const audio = new window.Audio();
@@ -29,9 +30,13 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.playing, true);
   assert.equal(state.audible, true);
   assert.equal(queueOpened, true);
+  assert.equal(state.fading, true);
+  assert.equal(state.mixing, false); // La transition commence avant l'indicateur visuel.
+  window.__octaveEngine.isFading = false;
   audio.paused = true;
   audio.currentTime = 18;
   state = window.novaOctave('sample');
   assert.equal(state.playing, false);
+  assert.equal(state.fading, false);
   assert.equal(state.position, 18);
 });
