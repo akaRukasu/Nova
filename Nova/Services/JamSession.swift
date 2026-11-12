@@ -199,13 +199,15 @@ final class JamSession: NSObject {
         broadcastState()
     }
 
-    func saveCircle(_ value: String) {
+    @discardableResult
+    func saveCircle(_ value: String) -> Bool {
         let link = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard link.isEmpty || JamCircle(link) != nil else { relayError = "Colle le lien HTTPS complet du cercle Jam."; return }
+        guard link.isEmpty || JamCircle(link) != nil else { relayError = "Colle le lien HTTPS complet du cercle Jam."; return false }
         circleLink = link
         UserDefaults.standard.set(link, forKey: "novaJamCircle")
         remoteRooms = []
         relayError = nil
+        return true
     }
 
     func discoverRemote() async {

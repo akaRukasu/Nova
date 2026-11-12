@@ -81,6 +81,7 @@ export const api = {
   jamJoin: (address: string, port: number, name: string) => call<void>('jam:join', address, port, name),
   jamToHost: (message: unknown) => call<void>('jam:toHost', message),
   jamStop: () => call<void>('jam:stop'),
+  copyJamInvitation: (url: string) => call<void>('jam:copyInvitation', url),
 
   openExternal: (url: string) => call<void>('shell:open', url),
   openOctave: (url?: string) => call<void>('octave:open', url),

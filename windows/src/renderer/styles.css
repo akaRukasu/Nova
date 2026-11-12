@@ -391,6 +391,15 @@ main {
 .jam-panel form .field { flex: 1; min-width: 0; margin: 0; }
 .jam-panel .button { justify-self: start; min-height: 40px; }
 .jam-panel .jam-row { border: 1px solid var(--line); margin: 0; }
+.jam-panel .jam-setup { display: grid; justify-items: start; }
+.jam-setup .field { width: 100%; }
+.jam-invitation { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 20px; margin-block: 14px; }
+.jam-invitation img { max-width: 100%; height: auto; border-radius: 12px; background: #fff; }
+.jam-invitation h2 { margin-bottom: 5px; }
+.jam-invitation button { margin-top: 12px; }
+.jam-invitation [role="status"] { display: block; color: var(--muted); margin-top: 8px; }
+.jam-invitation [role="status"]:empty { display: none; }
+@media (max-width: 490px) { .jam-invitation { grid-template-columns: 1fr; } }
 
 .settings section { background: var(--surface); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
 .settings h3 { font-size: 15px; margin-bottom: 12px; }

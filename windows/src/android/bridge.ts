@@ -38,6 +38,7 @@ interface NovaPlayer {
   jamToHost(options: { message: string }): Promise<void>;
   jamStop(): Promise<void>;
   initialJamInvitation(): Promise<{ link?: string }>;
+  copyJamInvitation(options: { url: string }): Promise<void>;
   startTicker(options: { interval: number }): Promise<void>;
   stopTicker(): Promise<void>;
   octaveNavigate(options: { url: string }): Promise<void>;
@@ -144,6 +145,7 @@ let lastMedia = '';
 
 const handlers: Record<string, (...args: any[]) => unknown> = {
   'jam:initialInvitation': () => native.initialJamInvitation().then(({ link }) => link),
+  'jam:copyInvitation': (url) => native.copyJamInvitation({ url }),
   'yt:search': (query, scope) => scope === 'video' ? yt.search(query, scope) : octave.search(query, scope),
   'yt:suggestions': (query) => octave.suggestions(query),
   'yt:home': () => octave.charts(true),

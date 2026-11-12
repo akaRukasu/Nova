@@ -1,5 +1,6 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+import UIKit
 
 /// Page du Jam : lancer, rejoindre, voir la file commune.
 struct JamView: View {
@@ -7,6 +8,10 @@ struct JamView: View {
     private let jam = JamSession.shared
     @State private var circleDraft = ""
     @State private var invitationDraft = ""
+    @State private var configuringCircle = false
+    @State private var createAfterSetup = false
+    @State private var copiedInvitation: URL?
+    @FocusState private var circleFocused: Bool
 
     var body: some View {
         @Bindable var jam = jam
@@ -87,6 +92,39 @@ struct JamView: View {
                 .submitLabel(.done)
         }
         Section("À distance") {
+            Button("Créer un Jam à distance", systemImage: "globe") {
+                if jam.circleLink.isEmpty {
+                    createAfterSetup = true
+                    configuringCircle = true
+                    circleFocused = true
+                } else {
+                    Task { await jam.connectRemote() }
+                }
+            }
+            .disabled(jam.isConnecting)
+            if configuringCircle {
+                Text("Colle une fois le lien de configuration du cercle sur cet appareil.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                SecureField("Lien du cercle hôte", text: $circleDraft)
+                    .focused($circleFocused)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button(createAfterSetup ? "Enregistrer et créer le Jam" : "Enregistrer le lien", systemImage: "link") {
+                    guard jam.saveCircle(circleDraft) else { return }
+                    let create = createAfterSetup
+                    configuringCircle = false
+                    createAfterSetup = false
+                    if create { Task { await jam.connectRemote() } }
+                }
+                .disabled(jam.isConnecting || (createAfterSetup && circleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+            } else if !jam.circleLink.isEmpty {
+                Button("Configuration hôte", systemImage: "gearshape") {
+                    circleDraft = jam.circleLink
+                    configuringCircle = true
+                }
+            }
             TextField("Lien d’invitation reçu", text: $invitationDraft)
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
@@ -101,17 +139,10 @@ struct JamView: View {
                     invitationDraft = ""
                 }
             }
-            SecureField("Lien du cercle Jam", text: $circleDraft)
-                .textContentType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            Button("Enregistrer le lien", systemImage: "link") { jam.saveCircle(circleDraft) }
             if let error = jam.relayError {
                 Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
             }
             if !jam.circleLink.isEmpty {
-                Button("Créer un Jam à distance", systemImage: "globe") { Task { await jam.connectRemote() } }
-                    .disabled(jam.isConnecting || jam.relayError != nil)
                 if jam.remoteRooms.isEmpty && jam.relayError == nil {
                     Text("Aucun Jam ouvert dans ton cercle.").foregroundStyle(.secondary)
                 }
@@ -214,13 +245,34 @@ struct JamView: View {
             }
         }
         if let url = jam.invitationURL {
-            Section("Invitation") {
-                ShareLink(item: url) { Label("Partager l’invitation", systemImage: "square.and.arrow.up") }
-            }
+            remoteInvitation(url)
         }
         queueSections(jam.state)
         Section {
             Button("Terminer le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
+        }
+    }
+
+    private func remoteInvitation(_ url: URL) -> some View {
+        Section("Invitation au Jam") {
+            VStack(spacing: 8) {
+                QRCodeView(text: url.absoluteString)
+                    .frame(width: 188, height: 188)
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityLabel("QR code d’invitation au Jam")
+                Text("À scanner avec l’appareil photo")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            Button(copiedInvitation == url ? "Lien copié" : "Copier le lien",
+                   systemImage: copiedInvitation == url ? "checkmark" : "doc.on.doc") {
+                UIPasteboard.general.string = url.absoluteString
+                copiedInvitation = url
+            }
+            ShareLink(item: url) { Label("Partager l’invitation", systemImage: "square.and.arrow.up") }
         }
     }
 

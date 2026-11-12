@@ -1,5 +1,5 @@
 // Nova pour Windows : processus principal.
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -552,6 +552,7 @@ app.whenReady().then(async () => {
   handle('jam:join', (address: string, port: number, name: string) => jam.join(address, port, name));
   handle('jam:toHost', (message: unknown) => jam.toHost(message));
   handle('jam:stop', () => jam.stop());
+  handle('jam:copyInvitation', (url: string) => clipboard.writeText(url));
 
   handle('shell:open', (url: string) => shell.openExternal(url));
   handle('octave:open', async (url?: string) => {

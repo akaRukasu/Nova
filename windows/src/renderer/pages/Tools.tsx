@@ -349,12 +349,46 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
 
 // MARK: - Jam
 
+function JamInvitationCard({ invitation }: { invitation: string }) {
+  const [qr, setQr] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    void QRCode.toDataURL(invitation, { width: 400, margin: 4, errorCorrectionLevel: 'M' })
+      .then(code => { if (active) setQr(code); })
+      .catch(() => { if (active) setError('Le QR code est indisponible. Tu peux copier le lien.'); });
+    return () => { active = false; };
+  }, [invitation]);
+
+  const copy = async () => {
+    try {
+      await api.copyJamInvitation(invitation);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+      setError('Impossible de copier le lien.');
+    }
+  };
+  return <section className="jam-panel jam-invitation">
+    {qr && <img src={qr} alt="QR code d’invitation au Jam" width={188} height={188} />}
+    <div>
+      <h2>Invitation au Jam</h2>
+      <p className="muted">Scanne le QR code avec l’appareil photo ou partage le lien.</p>
+      <button className="button secondary" onClick={() => void copy()}><Icon name="share" size={16} /> Copier le lien</button>
+      <span role="status">{copied ? 'Lien copié' : error}</span>
+    </div>
+  </section>;
+}
+
 export function JamPage() {
   const state = useStore(jam);
   const settings = useStore(library).settings;
   const [circle, setCircle] = useState(state.circleLink ?? '');
   const [launching, setLaunching] = useState(false);
   const [circleError, setCircleError] = useState<string>();
+  const [configuringCircle, setConfiguringCircle] = useState(false);
+  const [createAfterSetup, setCreateAfterSetup] = useState(false);
   useEffect(() => {
     if (state.role !== 'none') return;
     void api.jamBrowse();
@@ -388,19 +422,34 @@ export function JamPage() {
             <section className="jam-panel">
               <h2>À distance</h2>
               <p className="muted">Retrouve les Jams des amis de ton cercle, où qu’ils soient.</p>
+              <button className="button" disabled={launching || state.connecting} onClick={() => {
+                if (state.circleLink) void launch(true);
+                else { setCreateAfterSetup(true); setConfiguringCircle(true); }
+              }}>Créer un Jam à distance</button>
+              {configuringCircle ? <form className="jam-setup" onSubmit={event => {
+                event.preventDefault();
+                try {
+                  saveJamCircle(circle);
+                  setCircleError(undefined);
+                  setConfiguringCircle(false);
+                  setCreateAfterSetup(false);
+                  if (createAfterSetup) void launch(true);
+                } catch (error) { setCircleError(errorText(error)); }
+              }}>
+                <label className="field">Lien du cercle hôte
+                  <input type="password" autoComplete="off" autoFocus required={createAfterSetup} value={circle} onChange={event => setCircle(event.target.value)}
+                    placeholder="Colle le lien de configuration" />
+                </label>
+                <button className="button secondary" type="submit">{createAfterSetup ? 'Enregistrer et créer le Jam' : 'Enregistrer le lien'}</button>
+              </form> : state.circleLink && <button className="button secondary" onClick={() => {
+                setCircle(state.circleLink ?? '');
+                setConfiguringCircle(true);
+              }}>Configuration hôte</button>}
               <button className="button secondary" onClick={async () => {
                 const link = await ask('Lien d’invitation à un Jam', '', 'Ouvrir');
                 if (link && !openJamInvitation(link)) notify('Ce lien ne correspond pas à une invitation Jam.');
               }}>J’ai un lien d’invitation</button>
-              <form onSubmit={event => {
-                event.preventDefault();
-                try { saveJamCircle(circle); setCircleError(undefined); } catch (error) { setCircleError(errorText(error)); }
-              }}>
-                <label className="field">Lien du cercle<input type="password" autoComplete="off" value={circle} onChange={event => setCircle(event.target.value)} placeholder="Colle ton lien d’invitation" /></label>
-                <button className="button secondary" type="submit">Enregistrer</button>
-              </form>
               {(circleError || state.relayError) && <p role="status" className="muted">{circleError ?? state.relayError}</p>}
-              {state.circleLink && <button className="button" disabled={launching || state.connecting || !!state.relayError} onClick={() => void launch(true)}>Créer un Jam à distance</button>}
               {state.circleLink && !state.relayError && !state.remoteRooms?.length && <p className="muted">Aucun Jam ouvert dans ton cercle.</p>}
               {state.remoteRooms?.map(room => <div className="jam-row" key={room.id}>
                 <Icon name="jam" size={18} /><strong>{room.name} <small className="muted">· {room.people} en ligne</small></strong>
@@ -426,8 +475,7 @@ export function JamPage() {
         <>
           <p className="eyebrow">Ton Jam est ouvert</p>
           <p className="muted">{state.remote ? 'Les membres de ton cercle voient ton Jam dans Nova.' : 'Tes amis sur le même réseau voient ton Jam dans Nova.'}</p>
-          {state.invitation && <button className="button secondary" onClick={() => void navigator.clipboard.writeText(state.invitation!)
-            .then(() => notify('Lien d’invitation copié')).catch(() => notify('Impossible de copier le lien'))}>Copier l’invitation</button>}
+          {state.invitation && <JamInvitationCard key={state.invitation} invitation={state.invitation} />}
           <div className="chips">{(shared?.participants ?? []).map((p) => <span key={p} className="chip on"><Icon name="person" size={13} /> {p}</span>)}
             {!shared?.participants.length && <span className="muted">En attente d’amis…</span>}</div>
           <label className="toggle-row"><input type="checkbox" checked={state.guestsCanControl} onChange={(e) => setGuestsCanControl(e.target.checked)} /> Les invités contrôlent la lecture</label>

@@ -3,6 +3,8 @@ package com.akarukasu.nova;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.UiModeManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -54,6 +56,24 @@ import java.util.Collections;
  */
 @CapacitorPlugin(name = "NovaPlayer")
 public class NovaPlayerPlugin extends Plugin {
+    @PluginMethod
+    public void copyJamInvitation(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isEmpty()) {
+            call.reject("Lien d’invitation manquant.");
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            ClipboardManager clipboard = getActivity().getSystemService(ClipboardManager.class);
+            if (clipboard == null) {
+                call.reject("Presse-papiers indisponible.");
+                return;
+            }
+            clipboard.setPrimaryClip(ClipData.newPlainText("Invitation Jam Nova", url));
+            call.resolve();
+        });
+    }
+
     private static String jamInvitation(Intent intent) {
         Uri uri = intent == null ? null : intent.getData();
         if (uri == null || !"nova".equals(uri.getScheme()) || !"jam".equals(uri.getHost()) || !"/invite".equals(uri.getPath())) return null;
