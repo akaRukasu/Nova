@@ -8,6 +8,7 @@ import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../s
 import { defaultSettings } from '../shared/types.js';
 import { searchConcerts } from './concerts.js';
 import { allowEverywhere, networkStatus } from './firewall.js';
+import { palette } from './palette.js';
 import * as importer from './importer.js';
 import { runImport as runImports } from './importRun.js';
 import * as jam from './jam.js';
@@ -275,13 +276,15 @@ async function checkDisplay() {
     const { width, height } = image.getSize();
     const bitmap = image.toBitmap();
     const colors = new Set<number>();
-    for (let y = 0; y < 16; y++) {
-      for (let x = 0; x < 16; x++) {
-        const i = (Math.floor(((y + 0.5) / 16) * height) * width + Math.floor(((x + 0.5) / 16) * width)) * 4;
+    // Fenêtre vide = une seule couleur partout. L'interface en a toujours plusieurs (barre latérale, page,
+    // textes), même sombre et peu remplie : 48 × 48 points regardés.
+    for (let y = 0; y < 48; y++) {
+      for (let x = 0; x < 48; x++) {
+        const i = (Math.floor(((y + 0.5) / 48) * height) * width + Math.floor(((x + 0.5) / 48) * width)) * 4;
         colors.add((bitmap[i] >> 4) << 8 | (bitmap[i + 1] >> 4) << 4 | bitmap[i + 2] >> 4);
       }
     }
-    blank = colors.size <= 2;
+    blank = colors.size <= 1;
   }
   log(`Vérification de l'affichage : ${blank ? 'fenêtre uniforme' : 'contenu visible'}`);
   if (!blank) return;
@@ -369,6 +372,7 @@ app.whenReady().then(async () => {
   handle('yt:radio', (id: string) => yt.radio(id));
   handle('yt:related', (id: string) => yt.related(id));
   handle('yt:squareArtwork', (id: string) => yt.squareArtwork(id));
+  handle('art:palette', (url: string) => palette(url));
   handle('lyrics:get', (track: Track, duration?: number) => lyrics(track, duration));
   handle('stream:prefetch', (id: string) => prefetch(id));
   handle('stream:invalidate', (id: string) => invalidate(id));

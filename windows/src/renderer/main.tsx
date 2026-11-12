@@ -27,7 +27,7 @@ if (location.hash === '#mini') {
   // Mini lecteur : rien d'autre n'est chargé (pas de second lecteur, pas de bibliothèque).
   void import('./mini').then(({ renderMini }) => renderMini(container));
 } else {
-  void Promise.all([import('./App'), import('./lib/library'), import('./lib/remote')]).then(async ([{ App }, { loadLibrary }]) => {
+  void Promise.all([import('./App'), import('./lib/library'), import('./lib/remote'), import('./lib/ambient')]).then(async ([{ App }, { loadLibrary }]) => {
     await loadLibrary().catch((error) => console.error('Nova : bibliothèque illisible', error));
     createRoot(container).render(<Guard><App /></Guard>);
   });

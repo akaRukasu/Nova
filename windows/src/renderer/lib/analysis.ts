@@ -18,6 +18,8 @@ export interface TrackAnalysis {
   loudness: number;
   /** Part du titre réellement mesurée (1 = entier). */
   coverage: number;
+  /** Forme d'onde (120 niveaux de 0 à 35, en base 36) : barre de progression. */
+  envelope?: string;
 }
 
 export interface MixPlan {
@@ -206,7 +208,26 @@ export function analyzeMeasures(rms: ArrayLike<number>, flux: ArrayLike<number>,
   return {
     version: ANALYSIS_VERSION, duration, bpm, beatClarity: clarity, beatNearStart, beatNearEnd,
     audibleStart, audibleEnd, introEnd: time(firstLoud), outroStart: time(lastLoud), loudness, coverage,
+    envelope: envelope(rms, frameRate, duration),
   };
+}
+
+/** Forme d'onde du titre en 120 niveaux (niveau sonore lissé, sur 36 dB sous le maximum). */
+export function envelope(rms: ArrayLike<number>, frameRate: number, duration: number, buckets = 120) {
+  const total = Math.max(1, Math.round(duration * frameRate));
+  const levels: number[] = [];
+  for (let b = 0; b < buckets; b++) {
+    const from = Math.floor((b / buckets) * total), to = Math.max(from + 1, Math.floor(((b + 1) / buckets) * total));
+    let energy = 0, n = 0;
+    for (let i = from; i < to && i < rms.length; i++) { energy += rms[i] * rms[i]; n++; }
+    levels.push(n ? 10 * Math.log10(Math.max(energy / n, 1e-12)) : -120);
+  }
+  const peak = Math.max(...levels);
+  return levels.map((db) => Math.round(Math.min(1, Math.max(0, (db - (peak - 36)) / 36)) * 35).toString(36)).join('');
+}
+
+export function decodeEnvelope(text: string) {
+  return Array.from(text, (c) => parseInt(c, 36) / 35);
 }
 
 /** Analyse d'un fichier audio complet (échantillons mono). */

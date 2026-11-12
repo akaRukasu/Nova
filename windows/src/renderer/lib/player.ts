@@ -2,7 +2,7 @@
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
 import {
-  analyzeMeasures, analyzeSamples, bassSwap, gainFor, mixVolumes, planMix, saveAnalysis, savedAnalysis,
+  analyzeMeasures, analyzeSamples, bassSwap, decodeEnvelope, envelope, gainFor, mixVolumes, planMix, saveAnalysis, savedAnalysis,
   type MixPlan, type TrackAnalysis,
 } from './analysis';
 import { api, isAndroid, on } from './api';
@@ -38,6 +38,9 @@ export const playerState = new Store<PlayerState>({
   volume: Number(localStorage.getItem('volume') ?? 0.8), transitioning: false, ad: false,
   mode: isAndroid ? 'web' : (localStorage.getItem('engineMode') as EngineMode) ?? 'direct',
 });
+
+/** Forme d'onde du titre en cours (barre de progression) : analyse gardée, ou ce qui a déjà été entendu. */
+export const waveState = new Store<{ id: string; levels: number[] } | null>(null);
 
 /** Position et durée, à part : elles changent quatre fois par seconde (seul le lecteur s'en sert). */
 export const timeState = new Store<{ time: number; duration: number }>({ time: 0, duration: 0 });
@@ -371,7 +374,7 @@ class Engine {
       const next = queue[index + 1];
       if (next) void api.prefetch(next.id);
       // AutoMix (lecture directe) : le titre en cours et le suivant sont analysés en arrière-plan.
-      if (library.get().settings.transition !== 'off') {
+      {
         this.analyzeFile(track.id);
         if (next) setTimeout(() => this.analyzeFile(next.id), 10_000);
       }
@@ -418,6 +421,7 @@ class Engine {
     setTime({ time });
     const expected = this.expectedDuration();
     if (expected > 0 && Math.abs(timeState.get().duration - expected) > 0.5) setTime({ duration: expected });
+    if (Date.now() - this.waveAt > 3000) this.refreshWave();
     const settings = library.get().settings;
     const { queue, index, repeat, playing } = playerState.get();
     const canMix = playing && !this.fadeTimer && !this.pending && repeat !== 'one' && index + 1 < queue.length && !this.followingJam
@@ -519,6 +523,35 @@ class Engine {
     if (this.deck instanceof WebDeck) this.deck.setBass(0);
     this.deck.volume = playerState.get().volume * this.gain;
     if (playerState.get().transitioning) set({ transitioning: false });
+  }
+
+  // MARK: Forme d'onde
+
+  private waveAt = 0;
+
+  private refreshWave() {
+    this.waveAt = Date.now();
+    const track = currentTrack();
+    if (!track) return waveState.set(null);
+    const saved = savedAnalysis(track.id)?.envelope;
+    if (saved) {
+      if (waveState.get()?.id !== track.id || waveState.get()?.levels.length !== saved.length) waveState.set({ id: track.id, levels: decodeEnvelope(saved) });
+      return;
+    }
+    // Lecteur de YouTube Music : la forme se dessine au fil de l'écoute.
+    const entry = this.live.get(track.id);
+    const duration = entry?.duration || durations.get(track.id) || timeState.get().duration;
+    if (!entry || entry.count < entry.frameRate * 5 || !duration) {
+      if (waveState.get()?.id !== track.id) waveState.set(null);
+      return;
+    }
+    const levels = decodeEnvelope(envelope(entry.rms, entry.frameRate, duration));
+    // Parties pas encore entendues : vides.
+    const heard = levels.map((level, b) => {
+      const i = Math.floor(((b + 0.5) / levels.length) * duration * entry.frameRate);
+      return entry.seen[i] ? level : 0;
+    });
+    waveState.set({ id: track.id, levels: heard });
   }
 
   // MARK: Égaliseur

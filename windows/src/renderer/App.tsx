@@ -1,5 +1,6 @@
 // Fenêtre de Nova : barre latérale, page en cours, barre de lecture, lecteur plein écran.
 import { useEffect, useState } from 'react';
+import { CommandPalette, commandPalette } from './components/CommandPalette';
 import { Icon } from './components/icons';
 import { dismissOverlay, Overlays } from './components/menus';
 import { NowPlaying, PlayerBar, nowPlayingOpen } from './components/Player';
@@ -82,16 +83,20 @@ export function App() {
       if (e.ctrlKey && e.key === 'ArrowLeft') player.previous();
       if (e.ctrlKey && e.key.toLowerCase() === 'l') nowPlayingOpen.set(nowPlayingOpen.get() === 'lyrics' ? false : 'lyrics');
       if (e.ctrlKey && e.key.toLowerCase() === 'b' && !typing) { e.preventDefault(); toggleSidebar(); }
+      if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); commandPalette.set(!commandPalette.get()); }
     };
     const onMouse = (e: MouseEvent) => {
       if (e.button === 3) back();
       if (e.button === 4) forward();
     };
+    const onToggleSidebar = () => toggleSidebar();
     window.addEventListener('keydown', onKey);
     window.addEventListener('mouseup', onMouse);
+    window.addEventListener('nova:toggle-sidebar', onToggleSidebar);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mouseup', onMouse);
+      window.removeEventListener('nova:toggle-sidebar', onToggleSidebar);
     };
   }, []);
 
@@ -103,6 +108,9 @@ export function App() {
           title={`${sidebarHidden ? 'Afficher' : 'Masquer'} la barre latérale (Ctrl+B)`}><Icon name="sidebar" size={18} /></button>
         <button className="icon-button" disabled={nav.position === 0} onClick={back} aria-label="Retour"><Icon name="back" size={18} /></button>
         <button className="icon-button" disabled={nav.position >= nav.stack.length - 1} onClick={forward} aria-label="Avancer"><Icon name="forward" size={18} /></button>
+        <button className="command-button" onClick={() => commandPalette.set(true)}>
+          <Icon name="search" size={14} /><span>Aller à, lancer, chercher…</span><kbd>Ctrl K</kbd>
+        </button>
       </div>
       <Sidebar />
       <div className="drawer-scrim" onClick={() => setDrawer(false)} />
@@ -110,6 +118,7 @@ export function App() {
       <PlayerBar />
       <NowPlaying />
       <Overlays />
+      <CommandPalette />
     </div>
   );
 }

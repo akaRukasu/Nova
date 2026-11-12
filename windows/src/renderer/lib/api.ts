@@ -34,6 +34,7 @@ export const api = {
   radio: (id: string) => call<Track[]>('yt:radio', id),
   related: (id: string) => call<Shelf[]>('yt:related', id),
   squareArtwork: (id: string) => call<string | undefined>('yt:squareArtwork', id),
+  palette: (url: string) => call<{ background: [number, number, number]; vivid: [number, number, number] } | null>('art:palette', url),
   lyrics: (track: Track, duration?: number) => call<Lyrics | undefined>('lyrics:get', track, duration),
   prefetch: (id: string) => call<void>('stream:prefetch', id),
   invalidate: (id: string) => call<void>('stream:invalidate', id),

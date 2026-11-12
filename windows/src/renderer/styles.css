@@ -729,3 +729,92 @@ main:hover::-webkit-scrollbar-thumb, .sidebar:hover::-webkit-scrollbar-thumb, .q
 /* Barre de lecture : plus nette. */
 .player-bar { box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.06); }
 .right { gap: 2px; }
+
+/* MARK: Ambiance — couleurs de la pochette en cours, capsule de lecture flottante, halo au tempo */
+
+@property --amb-r { syntax: '<number>'; inherits: true; initial-value: 250; }
+@property --amb-g { syntax: '<number>'; inherits: true; initial-value: 46; }
+@property --amb-b { syntax: '<number>'; inherits: true; initial-value: 84; }
+@property --tint-r { syntax: '<number>'; inherits: true; initial-value: 250; }
+@property --tint-g { syntax: '<number>'; inherits: true; initial-value: 46; }
+@property --tint-b { syntax: '<number>'; inherits: true; initial-value: 84; }
+:root { transition: --amb-r 1.2s, --amb-g 1.2s, --amb-b 1.2s, --tint-r 1.2s, --tint-g 1.2s, --tint-b 1.2s; }
+:root { --amb: rgb(var(--amb-r) var(--amb-g) var(--amb-b)); --tint: rgb(var(--tint-r) var(--tint-g) var(--tint-b)); }
+
+.app { background: var(--bg); position: relative; }
+main { background: transparent; position: relative; z-index: 1; }
+/* Lueur aux couleurs de la pochette, en haut de la page. */
+.app::before {
+  content: ''; position: fixed; inset: 0 0 auto 0; height: 70vh; pointer-events: none; z-index: 0; opacity: 0;
+  background:
+    radial-gradient(900px 420px at 18% -8%, color-mix(in srgb, var(--amb) 55%, transparent), transparent 70%),
+    radial-gradient(700px 380px at 85% -12%, color-mix(in srgb, var(--tint) 35%, transparent), transparent 70%);
+  transition: opacity 1s;
+}
+:root.ambient .app::before { opacity: 0.55; }
+:root[data-theme='light'].ambient .app::before { opacity: 0.35; }
+@media (prefers-color-scheme: light) { :root:not([data-theme='dark']).ambient .app::before { opacity: 0.35; } }
+.sidebar, .player-bar, .titlebar { z-index: 5; }
+
+/* Capsule de lecture flottante, teintée par la pochette. */
+@media (min-width: 761px) { .app { grid-template-rows: 1fr 96px; } }
+.player-bar {
+  margin: 0 14px 12px; border-radius: 18px; border: 1px solid var(--line); overflow: hidden; position: relative;
+  background: color-mix(in srgb, var(--player) 84%, var(--tint) 16%); backdrop-filter: blur(30px) saturate(1.4);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+.player-bar.empty { background: var(--player); }
+.player-bar .play-button { background: var(--tint); color: #fff; box-shadow: 0 4px 14px color-mix(in srgb, var(--tint) 45%, transparent); }
+.player-bar .play-button:hover { background: var(--tint); filter: brightness(1.08); }
+.player-bar input[type='range'] { background: linear-gradient(to right, var(--tint) var(--fill, 0%), var(--line) var(--fill, 0%)); }
+
+/* Halo derrière la pochette, au rythme du titre. */
+.beat-aura {
+  position: absolute; left: 6px; top: 50%; width: 110px; height: 110px; margin-top: -55px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--tint) 55%, transparent), transparent 70%); opacity: 0;
+}
+:root.beating .beat-aura { animation: beat var(--beat, 0.5s) ease-out infinite; animation-delay: var(--beat-delay, 0s); }
+@keyframes beat { 0% { opacity: 0.55; transform: scale(1.08); } 60% { opacity: 0.12; transform: scale(0.92); } 100% { opacity: 0.12; transform: scale(0.92); } }
+.player-bar .now { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { :root.beating .beat-aura { animation: none; } }
+
+/* Lecteur plein écran : le même accent. */
+.now-playing .play-button { background: rgba(255, 255, 255, 0.16); }
+
+/* Barre de progression en forme d'onde (curseur invisible par-dessus, pour la manipuler). */
+.progress { position: relative; }
+.progress.has-wave input[type='range'] { background: transparent !important; position: relative; z-index: 1; height: 28px; }
+.seek { flex: 1; position: relative; display: flex; align-items: center; min-width: 0; }
+.seek input { flex: 1; width: 100%; }
+.waveform { position: absolute; left: 0; top: 50%; width: 100%; height: 28px; margin-top: -14px; pointer-events: none; }
+.waveform rect { fill: var(--faint); opacity: 0.55; transition: fill 0.2s; }
+.waveform rect.played { fill: var(--tint); opacity: 1; }
+
+/* MARK: Palette de commandes (Ctrl+K) */
+
+.command-button {
+  margin-left: 10px; display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 10px; border-radius: 8px;
+  background: var(--hover); color: var(--muted); font-size: 12.5px; -webkit-app-region: no-drag; min-width: 260px;
+}
+.command-button span { flex: 1; text-align: left; }
+.command-button:hover { color: var(--text); }
+kbd { font: 600 10.5px 'Segoe UI', sans-serif; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+.palette-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.3); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fade 0.12s; }
+@keyframes fade { from { opacity: 0; } }
+.palette {
+  width: min(620px, 92vw); border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--elevated) 92%, var(--tint) 8%); backdrop-filter: blur(30px); animation: rise 0.16s ease-out;
+}
+.palette-input { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.palette-input input { flex: 1; border: 0; background: none; outline: none; font-size: 17px; color: var(--text); }
+.palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+.palette-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 10px; border-radius: 10px; text-align: left; }
+.palette-item.selected { background: var(--tint); color: #fff; }
+.palette-item.selected .palette-hint, .palette-item.selected .palette-icon { color: rgba(255, 255, 255, 0.85); }
+.palette-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: var(--hover); color: var(--tint); flex-shrink: 0; }
+.palette-item.selected .palette-icon { background: rgba(255, 255, 255, 0.18); }
+.palette-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.palette-hint { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.palette-empty { padding: 14px; text-align: center; }
+@media (max-width: 760px) { .command-button { display: none; } }
+html.android .command-button { display: none; }
