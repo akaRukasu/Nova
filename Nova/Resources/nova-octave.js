@@ -91,7 +91,10 @@
       for (let i = 0; i < 20; i++) {
         if (location.href !== original && location.pathname !== '/settings') return;
         const options = pendingSettings;
-        if (settings(options) === true && options === pendingSettings) return;
+        if (settings(options) === true) {
+          await wait(120);
+          if (options === pendingSettings && buttons('Autoplay')[0]?.getAttribute('aria-checked') === String(options.autoplay)) return;
+        }
         await wait(100);
       }
     } finally {

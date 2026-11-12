@@ -76,7 +76,7 @@ function searchInOctave(query: string): boolean {
   return true;
 }
 
-function applyAudioSettings(settings: OctaveAudioSettings): boolean {
+async function applyAudioSettings(settings: OctaveAudioSettings): Promise<boolean> {
   if (location.pathname !== '/settings') return false;
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('main button')];
   const quality = { low: 'Low', high: 'High', lossless: 'Lossless' }[settings.quality];
@@ -94,7 +94,12 @@ function applyAudioSettings(settings: OctaveAudioSettings): boolean {
     const button = buttons.find((candidate) => candidate.getAttribute('aria-label') === label);
     if (button && button.getAttribute('aria-checked') !== String(desired)) button.click();
   }
-  return true;
+  // Laisser la page appliquer les clics avant de quitter les réglages.
+  await new Promise(resolve => setTimeout(resolve, 120));
+  return location.pathname === '/settings' && toggles.every(([label, desired]) => {
+    const button = document.querySelector(`main button[aria-label="${label}"]`);
+    return !button || button.getAttribute('aria-checked') === String(desired);
+  });
 }
 
 async function openSettingsInOctave(): Promise<boolean> {
