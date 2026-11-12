@@ -12,7 +12,7 @@ import { useStore } from './lib/store';
 import { ArtistPage, CollectionPage } from './pages/Content';
 import { BrowsePage, ExplorePage, HomePage, SearchPage } from './pages/Discover';
 import {
-  AlbumsPage, HistoryPage, LikedPage, RecentPage, SmartPlaylistPage, SongsPage, UserPlaylistPage, YouTubePlaylistsPage,
+  AlbumsPage, HistoryPage, LibraryGroupPage, LikedPage, RecentPage, SmartPlaylistPage, SongsPage, UserPlaylistPage, YouTubePlaylistsPage,
 } from './pages/Library';
 import { MixPage } from './pages/Mixes';
 import { ConcertsPage, ImportPage, JamPage, SettingsPage } from './pages/Tools';
@@ -33,6 +33,8 @@ function Page({ route }: { route: Route }) {
     case 'history': return <HistoryPage />;
     case 'wrapped': return <WrappedPage />;
     case 'albums': return <AlbumsPage />;
+    case 'artists': return <AlbumsPage kind="artist" />;
+    case 'libraryGroup': return <LibraryGroupPage kind={route.kind} id={route.id} />;
     case 'recent': return <RecentPage />;
     case 'youtubePlaylists': return <YouTubePlaylistsPage />;
     case 'mix': return <MixPage kindId={route.kind} />;

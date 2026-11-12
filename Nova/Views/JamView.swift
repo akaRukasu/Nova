@@ -5,6 +5,7 @@ import SwiftUI
 struct JamView: View {
     @Environment(\.dismiss) private var dismiss
     private let jam = JamSession.shared
+    @State private var circleDraft = ""
 
     var body: some View {
         @Bindable var jam = jam
@@ -31,7 +32,14 @@ struct JamView: View {
             }
             .onAppear {
                 jam.message = nil
+                circleDraft = jam.circleLink
                 jam.startBrowsing()
+            }
+            .task(id: jam.circleLink) {
+                while !Task.isCancelled {
+                    await jam.discoverRemote()
+                    try? await Task.sleep(for: .seconds(2.5))
+                }
             }
             .onDisappear { jam.stopBrowsing() }
             .animation(.default, value: jam.role)
@@ -44,19 +52,24 @@ struct JamView: View {
     @ViewBuilder private var startSections: some View {
         @Bindable var jam = jam
         Section {
-            VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: "person.2.wave.2.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.novaAccent)
+                    .font(.system(size: 32, weight: .semibold))
                 Text("Écoutez ensemble")
-                    .font(.title2.weight(.bold))
-                Text("Lance un Jam : tes amis à côté de toi le rejoignent depuis Nova, ajoutent leurs titres à la file et peuvent écouter en même temps sur leur iPhone.")
+                    .font(.largeTitle.bold())
+                Text("Une file commune. Chacun peut proposer le prochain titre.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white.opacity(0.85))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(.white)
+            .padding(20)
+            .background {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(LinearGradient(colors: [Color(red: 0.16, green: 0.12, blue: 0.32), Color(red: 0.49, green: 0.13, blue: 0.41)],
+                                         startPoint: .bottomLeading, endPoint: .topTrailing))
+            }
+            .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
         }
         Section("Ton prénom") {
@@ -64,11 +77,40 @@ struct JamView: View {
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)
         }
+        Section("À distance") {
+            SecureField("Lien du cercle Jam", text: $circleDraft)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Enregistrer le lien", systemImage: "link") { jam.saveCircle(circleDraft) }
+            if let error = jam.relayError {
+                Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
+            }
+            if !jam.circleLink.isEmpty {
+                Button("Lancer à distance", systemImage: "globe") { Task { await jam.connectRemote() } }
+                    .disabled(jam.isConnecting || jam.relayError != nil)
+                if jam.remoteRooms.isEmpty && jam.relayError == nil {
+                    Text("Aucun Jam ouvert dans ton cercle.").foregroundStyle(.secondary)
+                }
+                ForEach(jam.remoteRooms) { room in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Jam de " + room.name).font(.headline)
+                            Text("\(room.people) en ligne").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Rejoindre") { Task { await jam.connectRemote(room: room) } }
+                            .buttonStyle(.bordered)
+                            .disabled(jam.isConnecting)
+                    }
+                }
+            }
+        }
         Section {
             Button {
                 jam.startHosting()
             } label: {
-                Label("Lancer un Jam", systemImage: "play.circle.fill")
+                Label("Lancer en local", systemImage: "play.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
@@ -146,6 +188,11 @@ struct JamView: View {
                 Text("Inviter avec le QR code")
             } footer: {
                 Text("Tes amis scannent ce code avec l'appareil photo de leur iPhone : Nova s'ouvre et rejoint ton Jam.")
+            }
+        }
+        if jam.isRemote, let url = URL(string: jam.circleLink) {
+            Section("Invitation") {
+                ShareLink(item: url) { Label("Partager le lien du cercle", systemImage: "square.and.arrow.up") }
             }
         }
         queueSections(jam.state)

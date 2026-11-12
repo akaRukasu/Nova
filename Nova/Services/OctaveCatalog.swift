@@ -174,15 +174,21 @@ actor OctaveCatalog {
                                    with: "|", options: .regularExpression)
             .split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
+    private nonisolated static func recordingTitle(_ title: String) -> String {
+        title.replacingOccurrences(of: #"\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$"#,
+                                   with: "", options: [.regularExpression, .caseInsensitive])
+    }
+
     private nonisolated static func credits(_ track: Track) -> (title: String, guests: Set<String>) {
+        let title = recordingTitle(track.title)
         let pattern = #"\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$"#
         let artistGuests = names(track.artist).dropFirst().map(normalize)
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-              let match = regex.firstMatch(in: track.title, range: NSRange(track.title.startIndex..<track.title.endIndex, in: track.title)),
-              let range = Range(match.range, in: track.title) else { return (normalize(track.title), Set(artistGuests)) }
-        let guests = (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: track.title) }
-            .flatMap { names(String(track.title[$0])) }.map(normalize)
-        return (normalize(String(track.title[..<range.lowerBound])), Set(artistGuests + guests))
+              let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..<title.endIndex, in: title)),
+              let range = Range(match.range, in: title) else { return (normalize(title), Set(artistGuests)) }
+        let guests = (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: title) }
+            .flatMap { names(String(title[$0])) }.map(normalize)
+        return (normalize(String(title[..<range.lowerBound])), Set(artistGuests + guests))
     }
     private nonisolated static func sameCredits(_ wanted: Track, _ candidate: Track) -> Bool {
         let a = credits(wanted), b = credits(candidate)
@@ -196,7 +202,7 @@ actor OctaveCatalog {
     }
     nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
         guard sameCredits(wanted, candidate) else { return false }
-        if normalize(wanted.title) == normalize(candidate.title) { return true }
+        if normalize(recordingTitle(wanted.title)) == normalize(recordingTitle(candidate.title)) { return true }
         guard let left = wanted.duration, let right = candidate.duration else { return false }
         return abs(left - right) <= 8
     }
@@ -219,7 +225,7 @@ actor OctaveCatalog {
         if Self.trackURL(track) != nil { return track }
         if let known = recordings[track.id] { return known }
         let lead = Self.lead(track.artist)
-        let query = track.title + " " + lead
+        let query = Self.recordingTitle(track.title) + " " + lead
         let alternate = Self.credits(track).title + " " + lead
         var shelves = try await search(query, scope: .all)
         var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
@@ -259,6 +265,9 @@ actor OctaveCatalog {
     }
     func youtubeRecording(_ track: Track) async throws -> Track? {
         if !track.id.hasPrefix("octave:") { return track }
+        if let id = track.youtubeID, id.range(of: #"^[\w-]{11}$"#, options: .regularExpression) != nil {
+            return Track(id: id, title: track.title, artist: track.artist, album: track.album, duration: track.duration, artworkURL: track.artworkURL)
+        }
         let lead = Self.lead(track.artist)
         for query in [track.title + " " + track.artist, Self.credits(track).title + " " + lead] {
             let shelves = try await InnerTubeClient().search(query, scope: .songs)

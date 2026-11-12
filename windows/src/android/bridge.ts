@@ -198,6 +198,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
     .flatMap((file) => importer.fromFile(file.text, file.name)),
   'import:run': (playlists, toAccount) => runImport(playlists, toAccount),
   'import:match': (wanted) => match(wanted),
+  'octave:match': (track) => octave.findRecording(track),
   'import:cancel': () => { importCancelled = true; },
   'phone:openFile': async () => {
     const [file] = await pickFiles('.json,application/json', false);
@@ -238,7 +239,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'octave:stop': () => octavePlayer.stop(),
   'octave:play': (track, request, volume, position) => octavePlayer.play(track, request, volume, position),
   'octave:command': (request, command) => octavePlayer.command(request, command),
-  'octave:queue-next': (request, track) => octavePlayer.queueNext(request, track),
+  'octave:queue-next': (request, track, reset) => octavePlayer.queueNext(request, track, reset),
   'octave:youtube-match': (track) => findYouTubeRecording(track),
 
   // État de lecture publié chaque seconde : notification multimédia et écran verrouillé d'Android.

@@ -2,6 +2,9 @@
 // puis les introuvables sont recherchés une seconde fois, plus lentement (le réseau ou YouTube ont pu échouer).
 import type { ImportedPlaylist, ImportProgress, Track } from '../shared/types.js';
 import { match, savedMatches } from './matcher.js';
+import { findRecording } from './octave.js';
+import { findYouTubeRecording } from './octaveHistory.js';
+import { isOctaveId } from '../shared/octave.js';
 import * as yt from './yt.js';
 
 export interface ImportResult { name: string; tracks: Track[]; youtubeId?: string; missing: number }
@@ -21,9 +24,11 @@ export async function runImport(
         while (!options.cancelled() && next < positions.length) {
           const position = positions[next++];
           const wanted = playlist.tracks[position];
-          const track = wanted.youtubeId
-            ? { id: wanted.youtubeId, title: wanted.title, artist: wanted.artist, album: wanted.album, duration: wanted.duration }
-            : await match(wanted).catch(() => undefined);
+          const original = { id: wanted.youtubeId ?? 'import:' + [wanted.title, wanted.artist, wanted.album, wanted.duration].join('|'),
+            title: wanted.title, artist: wanted.artist, album: wanted.album, duration: wanted.duration };
+          const octave = await findRecording(original).catch(() => undefined);
+          const track = octave ? { ...octave, youtubeId: wanted.youtubeId }
+            : wanted.youtubeId ? original : await match(wanted).catch(() => undefined);
           found[position] = track;
           if (!verifying) progress.processed++;
           if (track) progress.matched++;
@@ -35,7 +40,7 @@ export async function runImport(
     };
     await searchAll(playlist.tracks.map((_, i) => i), options.width, false);
     // Vérification : seconde recherche, deux à la fois, des titres pas encore trouvés.
-    const missing = found.map((track, i) => (track ? -1 : i)).filter((i) => i >= 0);
+    const missing = found.flatMap((track, i) => track ? [] : [i]);
     if (missing.length && !options.cancelled()) {
       progress.missing = [];
       progress.verifying = true;
@@ -48,7 +53,16 @@ export async function runImport(
     let youtubeId: string | undefined;
     // Compte YouTube connecté : la playlist est aussi créée sur le compte (visible sur l'iPhone).
     if (toAccount && tracks.length && !options.cancelled()) {
-      youtubeId = await yt.createAccountPlaylist(playlist.name, tracks.map((t) => t.id)).catch(() => undefined);
+      youtubeId = playlist.existingYoutubeId;
+      if (!youtubeId) {
+        const ids = new Set<string>();
+        for (const track of tracks) {
+          if (options.cancelled()) break;
+          const id = track.youtubeId ?? (isOctaveId(track.id) ? (await findYouTubeRecording(track).catch(() => undefined))?.id : track.id);
+          if (id) ids.add(id);
+        }
+        if (ids.size && !options.cancelled()) youtubeId = await yt.createAccountPlaylist(playlist.name, [...ids]).catch(() => undefined);
+      }
     }
     results.push({ name: playlist.name, tracks, youtubeId, missing: progress.missing.length });
     options.emit({ ...progress, done: true, playlistId: youtubeId });

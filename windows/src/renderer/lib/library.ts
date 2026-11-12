@@ -121,7 +121,7 @@ export function togglePlaybackOption(option: 'autoplay' | 'automix', source?: Pl
 export function recordPlay(track: Track, playedAt = Date.now()) {
   update((state) => {
     track = preserveArtwork(track, state.recents.find(t => t.id === track.id) ?? state.liked.find(t => t.id === track.id));
-    const stats = { ...state.stats, [track.id]: { playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
+    const stats = { ...state.stats, [track.id]: { ...state.stats[track.id], playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
     if (!state.settings.recordHistory) return { ...state, stats };
     const recents = [track, ...state.recents.filter((t) => t.id !== track.id)].slice(0, 1000);
     const year = String(new Date(playedAt).getFullYear());
@@ -211,7 +211,7 @@ export function createPlaylist(name: string, tracks: Track[] = []): UserPlaylist
 /** Même nom qu'une playlist existante : elle est remplacée (réimport sans doublon). */
 export function upsertPlaylist(name: string, tracks: Track[], youtubeId?: string): UserPlaylist {
   const existing = library.get().playlists.find((p) => p.name.toLowerCase() === name.toLowerCase());
-  const playlist: UserPlaylist = { id: existing?.id ?? crypto.randomUUID(), name, tracks: dedupe(tracks), created: Date.now(),
+  const playlist: UserPlaylist = { id: existing?.id ?? crypto.randomUUID(), name, tracks: dedupe(tracks), created: existing?.created ?? Date.now(),
     youtubeId: youtubeId ?? existing?.youtubeId };
   update((state) => ({ ...state, playlists: [playlist, ...state.playlists.filter((p) => p.id !== playlist.id)] }));
   return playlist;
@@ -225,18 +225,66 @@ export function importIntoPlaylist(name: string, tracks: Track[], youtubeId?: st
   const outcome = { added: incoming.length, alreadyPresent: 0, duplicates: tracks.length - incoming.length };
   if (!existing) {
     upsertPlaylist(name, incoming, youtubeId);
+    markAdded(incoming);
     return outcome;
   }
   const ids = new Set(existing.tracks.map((t) => t.id)), keys = new Set(existing.tracks.map(dedupeKey));
-  const fresh = incoming.filter((t) => !ids.has(t.id) && !keys.has(dedupeKey(t)));
+  const sourceKey = (track: Track) => track.youtubeId ?? track.id;
+  const existingById = new Map(existing.tracks.map(t => [sourceKey(t), t]));
+  const existingByName = new Map(existing.tracks.map(t => [dedupeKey(t), t]));
+  const fresh = incoming.filter((t) => !existingById.has(sourceKey(t)) && !ids.has(t.id) && !keys.has(dedupeKey(t)));
   outcome.added = fresh.length;
   outcome.alreadyPresent = incoming.length - fresh.length;
   // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
-  const incomingIds = new Set(incoming.map((t) => t.id)), incomingKeys = new Set(incoming.map(dedupeKey));
-  const ordered = incoming.map((t) => existing.tracks.find((e) => e.id === t.id || dedupeKey(e) === dedupeKey(t)) ?? t);
-  const kept = existing.tracks.filter((t) => !incomingIds.has(t.id) && !incomingKeys.has(dedupeKey(t)));
+  const replaced = new Set<string>();
+  const ordered = incoming.map(track => {
+    const previous = existingById.get(sourceKey(track)) ?? existingByName.get(dedupeKey(track));
+    if (previous) replaced.add(previous.id);
+    return !previous || isOctaveId(track.id) ? { ...track, artwork: track.artwork ?? previous?.artwork } : previous;
+  });
+  const kept = existing.tracks.filter(track => !replaced.has(track.id));
   upsertPlaylist(name, [...ordered, ...kept], youtubeId ?? existing.youtubeId);
+  markAdded(fresh);
   return outcome;
+}
+
+export async function verifyPlaylistOnOctave(id: string, progress: (processed: number, total: number) => void) {
+  const playlist = library.get().playlists.find(playlist => playlist.id === id);
+  if (!playlist) return 0;
+  const candidates = playlist.tracks.filter(track => !isOctaveId(track.id) || !track.albumId);
+  const replacements = new Map<string, Track>();
+  let next = 0;
+  let processed = 0;
+  await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, async () => {
+    while (next < candidates.length) {
+      const track = candidates[next++];
+      const result = await api.octaveMatch(track).catch(() => undefined);
+      if (result && result.id !== track.id) replacements.set(track.id, {
+        ...result, artwork: result.artwork ?? track.artwork, youtubeId: track.youtubeId ?? (!isOctaveId(track.id) ? track.id : undefined),
+      });
+      progress(++processed, candidates.length);
+    }
+  }));
+  update(state => {
+    const stats = { ...state.stats };
+    for (const [id, track] of replacements) if (!stats[track.id] && stats[id]) stats[track.id] = stats[id];
+    return { ...state, stats, playlists: state.playlists.map(item => item.id === id
+      ? { ...item, tracks: dedupe(item.tracks.map(track => replacements.get(track.id) ?? track)) } : item) };
+  });
+  return replacements.size;
+}
+
+function markAdded(tracks: Track[]) {
+  if (!tracks.length) return;
+  const now = Date.now();
+  update(state => {
+    const stats = { ...state.stats };
+    for (const track of tracks) {
+      const previous = stats[track.id] ?? { playCount: 0 };
+      if (!previous.addedAt) stats[track.id] = { ...previous, addedAt: now };
+    }
+    return { ...state, stats };
+  });
 }
 
 export function addToPlaylist(id: string, tracks: Track[]) {
@@ -259,6 +307,17 @@ export function removeFromPlaylist(id: string, trackId: string) {
 
 export function renamePlaylist(id: string, name: string) {
   update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, name } : p)) }));
+}
+
+export function movePlaylist(id: string, destination: number) {
+  update((state) => {
+    const from = state.playlists.findIndex(playlist => playlist.id === id);
+    if (from < 0 || destination < 0 || destination >= state.playlists.length || from === destination) return state;
+    const playlists = [...state.playlists];
+    const [playlist] = playlists.splice(from, 1);
+    playlists.splice(destination, 0, playlist);
+    return { ...state, playlists };
+  });
 }
 
 export function deletePlaylist(id: string) {

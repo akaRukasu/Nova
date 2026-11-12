@@ -336,7 +336,7 @@ struct SettingsView: View {
     @AppStorage("playlistSource") private var playlistSource = PlaybackSource.octave
     @AppStorage("octaveQuality") private var octaveQuality = "lossless"
     @AppStorage("octaveTransition") private var octaveTransition = "automix"
-    @AppStorage("octaveAutomixStyle") private var octaveAutomixStyle = "legacy"
+    @AppStorage("octaveAutomixStyle") private var octaveAutomixStyle = "apple"
     @AppStorage("octaveAutoplay") private var octaveAutoplay = true
     @AppStorage("octaveGapless") private var octaveGapless = true
     @AppStorage("octaveSoundCheck") private var octaveSoundCheck = true

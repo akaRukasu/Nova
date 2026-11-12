@@ -466,7 +466,8 @@ struct ManualMatchView: View {
     private func search() async {
         isSearching = true
         defer { isSearching = false }
-        var found: [Track] = []
+        let octave = (try? await OctaveCatalog.shared.search(query, scope: .songs)) ?? []
+        var found = Array(octave.flatMap(\.tracks).prefix(15))
         for scope in [SearchScope.songs, .videos] {
             let shelves = (try? await client.search(query, scope: scope)) ?? []
             found += shelves.flatMap(\.tracks).prefix(scope == .songs ? 15 : 8)

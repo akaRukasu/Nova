@@ -222,7 +222,9 @@ function QueuePanel() {
   const [dragged, setDragged] = useState<number | null>(null);
   return (
     <div className="queue">
-      <h3>À suivre</h3>
+      <div className="queue-heading"><h3>À suivre</h3>
+        {(upcoming.length > 0 || automatic.length > 0) && <button className="button secondary" onClick={() => player.clearUpNext()}>Vider la file</button>}
+      </div>
       {!upcoming.length && !automatic.length && <p className="muted">{autoplay ? 'AutoPlay prépare les prochains titres…' : 'La file d’attente est vide.'}</p>}
       {upcoming.map(({ track, position }) => (
         <div key={`${track.id}-${position}`} className="queue-row" draggable

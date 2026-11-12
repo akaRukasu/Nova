@@ -47,6 +47,10 @@ final class JamSession: NSObject {
     /// Dernier état connu (reçu de l'hôte, ou envoyé par soi en tant qu'hôte).
     private(set) var state: JamState?
     private(set) var isConnecting = false
+    private(set) var isRemote = false
+    private(set) var remoteRooms: [RemoteJamRoom] = []
+    private(set) var relayError: String?
+    private(set) var circleLink = UserDefaults.standard.string(forKey: "novaJamCircle") ?? ""
     /// Code du Jam lancé (dans le QR code et le lien « nova://jam/CODE »).
     private(set) var code: String?
     /// Page Jam ouverte depuis un QR code.
@@ -82,6 +86,15 @@ final class JamSession: NSObject {
     @ObservationIgnored private var addedBy: [String: String] = [:]
     /// Code scanné : on rejoint ce Jam dès qu'il est trouvé à proximité.
     @ObservationIgnored private var pendingCode: String?
+    private struct RemoteConnection {
+        let circle: JamCircle
+        let id: String
+        let token: String
+    }
+    @ObservationIgnored private var remote: RemoteConnection?
+    @ObservationIgnored private var remotePoll: Task<Void, Never>?
+    @ObservationIgnored private var remotePublish: Task<Void, Never>?
+    @ObservationIgnored private var remoteParticipants: [String] = []
 
     /// Lien du Jam, à scanner avec l'appareil photo de l'iPhone.
     var joinURL: URL? { code.flatMap { URL(string: "nova://jam/\($0)") } }
@@ -122,10 +135,14 @@ final class JamSession: NSObject {
         role = .host
         addedBy = [:]
         broadcastState()
+        startHeartbeat()
+    }
+
+    private func startHeartbeat() {
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                self?.hostTick()
+                if !Task.isCancelled { self?.hostTick() }
             }
         }
     }
@@ -138,9 +155,10 @@ final class JamSession: NSObject {
     }
 
     private func currentHostState() -> JamState {
-        JamState(hostName: publicName, queue: Array(player.queue.prefix(200)), index: player.index,
+        let queue = player.queue.dropFirst(max(0, player.index)).prefix(200)
+        return JamState(hostName: publicName, queue: Array(queue), index: 0,
                  isPlaying: player.isPlaying, position: player.currentTime, sentAt: Date(),
-                 participants: (session?.connectedPeers ?? []).map { names[$0] ?? $0.displayName },
+                 participants: isRemote ? remoteParticipants : (session?.connectedPeers ?? []).map { names[$0] ?? $0.displayName },
                  guestsCanControl: guestsCanControl, addedBy: addedBy)
     }
 
@@ -154,10 +172,13 @@ final class JamSession: NSObject {
     }
 
     private func handleAsHost(_ message: JamMessage, from peer: MCPeerID) {
-        let guest = names[peer] ?? peer.displayName
+        handleGuest(message, guest: names[peer] ?? peer.displayName)
+        if case .hello(let name) = message { names[peer] = name; broadcastState() }
+    }
+
+    private func handleGuest(_ message: JamMessage, guest: String) {
         switch message {
         case .hello(let name):
-            names[peer] = name
             self.message = "\(name) a rejoint le Jam"
         case .add(let track, let next):
             addedBy[track.id] = guest
@@ -174,6 +195,85 @@ final class JamSession: NSObject {
             return
         }
         broadcastState()
+    }
+
+    func saveCircle(_ value: String) {
+        let link = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard link.isEmpty || JamCircle(link) != nil else { relayError = "Colle le lien HTTPS complet du cercle Jam."; return }
+        circleLink = link
+        UserDefaults.standard.set(link, forKey: "novaJamCircle")
+        remoteRooms = []
+        relayError = nil
+    }
+
+    func discoverRemote() async {
+        let link = circleLink
+        guard role == .none, let circle = JamCircle(link) else { return }
+        do {
+            let reply = try await circle.request("list")
+            guard role == .none, link == circleLink else { return }
+            remoteRooms = reply.rooms ?? []
+            relayError = nil
+        } catch {
+            guard role == .none, link == circleLink else { return }
+            relayError = error.localizedDescription
+            remoteRooms = []
+        }
+    }
+
+    func connectRemote(room: RemoteJamRoom? = nil) async {
+        guard !isConnecting, let circle = JamCircle(circleLink) else { return }
+        leave(silently: true)
+        isConnecting = true
+        defer { isConnecting = false }
+        do {
+            var fields: [String: Any] = ["name": publicName]
+            if let room { fields["room"] = room.id }
+            let reply = try await circle.request(room == nil ? "host" : "join", fields: fields)
+            guard let id = reply.id, let token = reply.token else { throw JamRelayError(status: 0, reason: "Réponse du relais invalide.") }
+            let connection = RemoteConnection(circle: circle, id: id, token: token)
+            remote = connection
+            remoteParticipants = []
+            isRemote = true
+            role = room == nil ? .host : .guest
+            addedBy = [:]
+            if role == .host { broadcastState(); startHeartbeat() }
+            remotePoll = Task { [weak self] in await self?.poll(connection) }
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func poll(_ connection: RemoteConnection) async {
+        var after = 0
+        while !Task.isCancelled, remote?.token == connection.token {
+            do {
+                let reply = try await connection.circle.request("poll", fields: ["room": connection.id, "token": connection.token, "after": after])
+                guard !Task.isCancelled, remote?.token == connection.token else { return }
+                if role == .host {
+                    if let participants = reply.participants, participants != remoteParticipants {
+                        remoteParticipants = participants
+                        broadcastState()
+                    }
+                    for item in reply.events ?? [] {
+                        after = item.seq
+                        if item.event.type == "add", let track = item.event.track {
+                            handleGuest(.add(track.track, next: item.event.next == true), guest: item.name)
+                        } else if let command = item.event.command {
+                            handleGuest(.command(command), guest: item.name)
+                        }
+                    }
+                } else if let state = reply.state {
+                    after = reply.version ?? after
+                    handleAsGuest(.state(state.native))
+                }
+            } catch let error as JamRelayError where [403, 404].contains(error.status) {
+                leave(silently: true)
+                message = "Le Jam est terminé."
+                return
+            } catch {}
+            try? await Task.sleep(for: .milliseconds(1400))
+        }
     }
 
     // MARK: QR code
@@ -272,6 +372,15 @@ final class JamSession: NSObject {
     // MARK: Fin
 
     func leave(silently: Bool = false) {
+        if let connection = remote {
+            Task { _ = try? await connection.circle.request("leave", fields: ["room": connection.id, "token": connection.token]) }
+            remote = nil
+        }
+        isRemote = false
+        remotePoll?.cancel()
+        remotePoll = nil
+        remotePublish?.cancel()
+        remotePublish = nil
         if role == .host { send(.ended) }
         heartbeat?.cancel()
         heartbeat = nil
@@ -296,6 +405,31 @@ final class JamSession: NSObject {
     // MARK: Envoi
 
     private func send(_ message: JamMessage) {
+        if let remote {
+            var payload: [String: Any] = ["room": remote.id, "token": remote.token]
+            switch message {
+            case .state(let state):
+                guard let data = try? JSONEncoder().encode(JamWireState(state)),
+                      let wire = try? JSONSerialization.jsonObject(with: data) else { return }
+                payload["state"] = wire
+                let previous = remotePublish
+                remotePublish = Task {
+                    await previous?.value
+                    guard !Task.isCancelled, self.remote?.token == remote.token else { return }
+                    _ = try? await remote.circle.request("send", fields: payload)
+                }
+                return
+            case .add(let track, let next):
+                guard let data = try? JSONEncoder().encode(LibraryStore.HistorySnapshot.WireTrack(track)),
+                      let wire = try? JSONSerialization.jsonObject(with: data) else { return }
+                payload["event"] = ["type": "add", "track": wire, "next": next]
+            case .command(let command):
+                payload["event"] = ["type": "command", "command": command.rawValue]
+            case .hello, .ended: return
+            }
+            Task { _ = try? await remote.circle.request("send", fields: payload) }
+            return
+        }
         guard let session, !session.connectedPeers.isEmpty,
               let data = try? JSONEncoder().encode(message) else { return }
         try? session.send(data, toPeers: session.connectedPeers, with: .reliable)

@@ -2,6 +2,7 @@
 
 export interface Track {
   id: string;
+  youtubeId?: string;
   title: string;
   artist: string;
   album?: string;
@@ -100,6 +101,7 @@ export interface SharedPlaylist {
 export interface TrackStats {
   playCount: number;
   lastPlayed?: number;
+  addedAt?: number;
 }
 
 export type ListeningYear = Record<string, { track: Track; plays: number }>;
@@ -208,6 +210,7 @@ export interface ImportedPlaylist {
   name: string;
   source: string;
   tracks: ImportedTrack[];
+  existingYoutubeId?: string;
 }
 
 export interface ImportProgress {

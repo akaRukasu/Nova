@@ -5,7 +5,7 @@ import { octaveAudioDefaults } from '../../shared/octave';
 import { Icon } from '../components/icons';
 import { EQ_PRESETS } from '../lib/equalizer';
 import { api, isAndroid, on, supportsOctave } from '../lib/api';
-import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
+import { jam, jamCommand, joinJam, joinRemoteJam, leaveJam, refreshJamCircle, saveJamCircle, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import { player } from '../lib/player';
 import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
@@ -47,7 +47,10 @@ export function ImportPage() {
   };
 
   const start = async () => {
-    const chosen = found.filter((_, i) => selected.has(i));
+    const chosen = found.filter((_, i) => selected.has(i)).map(playlist => ({
+      ...playlist,
+      existingYoutubeId: library.get().playlists.find(p => p.name.trim().toLowerCase() === playlist.name.trim().toLowerCase())?.youtubeId,
+    }));
     setRunning(true);
     setProgress({});
     try {
@@ -71,7 +74,7 @@ export function ImportPage() {
       <PhoneTransfer />
       <h3 className="section-title">Depuis une autre plateforme</h3>
       <p className="muted">Copie le lien d’une playlist ou d’un album <b>Spotify</b>, <b>Deezer</b> (ou ton profil Deezer), <b>Apple Music</b> ou <b>YouTube</b>,
-        ou ouvre un export (CSV d’Exportify, TuneMyMusic, Soundiiz ; TXT « Artiste - Titre » ; JSON Spotify). Une playlist du même nom reçoit les titres qui lui manquent, sans doublons ; les titres pas trouvés du premier coup sont recherchés une seconde fois.</p>
+        ou ouvre un export CSV, TXT ou JSON. Nova cherche d’abord sur Octave, puis sur YouTube Music. Un nouvel import complète la playlist du même nom et corrige les correspondances, sans doublons.</p>
       <form className="import-form" onSubmit={(e) => { e.preventDefault(); if (link.trim()) void load(() => api.importLink(link)); }}>
         <input placeholder="https://open.spotify.com/playlist/…" value={link} onChange={(e) => setLink(e.target.value)} />
         <button className="button" disabled={busy || !link.trim()}>Lire le lien</button>
@@ -348,38 +351,74 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
 export function JamPage() {
   const state = useStore(jam);
   const settings = useStore(library).settings;
+  const [circle, setCircle] = useState(state.circleLink ?? '');
+  const [launching, setLaunching] = useState(false);
+  const [circleError, setCircleError] = useState<string>();
   useEffect(() => {
-    if (state.role === 'none') void api.jamBrowse();
-    return () => { void api.jamStopBrowsing(); };
-  }, [state.role]);
+    if (state.role !== 'none') return;
+    void api.jamBrowse();
+    void refreshJamCircle();
+    const timer = setInterval(() => void refreshJamCircle(), 2500);
+    return () => { clearInterval(timer); void api.jamStopBrowsing(); };
+  }, [state.role, state.circleLink]);
+  const launch = async (atDistance: boolean) => {
+    setLaunching(true);
+    try { await startJam(atDistance); } catch (error) { notify(errorText(error)); }
+    finally { setLaunching(false); }
+  };
   const shared = state.state;
   const queue = shared ? shared.queue.slice(shared.index) : [];
   return (
-    <div className="page narrow">
-      <PageTitle>Jam</PageTitle>
+    <div className="page jam-page">
+      <header className="jam-hero">
+        <span className="jam-hero-icon"><Icon name="jam" size={30} /></span>
+        <div><p>Jam Nova</p><h1>Écoutez ensemble</h1><span>Une file commune. Chacun peut proposer le prochain titre.</span></div>
+      </header>
       {state.role === 'none' && (
-        <>
-          <p className="muted">Écoutez ensemble : lance un Jam, tes amis sur le même réseau (Wi-Fi) le voient dans Nova, ajoutent leurs titres à la file
-            et peuvent écouter en même temps. Le Jam de l’iPhone utilise une technologie d’Apple : il ne se mélange pas avec celui du PC et d’Android.</p>
+        <div className="jam-start">
           <label className="field">Ton prénom
             <input value={settings.jamName} placeholder="Visible par les autres" onChange={(e) => updateSettings({ jamName: e.target.value })} />
           </label>
-          <button className="button large" onClick={() => void startJam().catch((e) => notify(errorText(e)))}><Icon name="jam" size={18} /> Lancer un Jam</button>
-          <h3>Jams à proximité</h3>
-          {!state.nearby.length && <p className="muted"><span className="spinner" /> Recherche sur le réseau…</p>}
+          <div className="jam-options">
+            <section className="jam-panel">
+              <h2>À distance</h2>
+              <p className="muted">Retrouve les Jams des amis de ton cercle, où qu’ils soient.</p>
+              <form onSubmit={event => {
+                event.preventDefault();
+                try { saveJamCircle(circle); setCircleError(undefined); } catch (error) { setCircleError(errorText(error)); }
+              }}>
+                <label className="field">Lien du cercle<input type="password" autoComplete="off" value={circle} onChange={event => setCircle(event.target.value)} placeholder="Colle ton lien d’invitation" /></label>
+                <button className="button secondary" type="submit">Enregistrer</button>
+              </form>
+              {(circleError || state.relayError) && <p role="status" className="muted">{circleError ?? state.relayError}</p>}
+              {state.circleLink && <button className="button" disabled={launching || state.connecting || !!state.relayError} onClick={() => void launch(true)}>Lancer à distance</button>}
+              {state.circleLink && !state.relayError && !state.remoteRooms?.length && <p className="muted">Aucun Jam ouvert dans ton cercle.</p>}
+              {state.remoteRooms?.map(room => <div className="jam-row" key={room.id}>
+                <Icon name="jam" size={18} /><strong>{room.name} <small className="muted">· {room.people} en ligne</small></strong>
+                <button className="button secondary" disabled={state.connecting} onClick={() => void joinRemoteJam(room)}>Rejoindre</button>
+              </div>)}
+            </section>
+            <section className="jam-panel">
+          <h2>À proximité</h2>
+          <p className="muted">Retrouve les Jams ouverts sur ton réseau.</p>
+          <button className="button secondary" disabled={launching || state.connecting} onClick={() => void launch(false)}><Icon name="jam" size={18} /> Lancer en local</button>
+          {!state.nearby.length && <p className="muted">Aucun Jam local pour le moment.</p>}
           {state.nearby.map((nearby) => (
             <div key={nearby.id} className="jam-row">
               <Icon name="jam" size={18} /> <strong>Jam de {nearby.name}</strong>
               <button className="button secondary" disabled={state.connecting} onClick={() => void joinJam(nearby)}>Rejoindre</button>
             </div>
           ))}
-          {!isAndroid && <p className="muted small">La première fois, Windows demande d’autoriser Nova sur le réseau privé : accepte pour que tes amis te trouvent.</p>}
-        </>
+            </section>
+          </div>
+        </div>
       )}
       {state.role === 'host' && (
         <>
           <p className="eyebrow">Ton Jam est ouvert</p>
-          <p className="muted">Tes amis le trouvent dans Nova → Jam (même Wi-Fi). Adresse : {state.addresses.map((a) => `${a}:${state.port}`).join(', ')}</p>
+          <p className="muted">{state.remote ? 'Les membres de ton cercle voient ton Jam dans Nova.' : 'Tes amis sur le même réseau voient ton Jam dans Nova.'}</p>
+          {state.remote && state.circleLink && <button className="button secondary" onClick={() => void navigator.clipboard.writeText(state.circleLink!)
+            .then(() => notify('Lien d’invitation copié')).catch(() => notify('Impossible de copier le lien'))}>Copier le lien du cercle</button>}
           <div className="chips">{(shared?.participants ?? []).map((p) => <span key={p} className="chip on"><Icon name="person" size={13} /> {p}</span>)}
             {!shared?.participants.length && <span className="muted">En attente d’amis…</span>}</div>
           <label className="toggle-row"><input type="checkbox" checked={state.guestsCanControl} onChange={(e) => setGuestsCanControl(e.target.checked)} /> Les invités contrôlent la lecture</label>
@@ -389,7 +428,7 @@ export function JamPage() {
       {state.role === 'guest' && (
         <>
           <p className="eyebrow">Jam de {shared?.hostName ?? '…'}</p>
-          <label className="toggle-row"><input type="checkbox" checked={state.listenAlong} onChange={(e) => setListenAlong(e.target.checked)} /> Écouter aussi sur ce PC</label>
+          <label className="toggle-row"><input type="checkbox" checked={state.listenAlong} onChange={(e) => setListenAlong(e.target.checked)} /> Écouter sur cet appareil</label>
           {state.guestsCanControl && (
             <div className="controls">
               <button onClick={() => jamCommand('previous')}><Icon name="previous" size={22} /></button>
@@ -472,7 +511,7 @@ export function SettingsPage() {
             </select>
           </label>
           {octave.transition === 'automix' && <label className="field">Style AutoMix
-            <select value={octave.automixStyle ?? 'legacy'} onChange={event => setOctave({ automixStyle: event.target.value as OctaveAudioSettings['automixStyle'] })}>
+            <select value={octave.automixStyle ?? 'apple'} onChange={event => setOctave({ automixStyle: event.target.value as OctaveAudioSettings['automixStyle'] })}>
               <option value="legacy">Octave · phrases courtes</option>
               <option value="automatic">Automatique</option>
               <option value="apple">Apple · phrases longues</option>

@@ -383,7 +383,7 @@ struct QueueView: View {
                     HStack {
                         Text(player.isShuffled ? "À suivre (aléatoire)" : "À suivre")
                         Spacer()
-                        if player.hasNext {
+                        if player.hasNext || !player.autoplayQueue.isEmpty {
                             Button("Effacer") { player.clearUpNext() }
                                 .font(.footnote.weight(.semibold))
                                 .textCase(nil)

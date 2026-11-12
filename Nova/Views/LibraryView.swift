@@ -52,6 +52,7 @@ struct LibraryView: View {
     @AppStorage("librarySections") private var sectionsRaw = LibrarySection.defaultOrder.map(\.rawValue).joined(separator: ",")
     @State private var editing = false
     @State private var showImport = false
+    @State private var recentLimit = 60
     @AppStorage("librarySectionsVersion") private var sectionsVersion = 1
 
     private var enabled: [LibrarySection] {
@@ -200,7 +201,7 @@ struct LibraryView: View {
     // MARK: Ajouts récents
 
     @ViewBuilder private var recentGrid: some View {
-        let additions = library.recentAdditions()
+        let additions = library.recentAdditions(limit: recentLimit + 1)
         VStack(alignment: .leading, spacing: 14) {
             Text("Ajouts récents")
                 .font(.title2.weight(.bold))
@@ -213,17 +214,28 @@ struct LibraryView: View {
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
                           alignment: .leading, spacing: 22) {
-                    ForEach(additions) { addition in
+                    ForEach(additions.prefix(recentLimit)) { addition in
                         tile(addition)
                     }
                 }
                 .padding(.horizontal, 16)
+                if additions.count > recentLimit {
+                    Button("Afficher la suite") { recentLimit += 60 }
+                        .buttonStyle(.bordered)
+                        .padding(.horizontal, 16)
+                }
             }
         }
     }
 
     @ViewBuilder private func tile(_ addition: LibraryStore.RecentAddition) -> some View {
         switch addition {
+        case .group(let group):
+            NavigationLink(value: Route.libraryGroup(.album, group.id)) {
+                tileLabel(urls: group.artwork.squareArtworkURLs, title: group.title,
+                          subtitle: group.artist + " · " + group.releaseType, round: false)
+            }
+            .buttonStyle(.plain)
         case .track(let track):
             Button { player.startRadio(from: track) } label: {
                 tileLabel(urls: track.squareArtworkURLs, title: track.title, subtitle: track.artist, round: false)
@@ -577,6 +589,8 @@ struct UserPlaylistView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmDelete = false
+    @State private var octaveVerification: String?
+    @State private var verificationResult: String?
 
     var body: some View {
         let playlist = library.playlist(id)
@@ -598,6 +612,10 @@ struct UserPlaylistView: View {
                             renaming = true
                         }
                         if let tracks = playlist?.tracks, !tracks.isEmpty {
+                            Button(octaveVerification ?? "Vérifier sur Octave", systemImage: "checkmark.circle") {
+                                Task { await verify(tracks) }
+                            }
+                            .disabled(octaveVerification != nil)
                             Button("Ajouter à la file", systemImage: "text.line.last.and.arrowtriangle.forward") {
                                 player.enqueue(tracks)
                             }
@@ -627,6 +645,23 @@ struct UserPlaylistView: View {
                     dismiss()
                 }
             }
+            .alert("Correspondances Octave", isPresented: Binding(get: { verificationResult != nil },
+                                                                  set: { if !$0 { verificationResult = nil } })) {
+                Button("OK") { verificationResult = nil }
+            } message: { Text(verificationResult ?? "") }
+    }
+
+    private func verify(_ tracks: [Track]) async {
+        guard octaveVerification == nil else { return }
+        let candidates = tracks.filter { !$0.id.hasPrefix("octave:") || $0.albumID == nil }
+        var replacements: [String: Track] = [:]
+        for (position, track) in candidates.enumerated() {
+            octaveVerification = "\(position + 1) / \(candidates.count)"
+            if let recording = await ImportManager.resolveOctave(track), recording.id != track.id { replacements[track.id] = recording }
+        }
+        library.applyVerifiedRecordings(replacements, in: id)
+        octaveVerification = nil
+        verificationResult = replacements.isEmpty ? "Aucune nouvelle correspondance." : "\(replacements.count) correspondances corrigées."
     }
 }
 
@@ -704,6 +739,7 @@ struct LibraryPlaylistsView: View {
                 }
             }
             .onDelete { library.deletePlaylists(at: $0) }
+            .onMove { library.movePlaylists(from: $0, to: $1) }
             ForEach(library.saved.filter { $0.kind == .playlist }) { collection in
                 NavigationLink(value: Route.collection(collection)) {
                     CollectionRow(collection: collection)
@@ -713,6 +749,7 @@ struct LibraryPlaylistsView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Playlists")
+        .toolbar { if library.playlists.count > 1 { EditButton() } }
         .sheet(isPresented: $showSmartEditor) {
             SmartPlaylistEditor(playlist: SmartPlaylist(name: "Playlist intelligente"))
         }
@@ -837,10 +874,13 @@ struct LibraryCollectionsView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AccountStore.self) private var account
     let kind: CollectionKind
-
-    private var items: [MusicCollection] { library.saved.filter { $0.kind == kind } }
+    @State private var query = ""
 
     var body: some View {
+        let groups = library.musicGroups(kind: kind)
+        let visible = groups.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+        let known = Set(groups.flatMap { $0.tracks.compactMap { kind == .artist ? $0.artistID : $0.albumID } })
+        let items = library.saved.filter { $0.kind == kind && !known.contains($0.id) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
         ScrollView {
             if account.isSignedIn {
                 NavigationLink(value: Route.account(
@@ -852,6 +892,22 @@ struct LibraryCollectionsView: View {
                         .padding(16)
                 }
             }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 16)], spacing: 20) {
+                ForEach(visible) { group in
+                    NavigationLink(value: Route.libraryGroup(kind, group.id)) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            RemoteImage(urls: group.artwork.squareArtworkURLs)
+                                .aspectRatio(1, contentMode: .fit)
+                                .clipShape(kind == .artist ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12)))
+                            Text(group.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                            Text(kind == .artist ? "\(group.tracks.count) titres" : group.artist + " · " + group.releaseType)
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(16)
             if kind == .artist {
                 LazyVStack(spacing: 10) {
                     ForEach(items) { collection in
@@ -885,7 +941,7 @@ struct LibraryCollectionsView: View {
             }
         }
         .overlay {
-            if items.isEmpty && !account.isSignedIn {
+            if items.isEmpty && visible.isEmpty && !account.isSignedIn {
                 ContentUnavailableView(kind == .artist ? "Aucun artiste" : "Aucun album",
                                        systemImage: kind == .artist ? "music.mic" : "square.stack",
                                        description: Text(kind == .artist
@@ -894,5 +950,37 @@ struct LibraryCollectionsView: View {
             }
         }
         .navigationTitle(kind == .artist ? "Artistes" : "Albums")
+        .searchable(text: $query, prompt: "Filtrer la bibliothèque")
+    }
+}
+
+struct LibraryGroupView: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(PlayerModel.self) private var player
+    let kind: CollectionKind
+    let id: String
+
+    var body: some View {
+        if let group = library.musicGroups(kind: kind, singles: true).first(where: { $0.id == id }) {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        RemoteImage(urls: group.artwork.squareArtworkURLs)
+                            .frame(width: 160, height: 160)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                        if kind == .album { Text(group.artist + " · " + group.releaseType).foregroundStyle(.secondary) }
+                        Button { player.play(group.tracks) } label: { Label("Lecture", systemImage: "play.fill") }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.vertical, 8)
+                }
+                ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
+                    TrackRowButton(track: track) { player.play(group.tracks, startAt: index) }
+                }
+            }
+            .navigationTitle(group.title)
+        } else {
+            ContentUnavailableView("Sortie introuvable", systemImage: "square.stack")
+        }
     }
 }

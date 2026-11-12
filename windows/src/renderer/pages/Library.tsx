@@ -8,16 +8,18 @@ import { CardGrid } from '../components/Shelf';
 import { TrackRow } from '../components/TrackRow';
 import {
   account, clearRecents, deletePlaylist, deleteSmartPlaylist, library, moveInPlaylist, notify, refreshAccount,
-  removeFromPlaylist, removeRecent, renamePlaylist, saveSmartPlaylist, smartTracks, songs,
+  removeFromPlaylist, removeRecent, renamePlaylist, saveSmartPlaylist, smartTracks, songs, verifyPlaylistOnOctave,
 } from '../lib/library';
 import { player } from '../lib/player';
-import { root } from '../lib/router';
+import { open, root } from '../lib/router';
+import { libraryGroups, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
 import { useStore } from '../lib/store';
 import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
 
 export function UserPlaylistPage({ id }: { id: string }) {
   const state = useStore(library);
   const [dragged, setDragged] = useState<number | null>(null);
+  const [verification, setVerification] = useState<string>();
   const sort = useTrackSort(`playlist.${id}`);
   const playlist = state.playlists.find((p) => p.id === id);
   if (!playlist) return <Empty icon="list" title="Playlist introuvable" />;
@@ -33,6 +35,13 @@ export function UserPlaylistPage({ id }: { id: string }) {
           <div className="row-buttons">
             <PlayShuffle tracks={shown} playlist />
             <SortButton state={sort} />
+            <button className="button secondary" disabled={!!verification || !playlist.tracks.length} onClick={() => {
+              setVerification('Vérification…');
+              void verifyPlaylistOnOctave(id, (done, total) => setVerification(done + ' / ' + total))
+                .then(count => notify(count ? count + ' correspondances Octave corrigées' : 'Aucune nouvelle correspondance Octave'))
+                .catch(() => notify('Vérification impossible'))
+                .finally(() => setVerification(undefined));
+            }}>{verification ?? 'Vérifier sur Octave'}</button>
             <button className="button secondary" onClick={async () => {
               const name = await ask('Renommer la playlist', playlist.name, 'Renommer');
               if (name) renamePlaylist(playlist.id, name);
@@ -132,28 +141,79 @@ export function HistoryPage() {
   );
 }
 
-export function AlbumsPage() {
+function GroupCards({ groups, kind }: { groups: LibraryGroup[]; kind: LibraryGroupKind }) {
+  return <div className="card-grid">
+    {groups.map(group => <button className="library-group-card" key={group.id}
+      onClick={() => open({ name: 'libraryGroup', kind, id: group.id })}>
+      <Artwork track={group.artworkTrack} size={176} radius={12} round={kind === 'artist'} />
+      <span className="card-title">{group.title}</span>
+      <span className="card-subtitle">{kind === 'artist' ? group.tracks.length + ' titres' : group.subtitle + ' · ' + releaseType(group)}</span>
+    </button>)}
+  </div>;
+}
+
+export function AlbumsPage({ kind = 'album' }: { kind?: LibraryGroupKind }) {
   const state = useStore(library);
-  const items: Item[] = state.saved.map((collection) => ({ type: 'collection', collection }));
+  const groups = useMemo(() => libraryGroups(state, kind), [state, kind]);
+  const [limit, setLimit] = useState(80);
+  const [query, setQuery] = useState('');
+  const visible = groups.filter(group => (group.title + ' ' + group.subtitle).toLocaleLowerCase('fr').includes(query.trim().toLocaleLowerCase('fr')));
+  const known = new Set(groups.flatMap(group => group.tracks.map(track => kind === 'artist' ? track.artistId : track.albumId)));
+  const items: Item[] = state.saved.filter(collection => collection.kind === kind && !known.has(collection.id)).map(collection => ({ type: 'collection', collection }));
   return (
     <div className="page">
-      <PageTitle>Albums et artistes</PageTitle>
-      {items.length ? <CardGrid items={items} /> : <Empty icon="album" title="Rien pour l’instant" text="Ajoute des albums, des playlists ou des artistes avec le bouton « + »." />}
+      <PageTitle>{kind === 'artist' ? 'Artistes' : 'Albums'}</PageTitle>
+      {groups.length > 0 && <label className="field library-group-search">Filtrer
+        <input type="search" value={query} onChange={event => { setQuery(event.target.value); setLimit(80); }} />
+      </label>}
+      <GroupCards groups={visible.slice(0, limit)} kind={kind} />
+      {visible.length > limit && <button className="button secondary" onClick={() => setLimit(limit + 80)}>Afficher la suite</button>}
+      {items.length > 0 && !query && <section className="shelf"><header className="shelf-header"><h2>Enregistrés</h2></header><CardGrid items={items} /></section>}
+      {!visible.length && (!items.length || query) && <Empty icon={kind === 'artist' ? 'mic' : 'album'} title={query ? 'Aucun résultat' : 'Rien pour l’instant'} />}
     </div>
   );
 }
 
+export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupKind }) {
+  const state = useStore(library);
+  const group = useMemo(() => libraryGroups(state, kind, true).find(group => group.id === id), [state, kind, id]);
+  if (!group) return <Empty icon="album" title="Sortie introuvable" />;
+  const catalogID = kind === 'album' ? group.tracks.find(track => track.albumId)?.albumId : group.tracks.find(track => track.artistId)?.artistId;
+  return <div className="page">
+    <div className="collection-header">
+      <Artwork track={group.artworkTrack} size={200} radius={14} round={kind === 'artist'} />
+      <div className="collection-info">
+        <p className="eyebrow">{kind === 'artist' ? 'Artiste' : releaseType(group)}</p>
+        <h1>{group.title}</h1>
+        {group.subtitle && <p className="muted">{group.subtitle}</p>}
+        <div className="row-buttons">
+          <PlayShuffle tracks={group.tracks} />
+          {catalogID && <button className="button secondary" onClick={() => open(kind === 'artist'
+            ? { name: 'artist', id: catalogID, title: group.title }
+            : { name: 'collection', collection: { id: catalogID, kind: 'album', title: group.title, subtitle: group.subtitle } })}>Voir dans le catalogue</button>}
+        </div>
+      </div>
+    </div>
+    <TrackList tracks={group.tracks} />
+  </div>;
+}
+
 export function RecentPage() {
   const state = useStore(library);
-  const items: Item[] = [
-    ...state.playlists.slice(0, 12).map((p) => ({ type: 'collection' as const, collection: { id: `local:${p.id}`, kind: 'playlist' as const, title: p.name, subtitle: `${p.tracks.length} titres`, artwork: p.tracks[0]?.artwork } })),
-    ...state.saved.slice(0, 24).map((collection) => ({ type: 'collection' as const, collection })),
-    ...state.liked.slice(0, 24).map((track) => ({ type: 'track' as const, track })),
-  ];
+  const [limit, setLimit] = useState(60);
+  const groups = useMemo(() => libraryGroups(state, 'album', true)
+    .sort((a, b) => b.addedAt - a.addedAt || a.title.localeCompare(b.title, 'fr')), [state]);
+  const known = new Set(groups.flatMap(group => group.tracks.map(track => track.albumId)));
+  const saved: Item[] = state.saved.filter(collection => collection.kind === 'album' && !known.has(collection.id))
+    .map(collection => ({ type: 'collection', collection }));
   return (
     <div className="page">
       <PageTitle>Ajouts récents</PageTitle>
-      {items.length ? <CardGrid items={items} onPlay={(track) => player.play([track])} /> : <Empty icon="clock" title="Rien d’ajouté récemment" />}
+      {groups.length ? <>
+        <GroupCards groups={groups.slice(0, limit)} kind="album" />
+        {groups.length > limit && <button className="button secondary" onClick={() => setLimit(limit + 60)}>Afficher la suite</button>}
+      </> : !saved.length && <Empty icon="clock" title="Rien d’ajouté récemment" />}
+      {saved.length > 0 && <section className="shelf"><header className="shelf-header"><h2>Albums enregistrés</h2></header><CardGrid items={saved} /></section>}
     </div>
   );
 }

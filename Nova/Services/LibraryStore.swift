@@ -116,12 +116,14 @@ final class LibraryStore {
 
     /// Élément de la grille « Ajouts récents ».
     enum RecentAddition: Hashable, Identifiable {
+        case group(MusicGroup)
         case track(Track)
         case collection(MusicCollection)
         case playlist(UserPlaylist)
 
         var id: String {
             switch self {
+            case .group(let group): return "g:" + group.id
             case .track(let track): return "t:" + track.id
             case .collection(let collection): return "c:" + collection.id
             case .playlist(let playlist): return "p:" + playlist.id.uuidString
@@ -129,36 +131,63 @@ final class LibraryStore {
         }
     }
 
-    /// Titres, albums, artistes et playlists ajoutés, du plus récent au plus ancien.
-    func recentAdditions(limit: Int = 60) -> [RecentAddition] {
-        var entries: [(Date, RecentAddition)] = []
-        // Titres ajoutés ou likés : on affiche leur album ou leur single, comme Apple Music
-        // (une seule fois par album), et le titre seul quand l'album est inconnu.
-        var seenAlbums = Set<String>()
-        var seenTracks = Set<String>()
-        let tracks = (addedTracks + liked)
-            .filter { seenTracks.insert($0.id).inserted }
-            .sorted { (stats[$0.id]?.added ?? .distantPast) > (stats[$1.id]?.added ?? .distantPast) }
-        for track in tracks.prefix(limit * 3) {
-            let date = stats[track.id]?.added ?? .distantPast
-            if let albumID = track.albumID {
-                guard !savedIDs.contains(albumID), seenAlbums.insert(albumID).inserted else { continue }
-                let album = MusicCollection(id: albumID, kind: .album, title: track.album ?? track.title,
-                                            subtitle: track.artist, artworkURL: track.artworkURL)
-                entries.append((date, .collection(album)))
+    struct MusicGroup: Hashable, Identifiable {
+        let id: String
+        let title: String
+        let artist: String
+        var tracks: [Track]
+        var added: Date
+        var artwork: Track { tracks.first { $0.artworkURL != nil } ?? tracks[0] }
+        var releaseType: String {
+            if !tracks.contains(where: { $0.album != nil }) { return "Morceau" }
+            if title.range(of: #"(?:\s|[-–])EP$"#, options: [.regularExpression, .caseInsensitive]) != nil { return "EP" }
+            if title.range(of: #"(?:\s|[-–])Single$"#, options: [.regularExpression, .caseInsensitive]) != nil
+                || (tracks.count == 1 && title.caseInsensitiveCompare(tracks[0].title) == .orderedSame) { return "Single" }
+            return "Album"
+        }
+    }
+
+    func musicGroups(kind: CollectionKind, singles: Bool = false) -> [MusicGroup] {
+        func key(_ value: String) -> String {
+            value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var groups: [String: MusicGroup] = [:]
+        var catalogKeys: [String: String] = [:]
+        var dates: [String: Date] = [:]
+        for playlist in playlists {
+            for track in playlist.tracks { dates[track.id] = max(dates[track.id] ?? .distantPast, playlist.createdAt) }
+        }
+        for track in songs {
+            let title = kind == .artist ? track.artist : track.album ?? (singles ? track.title : "")
+            guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let catalogID = kind == .artist ? track.artistID : track.albumID
+            let fallback = kind == .artist ? key(title) : key(title) + "|" + key(track.artist)
+            let id = catalogID.flatMap { catalogKeys[$0] } ?? fallback
+            if let catalogID { catalogKeys[catalogID] = id }
+            let date = stats[track.id]?.added ?? dates[track.id] ?? .distantPast
+            if groups[id] != nil {
+                groups[id]?.tracks.append(track)
+                groups[id]?.added = max(groups[id]?.added ?? date, date)
             } else {
-                entries.append((date, .track(track)))
+                groups[id] = MusicGroup(id: id, title: title, artist: track.artist, tracks: [track], added: date)
             }
         }
-        for (position, collection) in saved.prefix(limit).enumerated() {
-            // Ajouts antérieurs à la date d'ajout : on garde l'ordre de la liste.
-            let date = savedDates[collection.id] ?? Date.distantPast.addingTimeInterval(Double(limit - position))
-            entries.append((date, .collection(collection)))
+        return groups.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Titres, albums, artistes et playlists ajoutés, du plus récent au plus ancien.
+    func recentAdditions(limit: Int = 60) -> [RecentAddition] {
+        let groups = musicGroups(kind: .album, singles: true)
+        let known = Set(groups.flatMap { $0.tracks.compactMap(\.albumID) })
+        var entries: [(date: Date, title: String, entry: RecentAddition)] = groups.map { ($0.added, $0.title, .group($0)) }
+        entries += saved.filter { $0.kind == .album && !known.contains($0.id) }.map {
+            (savedDates[$0.id] ?? .distantPast, $0.title, .collection($0))
         }
-        for playlist in playlists.prefix(limit) {
-            entries.append((playlist.createdAt, .playlist(playlist)))
-        }
-        return entries.sorted { $0.0 > $1.0 }.prefix(limit).map(\.1)
+        return entries.sorted {
+            if $0.date != $1.date { return $0.date > $1.date }
+            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }.prefix(limit).map { $0.entry }
     }
 
     // MARK: Morceaux
@@ -281,6 +310,7 @@ final class LibraryStore {
             var artistId: String?
             var albumId: String?
             var square: Bool?
+            var youtubeId: String?
 
             init(_ track: Track) {
                 id = track.id
@@ -292,11 +322,12 @@ final class LibraryStore {
                 artistId = track.artistID
                 albumId = track.albumID
                 square = track.hasSquareArtwork
+                youtubeId = track.youtubeID
             }
 
             var track: Track {
                 Track(id: id, title: title, artist: artist, album: album, duration: duration,
-                      artworkURL: artwork, artistID: artistId, albumID: albumId)
+                      artworkURL: artwork, artistID: artistId, albumID: albumId, youtubeID: youtubeId)
             }
         }
         struct Entry: Codable {
@@ -443,8 +474,10 @@ final class LibraryStore {
         outcome.added = fresh.count
         // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
         let incomingIDs = Set(incoming.map(\.id)), incomingKeys = Set(incoming.map(Self.dedupeKey))
-        let mapped = incoming.map { track in existing.first { $0.id == track.id || Self.dedupeKey($0) == Self.dedupeKey(track) } ?? track }
-        playlists[index].tracks = mapped + existing.filter { !incomingIDs.contains($0.id) && !incomingKeys.contains(Self.dedupeKey($0)) }
+        var byName: [String: Track] = [:]
+        for track in existing { byName[Self.dedupeKey(track)] = track }
+        let mapped = incoming.map { track in track.id.hasPrefix("octave:") ? track : byName[Self.dedupeKey(track)] ?? track }
+        playlists[index].tracks = Self.unique(mapped + existing.filter { !incomingIDs.contains($0.id) && !incomingKeys.contains(Self.dedupeKey($0)) })
         markAdded(fresh)
         save()
         outcome.playlistID = playlists[index].id
@@ -484,6 +517,18 @@ final class LibraryStore {
 
     func deletePlaylist(_ id: UUID) {
         playlists.removeAll { $0.id == id }
+        save()
+    }
+
+    func movePlaylists(from offsets: IndexSet, to destination: Int) {
+        playlists.move(fromOffsets: offsets, toOffset: destination)
+        save()
+    }
+
+    func applyVerifiedRecordings(_ replacements: [String: Track], in id: UUID) {
+        guard let index = playlists.firstIndex(where: { $0.id == id }), !replacements.isEmpty else { return }
+        for (id, track) in replacements where stats[track.id] == nil { stats[track.id] = stats[id] }
+        playlists[index].tracks = Self.unique(playlists[index].tracks.map { replacements[$0.id] ?? $0 })
         save()
     }
 

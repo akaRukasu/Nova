@@ -4,7 +4,7 @@ export const octaveOrigin = 'https://music.octavestreaming.com';
 const prefix = 'octave:';
 
 export const octaveAudioDefaults: OctaveAudioSettings = {
-  automixStyle: 'legacy',
+  automixStyle: 'apple',
   quality: 'lossless', transition: 'automix', autoplay: true, gapless: true, soundCheck: true, smartShuffle: true,
 };
 

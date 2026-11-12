@@ -9,6 +9,14 @@ const babyClip = { id: 'LiCDZYfAMdo', title: '...Baby One More Time', artist: 'F
 const baby = { id: 'octave:3189424121', title: '...Baby One More Time', artist: 'First to Eleven', duration: 227, square: true };
 const babySong = { ...babyClip, id: 'dFUFjrnykU0', duration: 228, square: true };
 
+test('Official Audio identifies the studio track without accepting live edits or covers', () => {
+  const wanted = { id: 'video', title: 'Deer Dance (Official Audio)', artist: 'System Of A Down', duration: 177 };
+  const recording = { id: 'octave:42', title: 'Deer Dance', artist: 'System of a Down', album: 'Toxicity', duration: 175 };
+  assert.equal(matchRecording(wanted, [recording]), recording);
+  assert.equal(matchRecording(wanted, [{ ...recording, title: 'Deer Dance (Live)' }]), undefined);
+  assert.equal(matchRecording(wanted, [{ ...recording, artist: 'Vitamin String Quartet' }]), undefined);
+});
+
 test('a short music-video intro does not hide the unambiguous official audio', () => {
   assert.equal(matchRecording(clip, [joseph]), joseph);
   assert.equal(matchRecording({ ...clip, artist: 'Luke Holland' }, [joseph]), undefined);

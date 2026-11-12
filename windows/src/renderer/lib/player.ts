@@ -243,16 +243,34 @@ class Engine {
     });
   }
 
-  private prepareOctaveNext(request: number) {
+  private prepareOctaveNext(request: number, reset = false) {
     if (this.preferredSource !== 'octave') return;
     const { queue, index } = playerState.get();
     const next = queue[index + 1];
-    if (!next) return;
-    void api.octaveQueueNext(request, next).then((recordingId) => {
-      if (recordingId && request === this.octaveRequest && playerState.get().index === index) {
+    if (reset) this.octaveNext = undefined;
+    if (!next && !reset) return;
+    void api.octaveQueueNext(request, next, reset).then((recordingId) => {
+      const latest = playerState.get();
+      if (recordingId && next && request === this.octaveRequest && latest.index === index && latest.queue[index + 1] === next) {
         this.octaveNext = { id: next.id, recordingId };
       }
     }).catch(() => undefined);
+  }
+
+  private queueEdited(previous?: Track, force = false) {
+    const { queue, index } = playerState.get();
+    if (this.usingOctave && this.octaveLoaded && (force || previous !== queue[index + 1])) {
+      this.prepareOctaveNext(this.octaveRequest, true);
+    }
+    this.saveSession();
+  }
+
+  clearUpNext() {
+    const { queue, index } = playerState.get();
+    if (index < 0) return;
+    this.unshuffled = null;
+    set({ queue: queue.slice(0, index + 1), autoplayQueue: [], shuffled: false });
+    this.queueEdited(queue[index + 1], true);
   }
 
   private updateOctave(status: OctavePlayback) {
@@ -306,18 +324,22 @@ class Engine {
     const rest = queue.filter((t, i) => i <= index || t.id !== track.id);
     rest.splice(index + 1, 0, track);
     set({ queue: rest });
+    this.queueEdited(queue[index + 1]);
   }
 
   enqueue(tracks: Track[]) {
     if (!tracks.length) return;
     if (!playerState.get().queue.length) return this.play(tracks);
-    set({ queue: [...playerState.get().queue, ...tracks] });
+    const { queue, index } = playerState.get();
+    set({ queue: [...queue, ...tracks] });
+    this.queueEdited(queue[index + 1]);
   }
 
   removeFromQueue(position: number) {
     const { queue, index } = playerState.get();
     if (position === index) return;
     set({ queue: queue.filter((_, i) => i !== position), index: position < index ? index - 1 : index });
+    this.queueEdited(queue[index + 1]);
   }
 
   moveInQueue(from: number, to: number) {
@@ -327,6 +349,7 @@ class Engine {
     next.splice(to, 0, moved);
     const current = queue[index];
     set({ queue: next, index: next.indexOf(current) });
+    this.queueEdited(queue[index + 1]);
   }
 
   jumpTo(position: number) {

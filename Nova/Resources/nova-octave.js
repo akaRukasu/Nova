@@ -123,13 +123,15 @@
     if (location.pathname !== '/settings') return false;
     const controls = [...document.querySelectorAll('main button')];
     const quality = controls.find(button => button.textContent.trim() === ({low: 'Low', high: 'High', lossless: 'Lossless'})[options.quality]);
-    const transition = controls.find(button => button.textContent.trim() === ({off: 'Off', crossfade: 'Crossfade', automix: 'AutoMix'})[options.transition]);
+    const transitionGroup = controls.find(button => button.textContent.trim() === 'AutoMix')?.parentElement;
+    const transition = [...transitionGroup?.querySelectorAll('button') ?? []].find(button => button.textContent.trim() === ({off: 'Off', crossfade: 'Crossfade', automix: 'AutoMix'})[options.transition]);
     if (!quality || !transition) return false;
     quality.click();
     transition.click();
     if (options.transition === 'automix') {
-      const label = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[options.automixStyle ?? 'legacy'];
-      const button = controls.find(button => button.textContent.trim() === label);
+      const label = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[options.automixStyle ?? 'apple'];
+      const group = controls.find(button => button.textContent.trim() === 'Apple')?.parentElement;
+      const button = [...group?.querySelectorAll('button') ?? []].find(button => button.textContent.trim() === label);
       if (!button) return false;
       button.click();
     }
@@ -213,6 +215,16 @@
       if (!button || button.disabled) return false;
       button.click();
       return true;
+    },
+    clearQueue() {
+      const clear = buttons('Clear queue')[0];
+      if (clear) {
+        if (!clear.disabled) clear.click();
+        return true;
+      }
+      if (buttons('Save queue as playlist').length) return true;
+      buttons('Queue').find(button => !button.closest('main'))?.click();
+      return false;
     },
     search({query}) {
       if (location.pathname !== '/search') {

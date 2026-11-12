@@ -18,6 +18,7 @@ enum Route: Hashable {
     case libraryPlaylists
     case libraryArtists
     case libraryAlbums
+    case libraryGroup(CollectionKind, String)
     case songs
     case smartPlaylist(UUID)
     case discover
@@ -100,6 +101,8 @@ struct RouteView: View {
             LibraryCollectionsView(kind: .artist)
         case .libraryAlbums:
             LibraryCollectionsView(kind: .album)
+        case .libraryGroup(let kind, let id):
+            LibraryGroupView(kind: kind, id: id)
         case .songs:
             SongsView()
         case .smartPlaylist(let id):

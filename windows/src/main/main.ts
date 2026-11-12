@@ -475,6 +475,7 @@ app.whenReady().then(async () => {
   });
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
+  handle('octave:match', (track: Track) => octave.findRecording(track));
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;
@@ -537,7 +538,7 @@ app.whenReady().then(async () => {
   handle('octave:stop', () => octavePlayer.stop());
   handle('octave:youtube-match', (track: Track) => findYouTubeRecording(track));
   handle('octave:play', (track: Track, request: number, volume: number, position: number) => octavePlayer.play(track, request, volume, position));
-  handle('octave:queue-next', (request: number, track: Track) => octavePlayer.queueNext(request, track));
+  handle('octave:queue-next', (request: number, track?: Track, reset?: boolean) => octavePlayer.queueNext(request, track, reset));
   handle('octave:command', (request: number, command: OctaveCommand) => octavePlayer.command(request, command));
   handle('media:claim', claimMediaShortcuts);
 

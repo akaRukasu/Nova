@@ -215,6 +215,15 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         throw Failure.unavailable
     }
 
+    func clearQueue() async {
+        let request = generation
+        for _ in 0..<10 {
+            guard generation == request, !Task.isCancelled, !panel else { return }
+            if await call("clearQueue") as? Bool == true { return }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
     func enqueue(_ track: Track) async -> Bool {
         let request = generation
         guard let id = OctaveCatalog.id(track.id) else { return false }

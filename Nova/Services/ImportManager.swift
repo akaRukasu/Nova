@@ -99,11 +99,14 @@ final class ImportManager {
 
         var found: [Track] = []
         if let tracks = playlist.youTubeTracks {
-            found = tracks
             update(jobID) {
                 $0.total = tracks.count
-                $0.processed = tracks.count
-                $0.matched = tracks.count
+                $0.startedAt = Date()
+            }
+            for track in tracks {
+                if job(jobID)?.isCancelled == true { break }
+                found.append(await Self.resolveOctave(track) ?? track)
+                update(jobID) { $0.processed += 1; $0.matched += 1 }
             }
         } else {
             let tracks = playlist.tracks
@@ -148,7 +151,7 @@ final class ImportManager {
         await withTaskGroup(of: (Int, Track?).self) { group in
             let first = min(width, tracks.count)
             for index in 0..<first {
-                group.addTask { (index, await TrackMatcher.match(tracks[index], client: client)) }
+                group.addTask { (index, await Self.matchImported(tracks[index], client: client)) }
             }
             var nextIndex = first
             for await (index, match) in group {
@@ -163,12 +166,25 @@ final class ImportManager {
                 }
                 if nextIndex < tracks.count {
                     let next = nextIndex
-                    group.addTask { (next, await TrackMatcher.match(tracks[next], client: client)) }
+                    group.addTask { (next, await Self.matchImported(tracks[next], client: client)) }
                     nextIndex += 1
                 }
             }
         }
         return results
+    }
+
+    nonisolated static func resolveOctave(_ track: Track) async -> Track? {
+        guard var recording = try? await OctaveCatalog.shared.recording(track) else { return nil }
+        recording.youtubeID = track.youtubeID ?? (track.id.hasPrefix("octave:") ? nil : track.id)
+        recording.artworkURL = recording.artworkURL ?? track.artworkURL
+        return recording
+    }
+
+    private nonisolated static func matchImported(_ wanted: ImportedTrack, client: InnerTubeClient) async -> Track? {
+        let query = Track(id: "import:" + wanted.id, title: wanted.title, artist: wanted.artist, album: wanted.album, duration: wanted.duration)
+        if let result = try? await OctaveCatalog.shared.recording(query) { return result }
+        return await TrackMatcher.match(wanted, client: client)
     }
 
     /// Relance la recherche des titres introuvables (le réseau ou YouTube ont pu échouer).

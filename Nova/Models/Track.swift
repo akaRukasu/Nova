@@ -13,6 +13,7 @@ struct Track: Identifiable, Codable, Hashable {
     var artistID: String?
     /// Identifiant de la page album (MPREb…), si YouTube Music le fournit.
     var albumID: String?
+    var youtubeID: String?
 
     var subtitle: String {
         [artist, album ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")

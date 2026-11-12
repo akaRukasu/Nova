@@ -63,6 +63,7 @@ export const api = {
   runImport: (playlists: ImportedPlaylist[], toAccount: boolean) =>
     call<{ name: string; tracks: Track[]; youtubeId?: string; missing: number }[]>('import:run', playlists, toAccount),
   matchTrack: (wanted: ImportedTrack) => call<Track | undefined>('import:match', wanted),
+  octaveMatch: (track: Track) => call<Track | undefined>('octave:match', track),
   cancelImport: () => call<void>('import:cancel'),
 
   phonePairing: () => call<{ link: string; address: string; paired: boolean; phoneName?: string; lastSync?: number }>('phone:pairing'),
@@ -87,7 +88,7 @@ export const api = {
   stopOctave: () => call<void>('octave:stop'),
   youtubeRecording: (track: Track) => call<Track | undefined>('octave:youtube-match', track),
   playOctave: (track: Track, request: number, volume: number, position: number) => call<OctaveStart>('octave:play', track, request, volume, position),
-  octaveQueueNext: (request: number, track: Track) => call<string | undefined>('octave:queue-next', request, track),
+  octaveQueueNext: (request: number, track?: Track, reset?: boolean) => call<string | undefined>('octave:queue-next', request, track, reset),
   octaveCommand: (request: number, command: OctaveCommand) => call<boolean>('octave:command', request, command),
   claimMediaShortcuts: () => call<void>('media:claim'),
 };

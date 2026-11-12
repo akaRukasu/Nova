@@ -16,6 +16,8 @@ type Sample = {
 type Playback = {
   request: number; track: Track; source: Track; position: number; heard: number; recorded: boolean; playing: boolean;
   next?: { track: Track; source: Track }; endedAt?: number;
+  queueVersion?: number;
+  metadataChangedAt?: number;
 };
 const settingsURL = octaveOrigin + '/settings';
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -159,18 +161,29 @@ export class AndroidOctavePlayer {
     return Boolean(await this.call('command', command));
   }
 
-  async queueNext(request: number, track: Track) {
+  async queueNext(request: number, track?: Track, reset = false) {
     const active = this.active;
     if (!active || active.request !== request) return;
+    const version = (active.queueVersion ?? 0) + 1;
+    active.queueVersion = version;
+    const ready = () => this.active === active && active.queueVersion === version;
+    if (reset) {
+      active.next = undefined;
+      for (let i = 0; i < 10 && ready(); i++) {
+        if (await this.call('clearQueue')) break;
+        await wait(100);
+      }
+    }
+    if (!track || !ready()) return;
     const source = await findRecording(track);
     const id = source && octaveCatalogId(source.id);
-    if (!id || !source || source.id === active.source.id || this.active !== active) return;
+    if (!id || !source || source.id === active.source.id || !ready()) return;
     let searched = false;
     const queries = octaveQueueQueries(source);
-    for (let i = 0; this.active === active && i < queries.length * 8; i++) {
+    for (let i = 0; ready() && i < queries.length * 8; i++) {
       if (i % 8 === 0) searched = false;
       if (await this.call<boolean>('queue', { id })) {
-        if (this.active !== active) return;
+        if (!ready()) return;
         active.next = { track, source };
         return source.id;
       }
@@ -201,8 +214,9 @@ export class AndroidOctavePlayer {
       }
       let next: Track | undefined;
       if (sample.playing && !matches(active.source, sample)) {
-        if (active.source.duration && Math.abs(sample.duration - active.source.duration) < 1.1
-          && sample.position > 1.5 && sample.position >= active.position - 1) return;
+        active.metadataChangedAt ??= Date.now();
+        if (Date.now() - active.metadataChangedAt < 1200 && active.source.duration && Math.abs(sample.duration - active.source.duration) < 1.1
+          && active.position > 3 && Math.abs(sample.position - active.position) < 2) return;
         const planned = active.next;
         next = planned && matches(planned.source, sample) ? planned.source : {
           id: octaveId(sample.id) ?? `octave:played-${encodeURIComponent([sample.title, sample.artist, sample.album].join('|'))}`,
@@ -214,6 +228,7 @@ export class AndroidOctavePlayer {
         active.heard = 0;
         active.recorded = false;
       }
+      active.metadataChangedAt = undefined;
       if (sample.playing) active.endedAt = undefined;
       else if (sample.ended || (active.playing && sample.duration > 0 && sample.duration - active.position < 1.5)) active.endedAt ??= Date.now();
       const ended = Boolean(active.endedAt && Date.now() - active.endedAt > 2500);

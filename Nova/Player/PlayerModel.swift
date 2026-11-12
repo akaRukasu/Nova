@@ -551,11 +551,12 @@ final class PlayerModel {
             return
         }
         guard current != nil else { play([track], startAt: 0); return }
+        let previous = upNext.first
         if let existing = queue.indices.first(where: { $0 > index && queue[$0].id == track.id }) {
             queue.remove(at: existing)
         }
         queue.insert(track, at: min(index + 1, queue.count))
-        saveSession()
+        queueEdited(previous)
     }
 
     func enqueue(_ track: Track) {
@@ -569,13 +570,15 @@ final class PlayerModel {
         }
         guard !tracks.isEmpty else { return }
         guard current != nil else { play(tracks); return }
+        let previous = upNext.first
         queue.append(contentsOf: tracks)
-        saveSession()
+        queueEdited(previous)
     }
 
     func toggleShuffle() {
         if RemoteControl.shared.isActive { return RemoteControl.shared.command("shuffle") }
         guard let current else { return }
+        let previous = upNext.first
         if isShuffled {
             // Retour à l'ordre d'origine, en gardant les titres ajoutés depuis.
             var restored = unshuffledQueue ?? queue
@@ -591,7 +594,7 @@ final class PlayerModel {
             queue.replaceSubrange((index + 1)..<queue.count, with: upcoming)
             isShuffled = true
         }
-        saveSession()
+        queueEdited(previous)
     }
 
     func cycleRepeat() {
@@ -604,9 +607,12 @@ final class PlayerModel {
     }
 
     func clearUpNext() {
-        guard current != nil, hasNext else { return }
+        guard current != nil else { return }
         queue.removeSubrange((index + 1)..<queue.count)
-        saveSession()
+        autoplayQueue = []
+        unshuffledQueue = nil
+        isShuffled = false
+        queueEdited(nil, force: true)
     }
 
     /// Minuteur de veille : met en pause après `minutes`, ou l'annule avec `nil`.
@@ -637,18 +643,20 @@ final class PlayerModel {
     }
 
     func removeFromQueue(at offsets: IndexSet) {
+        let previous = upNext.first
         // Positions relatives à « À suivre ».
         let absolute = IndexSet(offsets.map { $0 + index + 1 })
         queue.remove(atOffsets: absolute)
-        saveSession()
+        queueEdited(previous)
     }
 
     func moveInQueue(from source: IndexSet, to destination: Int) {
+        let previous = upNext.first
         let base = index + 1
         var upcoming = upNext
         upcoming.move(fromOffsets: source, toOffset: destination)
         queue.replaceSubrange(base..., with: upcoming)
-        saveSession()
+        queueEdited(previous)
     }
 
     /// Jam, invité qui écoute aussi : même file, même titre, même position que l'hôte.
@@ -898,12 +906,23 @@ final class PlayerModel {
         observeOctave(session: session)
     }
 
-    private func prepareOctaveNext() {
+    private func queueEdited(_ previous: Track?, force: Bool = false) {
+        if force || previous?.id != upNext.first?.id { prepareOctaveNext(reset: true) }
+        saveSession(force: true)
+    }
+
+    private func prepareOctaveNext(reset: Bool = false) {
         octavePreload?.cancel()
-        guard source == .octave, let current = octaveTrack, let next = upNext.first, repeatMode != .one else { return }
+        if reset { octaveNext = nil }
+        guard source == .octave, let current = octaveTrack else { return }
+        let next = repeatMode == .one ? nil : upNext.first
+        guard next != nil || reset else { return }
         let session = octaveSession
         octavePreload = Task { [weak self] in
-            guard let self, let selected = try? await OctaveCatalog.shared.recording(next),
+            guard let self else { return }
+            if reset { await octave.clearQueue() }
+            guard let next, !Task.isCancelled, octaveSession == session,
+                  let selected = try? await OctaveCatalog.shared.recording(next),
                   selected.id != current.id, !Task.isCancelled, octaveSession == session,
                   await octave.enqueue(selected), !Task.isCancelled, octaveSession == session else { return }
             octaveNext = (next, selected)
@@ -915,6 +934,7 @@ final class PlayerModel {
             var heard = 0.0
             var recorded = false
             var endedAt: Date?
+            var changedAt: Date?
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, !Task.isCancelled, octaveSession == session, let selected = octaveTrack else { return }
@@ -945,7 +965,10 @@ final class PlayerModel {
                 let previous = currentTime
                 var changed = false
                 if sample.playing && !sample.title.isEmpty && !sample.matches(selected) {
-                    if previous > 3, abs(sample.duration - duration) < 1.1, abs(position - previous) < 2 { continue }
+                    let now = Date()
+                    changedAt = changedAt ?? now
+                    if let changedAt, now.timeIntervalSince(changedAt) < 1.2,
+                       previous > 3, abs(sample.duration - duration) < 1.1, abs(position - previous) < 2 { continue }
                     let next = upNext.first
                     let nextRecording = octaveNext.flatMap { $0.original.id == next?.id ? $0.recording : nil } ?? next
                     if repeatMode != .one, let recording = nextRecording, sample.matches(recording) {
@@ -968,6 +991,7 @@ final class PlayerModel {
                     recorded = false
                     changed = true
                 }
+                changedAt = nil
                 if sample.playing { endedAt = nil }
                 else if sample.ended || (isPlaying && duration > 0 && duration - previous < 1.5) { endedAt = endedAt ?? Date() }
                 currentTime = position

@@ -39,12 +39,17 @@ export function artistNames(value: string): string[] {
     .filter(Boolean);
 }
 
+function recordingTitle(title: string): string {
+  return title.replace(/\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$/i, '').trim();
+}
+
 function recordingCredits(track: Track) {
-  const suffix = track.title.match(/\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$/i);
+  const title = recordingTitle(track.title);
+  const suffix = title.match(/\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$/i);
   const names = artistNames(track.artist).map(normalize).filter(Boolean);
   const guests = artistNames(suffix?.[1] ?? suffix?.[2] ?? suffix?.[3] ?? '').map(normalize).filter(Boolean);
   return {
-    title: normalize(suffix ? track.title.slice(0, suffix.index) : track.title),
+    title: normalize(suffix ? title.slice(0, suffix.index) : title),
     artist: normalize(track.artist),
     lead: names[0],
     names: [...new Set([...names, ...guests])],
@@ -56,6 +61,7 @@ export function recordingSearchQueries(track: Track): string[] {
   const identity = recordingCredits(track);
   const lead = mainArtist(track.artist);
   return [...new Set([
+    `${recordingTitle(track.title)} ${track.artist}`,
     `${track.title} ${track.artist}`,
     `${track.title} ${lead}`,
     `${identity.title} ${lead}`,
@@ -77,7 +83,7 @@ export function matchRecording(wanted: Track, candidates: Track[]): Track | unde
   if (!title || !artist) return undefined;
   const matchingCredits = candidates.filter((candidate) => {
     if (!sameRecordingCredits(wanted, candidate)) return false;
-    if (normalize(candidate.title) === normalize(wanted.title)) return true;
+    if (normalize(recordingTitle(candidate.title)) === normalize(recordingTitle(wanted.title))) return true;
     return Boolean(wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 8);
   });
   const exact = matchingCredits.filter((candidate) =>

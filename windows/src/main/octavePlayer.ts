@@ -27,6 +27,7 @@ type Playback = {
   request: number; track: Track; source: Track; position: number; duration: number; heard: number; recorded: boolean; playing: boolean;
   stoppedAt?: number;
   metadataChangedAt?: number;
+  queueVersion?: number;
   next?: { track: Track; source: Track };
 };
 
@@ -85,6 +86,17 @@ function playNextInOctave(id: string): boolean {
   return true;
 }
 
+function clearOctaveQueue(): boolean {
+  const clear = document.querySelector<HTMLButtonElement>('button[aria-label="Clear queue"]');
+  if (clear) {
+    if (!clear.disabled) clear.click();
+    return true;
+  }
+  if (document.querySelector('button[aria-label="Save queue as playlist"]')) return true;
+  [...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Queue"]')].find(button => !button.closest('main'))?.click();
+  return false;
+}
+
 function searchInOctave(query: string): boolean {
   if (location.pathname !== '/search') return false;
   const input = document.querySelector<HTMLInputElement>('input[placeholder="Artists, Songs, Lyrics, and More"]');
@@ -101,7 +113,8 @@ async function applyAudioSettings(settings: OctaveAudioSettings): Promise<boolea
   const quality = { low: 'Low', high: 'High', lossless: 'Lossless' }[settings.quality];
   const transition = { off: 'Off', crossfade: 'Crossfade', automix: 'AutoMix' }[settings.transition];
   const qualityButton = buttons.find((button) => button.textContent?.trim() === quality);
-  const transitionButton = buttons.find((button) => button.textContent?.trim() === transition);
+  const transitionGroup = buttons.find(button => button.textContent?.trim() === 'AutoMix')?.parentElement;
+  const transitionButton = [...transitionGroup?.querySelectorAll('button') ?? []].find(button => button.textContent?.trim() === transition);
   const toggles = [
     ['Autoplay', settings.autoplay], ['Gapless Playback', settings.gapless],
     ['Sound Check', settings.soundCheck], ['Smart Shuffle', settings.smartShuffle],
@@ -116,8 +129,10 @@ async function applyAudioSettings(settings: OctaveAudioSettings): Promise<boolea
   // Laisser la page appliquer les clics avant de quitter les réglages.
   await new Promise(resolve => setTimeout(resolve, 120));
   if (settings.transition === 'automix') {
-    const style = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[settings.automixStyle ?? 'legacy'];
-    const button = [...document.querySelectorAll<HTMLButtonElement>('main button')].find(button => button.textContent?.trim() === style);
+    const style = {automatic:'Automatic',apple:'Apple',legacy:'Octave'}[settings.automixStyle ?? 'apple'];
+    const options = [...document.querySelectorAll<HTMLButtonElement>('main button')];
+    const group = options.find(button => button.textContent?.trim() === 'Apple')?.parentElement;
+    const button = [...group?.querySelectorAll('button') ?? []].find(button => button.textContent?.trim() === style);
     if (!button) return false;
     button.click();
     await new Promise(resolve => setTimeout(resolve, 80));
@@ -456,21 +471,30 @@ export class OctavePlayer {
     return this.runControl(contents, command);
   }
 
-  async queueNext(request: number, track: Track): Promise<string | undefined> {
+  async queueNext(request: number, track?: Track, reset = false): Promise<string | undefined> {
     const playback = this.playback;
     const contents = this.view?.webContents;
     if (playback?.request !== request || !contents) return;
-    const source = await findRecording(track);
-    const id = source && octaveCatalogId(source.id);
-    if (!source || !id || source.id === playback.source.id) return;
-    const ready = () => this.playback === playback && !this.panelVisible && !contents.isDestroyed()
+    const version = (playback.queueVersion ?? 0) + 1;
+    playback.queueVersion = version;
+    const ready = () => this.playback === playback && playback.queueVersion === version && !this.panelVisible && !contents.isDestroyed()
       && contents.getURL().startsWith(`${octaveOrigin}/`);
     const enqueue = () => contents.executeJavaScript(`(${playNextInOctave.toString()})(${JSON.stringify(id)})`, true).catch(() => false);
+    if (reset) {
+      playback.next = undefined;
+      for (let i = 0; i < 10 && ready(); i++) {
+        if (await contents.executeJavaScript('(' + clearOctaveQueue.toString() + ')()').catch(() => false)) break;
+        await wait(100);
+      }
+    }
+    if (!track || !ready()) return;
+    const source = await findRecording(track);
+    const id = source && octaveCatalogId(source.id);
+    if (!source || !id || source.id === playback.source.id || !ready()) return;
     const queued = () => {
       playback.next = { track, source };
       return source.id;
     };
-    if (!ready()) return;
     if (await enqueue()) return ready() ? queued() : undefined;
     if (!ready()) return;
     if (new URL(contents.getURL()).pathname !== '/search') {
@@ -544,8 +568,8 @@ export class OctavePlayer {
       let next: Track | undefined;
       if (!this.matches(playback.source, sample) && sample.playing) {
         playback.metadataChangedAt ??= Date.now();
-        if (Math.abs(sample.duration - playback.duration) < 1.1
-          && sample.position > 1.5 && sample.position >= playback.position - 1) return;
+        if (Date.now() - playback.metadataChangedAt < 1200 && Math.abs(sample.duration - playback.duration) < 1.1
+          && playback.position > 3 && Math.abs(sample.position - playback.position) < 2) return;
         const planned = playback.next;
         playback.next = undefined;
         const key = JSON.stringify([sample.title, sample.artist, sample.album]);

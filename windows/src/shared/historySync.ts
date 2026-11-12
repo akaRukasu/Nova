@@ -51,7 +51,7 @@ export function mergeListeningHistory(state: LibraryState, incoming: HistorySnap
   for (const { track, playedAt } of sorted) {
     const current = stats[track.id];
     if (!current || playedAt > (current.lastPlayed ?? 0)) {
-      stats[track.id] = { playCount: current?.playCount ?? 1, lastPlayed: playedAt || undefined };
+      stats[track.id] = { ...current, playCount: current?.playCount ?? 1, lastPlayed: playedAt || undefined };
     }
   }
   return { ...state, recents: sorted.map(entry => entry.track), stats, historyChanges: {
