@@ -31,8 +31,8 @@ targets:
         CFBundleDevelopmentRegion: fr
         CFBundleLocalizations: [fr]
         CFBundleAllowMixedLocalizations: true
-        CFBundleShortVersionString: "0.4.6"
-        CFBundleVersion: "13"
+        CFBundleShortVersionString: "0.4.7"
+        CFBundleVersion: "14"
         LSApplicationCategoryType: public.app-category.music
         UIBackgroundModes: [audio]
         UILaunchScreen: {}

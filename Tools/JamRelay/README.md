@@ -31,6 +31,8 @@ Ce petit service Node.js permet à des amis sur des réseaux différents de déc
 
 4. Exécute `app-nginx restart` pour appliquer la route. Depuis ton navigateur, l’adresse HTTPS `/nova-jam` doit répondre « Méthode indisponible ». Depuis Nova, enregistre le lien de la forme `https://utilisateur.serveur.usbx.me/nova-jam#CLE_DU_CERCLE`, où la clé est la valeur `NOVA_JAM_KEY` de `jam.env`.
 
-Garde la clé du cercle pour les personnes autorisées à héberger. Depuis **Jam → À distance**, crée une session puis partage son invitation. L’invité peut ouvrir Nova ou rejoindre avec son navigateur, où il cherche un titre sur Octave et l’ajoute au lecteur de l’hôte. L’invitation expire quand l’hôte termine le Jam ou se déconnecte.
+Le relais intégré à Nova permet de créer une session directement dans **Jam → À distance**. Chaque session est accessible par son invitation. L’invité peut ouvrir Nova ou rejoindre avec son navigateur pour chercher un titre sur Octave et l’ajouter au lecteur de l’hôte. L’invitation expire quand l’hôte termine le Jam ou se déconnecte.
+
+Pour activer la création sans configuration sur un relais dédié, ajoute `NOVA_JAM_PUBLIC_HOSTING=1` à son environnement et configure `proxy_set_header X-Nova-Client $remote_addr;` dans les routes API Nginx. Le relais doit rester accessible uniquement via le proxy et sa boucle locale. La clé hôte de la session est fournie lors de la création. Les cercles privés existants gardent leur propre clé et leur liste de sessions.
 
 [Guide Ultra.cc pour les applications personnalisées](https://docs.ultra.cc/unofficial-application-installers/generic-software-installation) · [Ports attribués](https://docs.ultra.cc/unofficial-ssh-utilities/assigned-ports-command)

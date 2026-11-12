@@ -1,10 +1,11 @@
 import Foundation
 
 struct JamCircle {
+    static let defaultRelay = JamCircle(endpoint: URL(string: "https://akarukasu.astra.usbx.me/nova-jam")!)
     let endpoint: URL
-    let key: String
+    let key: String?
 
-    init(endpoint: URL, key: String) {
+    init(endpoint: URL, key: String? = nil) {
         self.endpoint = endpoint
         self.key = key
     }
@@ -26,14 +27,14 @@ struct JamCircle {
         body["action"] = action
         var request = URLRequest(url: endpoint, timeoutInterval: 6)
         request.httpMethod = "POST"
-        request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+        if let key { request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request, delegate: JamNoRedirect())
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         let reply = try? JSONDecoder().decode(JamRelayReply.self, from: data)
         guard status == 200 else {
-            let fallback = status == 401 || status == 403
+            let fallback = key != nil && (status == 401 || status == 403)
                 ? "Vérifie le lien de configuration hôte dans Nova."
                 : "Le relais Jam ne répond pas (HTTP \(status))."
             throw JamRelayError(status: status, reason: reply?.error ?? fallback)

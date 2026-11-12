@@ -149,9 +149,11 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'jam:relay': ({ endpoint, key }, body) => {
     const url = new URL(endpoint);
     if (url.protocol !== 'https:' || url.pathname !== '/nova-jam' || url.username || url.password || url.search || url.hash
-      || typeof key !== 'string' || !/^[a-f0-9]{32,128}$/i.test(key)) throw new Error('Adresse de relais invalide.');
+      || (key == null ? body?.action !== 'host' : typeof key !== 'string' || !/^[a-f0-9]{32,128}$/i.test(key))) {
+      throw new Error('Adresse de relais invalide.');
+    }
     return CapacitorHttp.request({ url: url.href, method: 'POST', data: JSON.stringify(body), responseType: 'text',
-      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      headers: { ...(key ? { Authorization: 'Bearer ' + key } : {}), 'Content-Type': 'application/json' },
       connectTimeout: 7000, readTimeout: 7000, disableRedirects: true });
   },
   'yt:search': (query, scope) => scope === 'video' ? yt.search(query, scope) : octave.search(query, scope),

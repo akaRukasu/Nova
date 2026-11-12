@@ -390,8 +390,6 @@ export function JamPage() {
   const [launching, setLaunching] = useState(false);
   const [circleError, setCircleError] = useState<string>();
   const [launchError, setLaunchError] = useState<string>();
-  const [configuringCircle, setConfiguringCircle] = useState(false);
-  const [createAfterSetup, setCreateAfterSetup] = useState(false);
   useEffect(() => {
     if (state.role !== 'none') return;
     void api.jamBrowse();
@@ -399,11 +397,11 @@ export function JamPage() {
     const timer = setInterval(() => void refreshJamCircle(), 2500);
     return () => { clearInterval(timer); void api.jamStopBrowsing(); };
   }, [state.role, state.circleLink]);
-  const launch = async (atDistance: boolean) => {
+  const launch = async (mode: Parameters<typeof startJam>[0]) => {
     setLaunching(true);
     setLaunchError(undefined);
-    try { await startJam(atDistance); } catch (error) {
-      if (atDistance) setLaunchError(errorText(error));
+    try { await startJam(mode); } catch (error) {
+      if (mode !== 'local') setLaunchError(errorText(error));
       else notify(errorText(error));
     }
     finally { setLaunching(false); }
@@ -428,45 +426,39 @@ export function JamPage() {
           <div className="jam-options">
             <section className="jam-panel">
               <h2>À distance</h2>
-              <p className="muted">Retrouve les Jams des amis de ton cercle, où qu’ils soient.</p>
-              <button className="button" disabled={launching || state.connecting} onClick={() => {
-                if (state.circleLink) void launch(true);
-                else { setCreateAfterSetup(true); setConfiguringCircle(true); }
-              }}>{launching ? 'Création en cours…' : 'Créer un Jam à distance'}</button>
-              {configuringCircle ? <form className="jam-setup" onSubmit={event => {
-                event.preventDefault();
-                try {
-                  saveJamCircle(circle);
-                  setCircleError(undefined);
-                  setConfiguringCircle(false);
-                  setCreateAfterSetup(false);
-                  if (createAfterSetup) void launch(true);
-                } catch (error) { setCircleError(errorText(error)); }
-              }}>
-                <label className="field">Lien du cercle hôte
-                  <input type="password" autoComplete="off" autoFocus required={createAfterSetup} value={circle} onChange={event => setCircle(event.target.value)}
-                    placeholder="Colle le lien de configuration" />
-                </label>
-                <button className="button secondary" type="submit">{createAfterSetup ? 'Enregistrer et créer le Jam' : 'Enregistrer le lien'}</button>
-              </form> : state.circleLink && <button className="button secondary" onClick={() => {
-                setCircle(state.circleLink ?? '');
-                setConfiguringCircle(true);
-              }}>Configuration hôte</button>}
+              <button className="button" disabled={launching || state.connecting} onClick={() => void launch('remote')}>
+                {launching ? 'Création en cours…' : 'Créer un Jam à distance'}
+              </button>
               <button className="button secondary" onClick={async () => {
                 const link = await ask('Lien d’invitation à un Jam', '', 'Ouvrir');
                 if (link && !openJamInvitation(link)) notify('Ce lien ne correspond pas à une invitation Jam.');
               }}>J’ai un lien d’invitation</button>
-              {(circleError || launchError || state.relayError) && <p role="status" className="muted">{circleError ?? launchError ?? state.relayError}</p>}
-              {state.circleLink && !state.relayError && !state.remoteRooms?.length && <p className="muted">Aucun Jam ouvert dans ton cercle.</p>}
-              {state.remoteRooms?.map(room => <div className="jam-row" key={room.id}>
-                <Icon name="jam" size={18} /><strong>{room.name} <small className="muted">· {room.people} en ligne</small></strong>
-                <button className="button secondary" disabled={state.connecting} onClick={() => void joinRemoteJam(room)}>Rejoindre</button>
-              </div>)}
+              {launchError && <p role="status" className="muted">{launchError}</p>}
+              <details className="jam-circle-settings">
+                <summary>Cercle privé</summary>
+                <form className="jam-setup" onSubmit={event => {
+                  event.preventDefault();
+                  try { saveJamCircle(circle); setCircleError(undefined); }
+                  catch (error) { setCircleError(errorText(error)); }
+                }}>
+                  <label className="field">Lien du cercle hôte
+                    <input type="password" autoComplete="off" value={circle} onChange={event => setCircle(event.target.value)} />
+                  </label>
+                  <button className="button secondary" type="submit">Enregistrer le lien</button>
+                </form>
+                {(circleError || state.relayError) && <p role="status" className="muted">{circleError ?? state.relayError}</p>}
+                {state.circleLink && <button className="button secondary" disabled={launching || state.connecting}
+                  onClick={() => void launch('circle')}>Créer dans ce cercle</button>}
+                {state.remoteRooms?.map(room => <div className="jam-row" key={room.id}>
+                  <Icon name="jam" size={18} /><strong>{room.name} <small className="muted">· {room.people} en ligne</small></strong>
+                  <button className="button secondary" disabled={state.connecting} onClick={() => void joinRemoteJam(room)}>Rejoindre</button>
+                </div>)}
+              </details>
             </section>
             <section className="jam-panel">
           <h2>À proximité</h2>
           <p className="muted">Retrouve les Jams ouverts sur ton réseau.</p>
-          <button className="button secondary" disabled={launching || state.connecting} onClick={() => void launch(false)}><Icon name="jam" size={18} /> Créer un Jam local</button>
+          <button className="button secondary" disabled={launching || state.connecting} onClick={() => void launch('local')}><Icon name="jam" size={18} /> Créer un Jam local</button>
           {!state.nearby.length && <p className="muted">Aucun Jam local pour le moment.</p>}
           {state.nearby.map((nearby) => (
             <div key={nearby.id} className="jam-row">
@@ -481,7 +473,7 @@ export function JamPage() {
       {state.role === 'host' && (
         <>
           <p className="eyebrow">Ton Jam est ouvert</p>
-          <p className="muted">{state.remote ? 'Les membres de ton cercle voient ton Jam dans Nova.' : 'Tes amis sur le même réseau voient ton Jam dans Nova.'}</p>
+          {!state.remote && <p className="muted">Tes amis sur le même réseau voient ton Jam dans Nova.</p>}
           {state.invitation && <JamInvitationCard key={state.invitation} invitation={state.invitation} />}
           <div className="chips">{(shared?.participants ?? []).map((p) => <span key={p} className="chip on"><Icon name="person" size={13} /> {p}</span>)}
             {!shared?.participants.length && <span className="muted">En attente d’amis…</span>}</div>

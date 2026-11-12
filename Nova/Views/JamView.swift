@@ -8,10 +8,7 @@ struct JamView: View {
     private let jam = JamSession.shared
     @State private var circleDraft = ""
     @State private var invitationDraft = ""
-    @State private var configuringCircle = false
-    @State private var createAfterSetup = false
     @State private var copiedInvitation: URL?
-    @FocusState private var circleFocused: Bool
 
     var body: some View {
         @Bindable var jam = jam
@@ -93,38 +90,9 @@ struct JamView: View {
         }
         Section("À distance") {
             Button(jam.isConnecting ? "Connexion au Jam…" : "Créer un Jam à distance", systemImage: "globe") {
-                if jam.circleLink.isEmpty {
-                    createAfterSetup = true
-                    configuringCircle = true
-                    circleFocused = true
-                } else {
-                    Task { await jam.connectRemote() }
-                }
+                Task { await jam.connectRemote() }
             }
             .disabled(jam.isConnecting)
-            if configuringCircle {
-                Text("Colle une fois le lien de configuration du cercle sur cet appareil.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                SecureField("Lien du cercle hôte", text: $circleDraft)
-                    .focused($circleFocused)
-                    .textContentType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button(createAfterSetup ? "Enregistrer et créer le Jam" : "Enregistrer le lien", systemImage: "link") {
-                    guard jam.saveCircle(circleDraft) else { return }
-                    let create = createAfterSetup
-                    configuringCircle = false
-                    createAfterSetup = false
-                    if create { Task { await jam.connectRemote() } }
-                }
-                .disabled(jam.isConnecting || (createAfterSetup && circleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-            } else if !jam.circleLink.isEmpty {
-                Button("Configuration hôte", systemImage: "gearshape") {
-                    circleDraft = jam.circleLink
-                    configuringCircle = true
-                }
-            }
             TextField("Lien d’invitation reçu", text: $invitationDraft)
                 .textContentType(.URL)
                 .textInputAutocapitalization(.never)
@@ -139,26 +107,7 @@ struct JamView: View {
                     invitationDraft = ""
                 }
             }
-            if let error = jam.relayError {
-                Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
-            }
-            if !jam.circleLink.isEmpty {
-                if jam.remoteRooms.isEmpty && jam.relayError == nil {
-                    Text("Aucun Jam ouvert dans ton cercle.").foregroundStyle(.secondary)
-                }
-                ForEach(jam.remoteRooms) { room in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Jam de " + room.name).font(.headline)
-                            Text("\(room.people) en ligne").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Rejoindre") { Task { await jam.connectRemote(room: room) } }
-                            .buttonStyle(.bordered)
-                            .disabled(jam.isConnecting)
-                    }
-                }
-            }
+            circleSettings
         }
         Section {
             Button {
@@ -198,6 +147,35 @@ struct JamView: View {
             Text("Jams à proximité")
         } footer: {
             Text("Ou scanne le QR code du Jam d'un ami avec l'appareil photo de ton iPhone. Tes amis doivent avoir Nova, avec le Wi-Fi ou le Bluetooth activé. La première fois, autorise Nova à accéder au réseau local.")
+        }
+    }
+
+    private var circleSettings: some View {
+        DisclosureGroup("Cercle privé") {
+            SecureField("Lien du cercle hôte", text: $circleDraft)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Enregistrer le lien", systemImage: "link") { jam.saveCircle(circleDraft) }
+                .disabled(jam.isConnecting)
+            if let error = jam.relayError {
+                Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
+            }
+            if !jam.circleLink.isEmpty {
+                Button("Créer dans ce cercle", systemImage: "person.2") {
+                    Task { await jam.connectRemote(inCircle: true) }
+                }
+                .disabled(jam.isConnecting)
+                ForEach(jam.remoteRooms) { room in
+                    HStack {
+                        Text("Jam de " + room.name)
+                        Spacer()
+                        Button("Rejoindre") { Task { await jam.connectRemote(room: room) } }
+                            .buttonStyle(.bordered)
+                            .disabled(jam.isConnecting)
+                    }
+                }
+            }
         }
     }
 

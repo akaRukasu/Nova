@@ -225,9 +225,13 @@ final class JamSession: NSObject {
         }
     }
 
-    func connectRemote(room: RemoteJamRoom? = nil) async {
+    func connectRemote(room: RemoteJamRoom? = nil, inCircle: Bool = false) async {
+        if room == nil && !inCircle {
+            await connectRemote(.defaultRelay, roomID: nil)
+            return
+        }
         guard let circle = JamCircle(circleLink) else {
-            message = "Configure le lien du cercle hôte pour créer un Jam à distance."
+            message = "Vérifie le lien du cercle privé."
             return
         }
         await connectRemote(circle, roomID: room?.id)
@@ -244,17 +248,18 @@ final class JamSession: NSObject {
             if let roomID { fields["room"] = roomID }
             let reply = try await circle.request(roomID == nil ? "host" : "join", fields: fields)
             guard let id = reply.id, let token = reply.token else { throw JamRelayError(status: 0, reason: "Réponse du relais invalide.") }
+            let sessionCircle = circle.key == nil ? JamCircle(endpoint: circle.endpoint, key: token) : circle
             let invitation: URL?
             if roomID == nil {
                 do { invitation = try reply.hostInvitation(circle: circle, room: id) }
                 catch {
-                    _ = try? await circle.request("leave", fields: ["room": id, "token": token])
+                    _ = try? await sessionCircle.request("leave", fields: ["room": id, "token": token])
                     throw error
                 }
             } else {
                 invitation = nil
             }
-            let connection = RemoteConnection(circle: circle, id: id, token: token)
+            let connection = RemoteConnection(circle: sessionCircle, id: id, token: token)
             remote = connection
             remoteParticipants = []
             isRemote = true

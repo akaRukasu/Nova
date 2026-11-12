@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { jamRelay, parseJamCircle, parseJamInvitation, requireHostInvitation } from '../src/renderer/lib/jamRelay.ts';
+import { defaultJamRelay, jamRelay, parseJamCircle, parseJamInvitation, requireHostInvitation } from '../src/renderer/lib/jamRelay.ts';
 const hostKey = 'a'.repeat(48);
 const guestKey = 'b'.repeat(48);
 const room = '1'.repeat(16);
@@ -13,6 +13,21 @@ test('the trailing slash reaches the canonical endpoint and the host must receiv
   const invitation = requireHostInvitation(circle, room, guestKey);
   assert.deepEqual(parseJamInvitation(invitation), { id: room, circle: { endpoint: circle.endpoint, key: guestKey } });
   assert(!invitation.includes(hostKey));
+});
+
+test('the default Android relay starts hosting without a configuration credential', async t => {
+  t.after(() => { delete globalThis.window; });
+  globalThis.window = { nova: {
+    platform: 'android',
+    async invoke(channel, relay, body) {
+      assert.equal(channel, 'jam:relay');
+      assert.equal(relay.key, undefined);
+      assert.equal(body.action, 'host');
+      return { status: 200, data: { id: room, token: 'session', invite: guestKey } };
+    },
+  } };
+  const result = await jamRelay(defaultJamRelay, { action: 'host' });
+  assert.equal(requireHostInvitation(defaultJamRelay, result.id, result.invite), defaultJamRelay.endpoint + '/app/#' + room + '.' + guestKey);
 });
 
 test('Android uses the native network bridge and reports non-JSON proxy errors', async t => {

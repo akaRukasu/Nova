@@ -39,6 +39,39 @@ test('two clients discover, join and share a Jam through a private relay', async
   assert.equal((await send({ action: 'poll', room: host.id, token: guest.token, after: 0 }))[0], 404);
 });
 
+test('a new device can host without setup while only its session owner can end the room', async t => {
+  const key = randomBytes(24).toString('hex');
+  const server = createJamRelay(key, undefined, { publicHosting: true });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/nova-jam';
+  async function send(action, fields = {}, bearer) {
+    const response = await fetch(endpoint, {
+      method: 'POST', body: JSON.stringify({ action, ...fields }),
+      headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: 'Bearer ' + bearer } : {}) },
+    });
+    return [response.status, await response.json()];
+  }
+  assert.equal((await send('list'))[0], 401);
+  const [created, host] = await send('host', { name: 'Nouvel appareil' });
+  assert.equal(created, 200);
+  assert.notEqual(host.invite, host.token);
+  assert.deepEqual((await send('list', {}, key))[1].rooms, []);
+  const room = host.id;
+  assert.equal((await send('join', { room }))[0], 401);
+  assert.equal((await send('join', { room }, key))[0], 403);
+  const [joined, guest] = await send('join', { room, name: 'Invité' }, host.invite);
+  assert.equal(joined, 200);
+  const state = { queue: [], index: 0, position: 0, playing: false, sentAt: Date.now() };
+  assert.equal((await send('send', { room, token: host.token, state }, host.token))[0], 200);
+  assert.equal((await send('poll', { room, token: guest.token, after: 0 }, host.invite))[1].state.hostName, 'Nouvel appareil');
+  assert.equal((await send('leave', { room, token: host.token }, host.invite))[0], 403);
+  assert.equal((await send('leave', { room, token: host.token }, host.token))[0], 200);
+  assert.equal((await send('poll', { room, token: guest.token, after: 0 }, host.invite))[0], 404);
+  for (let i = 0; i < 4; i++) assert.equal((await send('host'))[0], 200);
+  assert.equal((await send('host'))[0], 429);
+});
+
 test('an invitation grants guest access to one room and expires when the host ends it', async t => {
   const key = randomBytes(24).toString('hex');
   const track = { id: 'octave:15523772', title: 'Deer Dance', artist: 'System Of A Down' };

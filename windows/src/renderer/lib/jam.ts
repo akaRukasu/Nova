@@ -5,7 +5,7 @@ import { api, on } from './api';
 import { library, notify } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
 import { Store } from './store';
-import { jamRelay, JamRelayError, parseJamCircle, parseJamInvitation, requireHostInvitation, type JamCircle, type RemoteRoom } from './jamRelay';
+import { defaultJamRelay, jamRelay, JamRelayError, parseJamCircle, parseJamInvitation, requireHostInvitation, type JamCircle, type RemoteRoom } from './jamRelay';
 import { root } from './router';
 
 export interface JamView {
@@ -93,18 +93,19 @@ export async function refreshJamCircle() {
 
 async function connectRemote(host: boolean, room?: string, invitedCircle?: JamCircle) {
   const circle = invitedCircle ?? parseJamCircle(jam.get().circleLink ?? '');
-  if (!circle) throw new Error('Configure le lien du cercle pour jouer à distance.');
+  if (!circle) throw new Error('Vérifie le lien du cercle privé.');
   const connection = await jamRelay<{ id: string; token: string; invite?: string }>(circle, { action: host ? 'host' : 'join', room, name: name() });
   if (typeof connection.id !== 'string' || typeof connection.token !== 'string') throw new Error('Réponse du relais Jam invalide.');
+  const sessionCircle = circle.key ? circle : { ...circle, key: connection.token };
   let invitation: string | undefined;
   if (host) {
     try { invitation = requireHostInvitation(circle, connection.id, connection.invite); }
     catch (error) {
-      void jamRelay(circle, { action: 'leave', room: connection.id, token: connection.token }).catch(() => undefined);
+      void jamRelay(sessionCircle, { action: 'leave', room: connection.id, token: connection.token }).catch(() => undefined);
       throw error;
     }
   }
-  remote = { circle, ...connection, after: 0, host, polling: false, publishing: false };
+  remote = { circle: sessionCircle, id: connection.id, token: connection.token, after: 0, host, polling: false, publishing: false };
   const session = remote;
   pollTimer = setInterval(() => void pollRemote(session), 1400);
   set({ role: host ? 'host' : 'guest', remote: true, addresses: [], pendingInvitation: undefined, invitation });
@@ -142,11 +143,11 @@ async function pollRemote(session: NonNullable<typeof remote>) {
   } finally { session.polling = false; }
 }
 
-export async function startJam(atDistance = false) {
+export async function startJam(mode: 'local' | 'remote' | 'circle' = 'local') {
   await leaveJam();
   participants = [];
   for (const id of Object.keys(addedBy)) delete addedBy[id];
-  if (atDistance) await connectRemote(true);
+  if (mode !== 'local') await connectRemote(true, undefined, mode === 'remote' ? defaultJamRelay : undefined);
   else {
     const { port, addresses } = await api.jamHost(name());
     set({ role: 'host', port, addresses });

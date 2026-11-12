@@ -1,5 +1,7 @@
-export interface JamCircle { endpoint: string; key: string }
+export interface JamCircle { endpoint: string; key?: string }
 export interface RemoteRoom { id: string; name: string; people: number }
+
+export const defaultJamRelay: JamCircle = { endpoint: 'https://akarukasu.astra.usbx.me/nova-jam' };
 
 export function parseJamInvitation(value: string) {
   try {
@@ -57,7 +59,7 @@ export async function jamRelay<T>(circle: JamCircle, body: object): Promise<T> {
     } else {
       const response = await fetch(circle.endpoint, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + circle.key, 'Content-Type': 'application/json' },
+        headers: { ...(circle.key ? { Authorization: 'Bearer ' + circle.key } : {}), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
         signal: AbortSignal.timeout(7000),
@@ -73,7 +75,7 @@ export async function jamRelay<T>(circle: JamCircle, body: object): Promise<T> {
   }
   const payload = data && typeof data === 'object' && !Array.isArray(data) ? data as { error?: unknown } : undefined;
   if (status !== 200) {
-    const fallback = status === 401 || status === 403
+    const fallback = circle.key && (status === 401 || status === 403)
       ? 'Vérifie le lien de configuration hôte dans Nova.'
       : 'Le relais Jam ne répond pas (HTTP ' + status + ').';
     throw new JamRelayError(status, typeof payload?.error === 'string' ? payload.error : fallback);
