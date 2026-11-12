@@ -189,7 +189,8 @@ struct JamView: View {
         }
         Section {
             if participants.isEmpty {
-                Label("En attente d'amis… Ils voient ton Jam en ouvrant Jam dans le lecteur de Nova.",
+                Label(jam.isRemote ? "Partage ton invitation pour que tes amis rejoignent le Jam."
+                                   : "Tes amis à proximité peuvent rejoindre depuis le menu Jam.",
                       systemImage: "hourglass")
                     .foregroundStyle(.secondary)
             }
