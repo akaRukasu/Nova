@@ -120,9 +120,10 @@ public class NovaPlayerPlugin extends Plugin {
         });
         link.start();
         CookieManager.getInstance().setAcceptCookie(true);
-        NovaPlaybackService.listener = action -> {
+        NovaPlaybackService.listener = (action, seconds) -> {
             JSObject data = new JSObject();
             data.put("action", action);
+            data.put("seconds", seconds);
             notifyListeners("media", data);
         };
         // Android 13+ : autorisation des notifications (commandes de lecture).
@@ -497,7 +498,14 @@ public class NovaPlayerPlugin extends Plugin {
 
     @PluginMethod
     public void setRemoteState(PluginCall call) {
-        link.setRemoteState(call.getString("state", null));
+        String state = call.getString("state", null);
+        link.setRemoteState(state);
+        if (state != null) {
+            try {
+                JSONObject value = new JSONObject(state);
+                getActivity().runOnUiThread(() -> NovaPlaybackService.timeline(value.optDouble("time", 0), value.optDouble("duration", 0)));
+            } catch (Exception ignored) { }
+        }
         call.resolve();
     }
 

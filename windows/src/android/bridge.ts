@@ -45,7 +45,7 @@ interface NovaPlayer {
   addListener(event: 'tick', listener: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'relay', listener: (data: { channel: string; args: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'event', listener: (data: { deck: number; payload: unknown }) => void): Promise<PluginListenerHandle>;
-  addListener(event: 'media', listener: (data: { action: string }) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'media', listener: (data: { action: string; seconds?: number }) => void): Promise<PluginListenerHandle>;
 }
 
 const native = registerPlugin<NovaPlayer>('NovaPlayer');
@@ -290,7 +290,7 @@ if (Capacitor.isNativePlatform()) {
 localStorage.setItem('engineMode', 'web');
 
 void native.addListener('event', ({ deck, payload }) => emit('webplayer:event', deck, payload)).catch(() => undefined);
-native.addListener('media', ({ action }) => emit('media:key', action === 'play' || action === 'pause' ? 'toggle' : action)).catch(() => undefined);
+native.addListener('media', ({ action, seconds }) => emit('media:key', action, seconds)).catch(() => undefined);
 native.addListener('octaveConnected', () => emit('octave:connected')).catch(() => undefined);
 // Messages du réseau local (iPhone, Jam) : mêmes canaux que sur PC.
 native.addListener('relay', ({ channel, args }) => {

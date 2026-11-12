@@ -1084,8 +1084,11 @@ library.subscribe(() => {
 // Accès pour les tests automatiques.
 (window as unknown as { novaPlayer: Engine }).novaPlayer = player;
 
-on('media:key', (action: string) => {
+on('media:key', (action: string, seconds?: number) => {
   if (action === 'toggle') player.toggle();
+  if (action === 'play') player.resume();
+  if (action === 'pause') player.pause();
+  if (action === 'seek' && typeof seconds === 'number' && Number.isFinite(seconds)) player.seek(seconds);
   if (action === 'next') player.next();
   if (action === 'previous') player.previous();
 });

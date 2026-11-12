@@ -1,6 +1,6 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
-import { mainArtist, matchRecording, normalize } from './matcher.js';
+import { confirmClipRecording, mainArtist, matchRecording, normalize } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
 const base = 'https://api.octavestreaming.com/api';
@@ -121,13 +121,9 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
   if (!possibleAudio.size) return undefined;
   // Le clip peut inclure une scène ou un générique. Confirmer l'édition avec la piste audio YouTube Music.
   const shelves = await searchYouTube(`${track.title} ${track.artist}`, 'song').catch(() => []);
-  const audio = shelves.flatMap((shelf) => shelf.items).flatMap((item) =>
-    item.type === 'track' && item.track.square && item.track.duration
-      && normalize(item.track.title) === normalize(track.title)
-      && normalize(mainArtist(item.track.artist)) === normalize(track.artist) ? [item.track] : []);
-  const confirmed = [...possibleAudio.values()].filter((candidate) => candidate.duration && audio.some((song) =>
-    Math.abs(song.duration! - candidate.duration!) <= 3));
-  return confirmed.length === 1 ? rememberRecording(track.id, confirmed[0]) : undefined;
+  const audio = shelves.flatMap((shelf) => shelf.items).flatMap((item) => item.type === 'track' ? [item.track] : []);
+  const confirmed = confirmClipRecording(track, [...possibleAudio.values()], audio);
+  return confirmed ? rememberRecording(track.id, confirmed) : undefined;
 }
 
 function rememberRecording(id: string, found: Track): Track {

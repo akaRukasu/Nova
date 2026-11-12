@@ -65,6 +65,19 @@ export function matchRecording(wanted: Track, candidates: Track[]): Track | unde
   return audio.length === 1 ? audio[0] : undefined;
 }
 
+export function confirmClipRecording(clip: Track, candidates: Track[], songs: Track[]): Track | undefined {
+  if (clip.square !== false) return undefined;
+  const title = normalize(clip.title);
+  const artist = normalize(clip.artist);
+  if (!title || !artist) return undefined;
+  const audio = songs.filter(song => song.square && song.duration && normalize(song.title) === title
+    && normalize(mainArtist(song.artist)) === artist);
+  const confirmed = candidates.filter(candidate => candidate.square && candidate.duration
+    && normalize(candidate.title) === title && normalize(candidate.artist) === artist
+    && audio.some(song => Math.abs(song.duration! - candidate.duration!) <= 3));
+  return confirmed.length === 1 ? confirmed[0] : undefined;
+}
+
 type Scored = { track: Track; score: number };
 const unwanted = ['live', 'remix', 'cover', 'karaoke', 'instrumental', 'acoustic', 'acoustique', 'sped', 'slowed',
   'nightcore', '8d', 'reverb', 'extended', 'edit'];
