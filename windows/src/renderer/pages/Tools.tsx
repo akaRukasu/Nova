@@ -499,7 +499,7 @@ export function JamPage() {
       {queue.length > 0 && (
         <section>
           <h3>File commune</h3>
-          {queue.slice(0, 40).map((track, i) => (
+          {queue.map((track, i) => (
             <div key={`${track.id}-${i}`} className="queue-row">
               <Artwork track={track} size={40} radius={5} />
               <div className="row-text"><div className="row-title">{i === 0 ? '▶ ' : ''}{track.title}</div>

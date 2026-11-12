@@ -209,14 +209,17 @@ export function createJamRelay(key, catalog = searchOctave, { publicHosting = fa
         return reply(403, { error: 'L’hôte a désactivé les commandes de lecture.' });
       }
       if (event.type === 'add') {
-        const { id, title, artist, album, albumId, artwork, duration, youtubeId, square } = event.track;
-        if (!/^(?:octave:\d{1,20}|[a-zA-Z0-9_-]{11})$/.test(id) || !title.trim()) {
+        const { id, title, artist, album, albumId, artistId, artwork, duration, youtubeId, square } = event.track;
+        const catalogTrack = /^(?:octave:\d{1,20}|[a-zA-Z0-9_-]{11})$/.test(id);
+        const historyTrack = /^octave:played-[^\x00-\x1f\x7f]{1,1536}$/u.test(id);
+        if ((!catalogTrack && !historyTrack) || !title.trim()) {
           return reply(400, { error: 'Identifiant de morceau invalide.' });
         }
         event = { type: 'add', next: event.next === true, track: {
           id, title: title.slice(0, 300), artist: artist.slice(0, 300),
           album: typeof album === 'string' ? album.slice(0, 300) : undefined,
           albumId: typeof albumId === 'string' && /^octave:\d{1,20}$/.test(albumId) ? albumId : undefined,
+          artistId: typeof artistId === 'string' && /^octave:\d{1,20}$/.test(artistId) ? artistId : undefined,
           artwork: typeof artwork === 'string' && artwork.startsWith('https://') ? artwork : undefined,
           duration: Number.isFinite(duration) && duration > 0 ? duration : undefined,
           youtubeId: typeof youtubeId === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(youtubeId) ? youtubeId : undefined,

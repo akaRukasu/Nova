@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#141217">
+  <meta name="theme-color" content="#141116">
   <title>Jam Nova</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png">
@@ -14,7 +14,7 @@
 <body>
   <header class="bar">
     <a href="./" class="brand"><img src="icon-192.png" alt="" width="34" height="34"> Jam Nova</a>
-    <button id="leave" class="quiet" type="button" hidden>Quitter le Jam</button>
+    <button id="leave" class="quiet leave" type="button" hidden><span aria-hidden="true">↗</span> Quitter le Jam</button>
   </header>
   <main>
     <section class="landing" id="landing">
@@ -44,28 +44,38 @@
       </div>
       <div class="columns">
         <section class="panel player" aria-label="Lecteur de l’hôte">
-          <div class="cover"><img id="artwork" alt="" hidden></div>
-          <p class="label">Sur le lecteur de l’hôte</p>
-          <h2 id="playing-title">La file est vide</h2>
-          <p id="playing-artist">Ajoute un titre pour lancer la musique.</p>
+          <div class="cover"><span aria-hidden="true">♪</span><img id="artwork" alt="" hidden></div>
+          <div class="player-info">
+            <p class="label">En cours chez l’hôte</p>
+            <h2 id="playing-title">La file est vide</h2>
+            <p id="playing-artist">Ajoute un titre pour lancer la musique.</p>
+          </div>
+          <div id="timeline" class="timeline" hidden>
+            <progress id="progress" aria-label="Progression du morceau"></progress>
+            <div><time id="elapsed">0:00</time><time id="duration">0:00</time></div>
+          </div>
           <div id="transport" class="transport" hidden>
-            <button class="quiet" data-command="previous" type="button">Précédent</button>
-            <button class="primary" id="toggle" data-command="play" type="button">Lire</button>
-            <button class="quiet" data-command="next" type="button">Suivant</button>
+            <button class="transport-button skip-back" data-command="previous" type="button" aria-label="Précédent"><span aria-hidden="true"></span></button>
+            <button class="transport-button primary" id="toggle" data-command="play" type="button" aria-label="Lire"><span aria-hidden="true"></span></button>
+            <button class="transport-button skip-forward" data-command="next" type="button" aria-label="Suivant"><span aria-hidden="true"></span></button>
           </div>
         </section>
+        <div class="session-content">
         <section class="panel tracks" aria-labelledby="add-title">
           <h2 id="add-title">Ajouter un morceau</h2>
           <form id="search" class="search">
             <input id="query" type="search" aria-label="Titre ou artiste" placeholder="Titre ou artiste sur Octave" required minlength="2" maxlength="100">
-            <button class="primary">Chercher</button>
+            <button class="primary"><span class="search-icon" aria-hidden="true"></span> Chercher</button>
           </form>
           <p id="result-status" class="muted" role="status" hidden></p>
           <ul id="results" class="track-list" hidden></ul>
-          <h2 class="next-title">À suivre</h2>
+        </section>
+        <section class="panel tracks" aria-labelledby="next-title">
+          <header class="queue-heading"><h2 id="next-title">À suivre</h2><span id="queue-count" class="queue-count" hidden></span></header>
           <p id="queue-empty" class="muted">La file d’attente est vide.</p>
           <ol id="queue" class="track-list"></ol>
         </section>
+        </div>
       </div>
     </div>
     <p id="status" class="message" role="status" hidden></p>

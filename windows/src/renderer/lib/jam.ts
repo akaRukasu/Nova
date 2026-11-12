@@ -215,26 +215,37 @@ function follow(state: JamState) {
   player.followJam(state.queue, state.index, state.position + elapsed, state.playing);
 }
 
-export function addToJam(track: Track, next = false) {
+function insertJamTrack(track: Track, guest: string, next: boolean) {
+  const { queue, index } = playerState.get();
+  let position = Math.max(0, index + 1);
+  while (position < queue.length && Object.hasOwn(addedBy, queue[position].id)) position++;
+  if (next) player.playNext(track);
+  else player.enqueue([track], position);
+  addedBy[track.id] = guest;
+}
+
+export async function addToJam(track: Track, next = false) {
   const role = jam.get().role;
   if (role === 'host') {
-    addedBy[track.id] = name();
-    next ? player.playNext(track) : player.enqueue([track]);
+    insertJamTrack(track, name(), next);
     broadcast();
   } else if (role === 'guest') {
-    sendToHost({ type: 'add', track, next });
-    notify(`« ${track.title} » ajouté au Jam`);
+    try {
+      await sendToHost({ type: 'add', track, next });
+      notify(`« ${track.title} » envoyé au Jam`);
+    } catch (error) {
+      notify(error instanceof JamRelayError ? error.message : 'Impossible d’envoyer ce titre au Jam.');
+    }
   }
 }
 
 export function jamCommand(command: 'play' | 'pause' | 'next' | 'previous') {
-  sendToHost({ type: 'command', command });
+  void sendToHost({ type: 'command', command }).catch(() => notify('Le Jam ne répond pas.'));
 }
 
-function sendToHost(event: object) {
-  if (remote) void jamRelay(remote.circle, { action: 'send', room: remote.id, token: remote.token, event })
-    .catch(() => notify('Le Jam ne répond pas.'));
-  else void api.jamToHost(event);
+async function sendToHost(event: object) {
+  if (remote) await jamRelay(remote.circle, { action: 'send', room: remote.id, token: remote.token, event });
+  else await api.jamToHost(event);
 }
 
 export async function leaveJam(confirmRemote = false) {
@@ -270,8 +281,7 @@ function fromGuest(message: any, guest: string) {
   if (jam.get().role !== 'host') return;
   if (message.type === 'hello') notify(`${message.name} a rejoint le Jam`);
   if (message.type === 'add' && message.track) {
-    addedBy[message.track.id] = guest;
-    message.next ? player.playNext(message.track) : player.enqueue([message.track]);
+    insertJamTrack(message.track, guest, message.next === true);
   }
   if (message.type === 'command' && jam.get().guestsCanControl) {
     if (message.command === 'play') player.resume();

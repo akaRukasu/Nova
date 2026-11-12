@@ -7,6 +7,8 @@ let session;
 let state;
 let refreshTimer;
 let pendingSearch = 0;
+let queueSignature;
+const pendingAdditions = new Map();
 
 function parseInvite(hash) {
   const match = pattern.exec(hash);
@@ -77,12 +79,70 @@ function trackRow(track, action, by) {
   if (action) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = 'Ajouter';
+    button.textContent = '+ Ajouter';
     button.setAttribute('aria-label', 'Ajouter ' + track.title);
     button.addEventListener('click', () => action(button));
     li.append(button);
   }
   return li;
+}
+
+function formatTime(value) {
+  const seconds = Math.max(0, Math.floor(value));
+  return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+function renderProgress() {
+  const duration = state?.queue[state.index]?.duration;
+  const available = Number.isFinite(duration) && duration > 0 && Number.isFinite(state.position);
+  byId('timeline').hidden = !available;
+  if (!available) return;
+  const elapsed = state.playing ? Math.max(0, Math.min(5, (Date.now() - state.sentAt) / 1000)) : 0;
+  const position = Math.max(0, Math.min(duration, state.position + elapsed));
+  byId('progress').max = duration;
+  byId('progress').value = position;
+  byId('elapsed').textContent = formatTime(position);
+  byId('duration').textContent = formatTime(duration);
+}
+
+function trackOccurrences(id) {
+  return state?.queue.filter(track => track.id === id).length ?? 0;
+}
+
+function confirmAdditions() {
+  for (const [id, entry] of pendingAdditions) {
+    if (trackOccurrences(id) <= entry.before) continue;
+    pendingAdditions.delete(id);
+    clearTimeout(entry.timeout);
+    entry.button.textContent = '✓ Ajouté';
+    entry.button.dataset.added = 'true';
+    entry.button.setAttribute('aria-label', entry.title + ' ajouté à la file');
+    show('result-status', '« ' + entry.title + ' » ajouté à la file.');
+  }
+}
+
+async function addToQueue(track, button, connection) {
+  if (pendingAdditions.has(track.id)) return;
+  button.disabled = true;
+  button.textContent = 'Envoi…';
+  const entry = { before: trackOccurrences(track.id), button, title: track.title };
+  pendingAdditions.set(track.id, entry);
+  const retry = message => {
+    if (pendingAdditions.get(track.id) !== entry) return;
+    pendingAdditions.delete(track.id);
+    button.disabled = false;
+    button.textContent = '+ Ajouter';
+    show('result-status', message);
+  };
+  try {
+    await request('send', { event: { type: 'add', track, next: false } }, connection);
+    if (pendingAdditions.get(track.id) !== entry) return;
+    confirmAdditions();
+    if (pendingAdditions.get(track.id) !== entry) return;
+    button.textContent = 'En attente…';
+    show('result-status', 'En attente de la file de l’hôte…');
+    entry.timeout = setTimeout(() => retry('L’ajout n’a pas été confirmé par l’hôte.'), 12000);
+  } catch (error) { retry(error.message); }
 }
 
 function render() {
@@ -95,10 +155,17 @@ function render() {
   byId('playing-artist').textContent = track?.artist || 'Ajoute un titre pour lancer la musique.';
   byId('transport').hidden = !state?.guestsCanControl;
   const toggle = byId('toggle');
-  toggle.textContent = state?.playing ? 'Pause' : 'Lire';
+  toggle.setAttribute('aria-label', state?.playing ? 'Pause' : 'Lire');
   toggle.dataset.command = state?.playing ? 'pause' : 'play';
   byId('queue-empty').hidden = next.length > 0;
-  byId('queue').replaceChildren(...next.map(track => trackRow(track, undefined, state.addedBy?.[track.id])));
+  show('queue-count', next.length ? String(next.length) : '');
+  const signature = JSON.stringify(next.map(track => [track, state.addedBy?.[track.id]]));
+  if (queueSignature !== signature) {
+    queueSignature = signature;
+    byId('queue').replaceChildren(...next.map(track => trackRow(track, undefined, state.addedBy?.[track.id])));
+  }
+  renderProgress();
+  confirmAdditions();
 }
 
 function disconnect(message) {
@@ -106,6 +173,9 @@ function disconnect(message) {
   pendingSearch++;
   session = undefined;
   state = undefined;
+  queueSignature = undefined;
+  for (const entry of pendingAdditions.values()) clearTimeout(entry.timeout);
+  pendingAdditions.clear();
   byId('results').replaceChildren();
   byId('results').hidden = true;
   show('result-status', '');
@@ -122,6 +192,7 @@ async function poll(connection) {
     const update = await request('poll', { after: connection.after }, connection);
     if (connection !== session) return;
     byId('connection').textContent = 'Connecté';
+    delete byId('connection').dataset.offline;
     if (update.state) {
       connection.after = update.version;
       state = update.state;
@@ -131,6 +202,7 @@ async function poll(connection) {
     if (connection !== session) return;
     if ([403, 404].includes(error.status)) return disconnect('Ce Jam est terminé ou l’invitation a expiré.');
     byId('connection').textContent = 'Reconnexion…';
+    byId('connection').dataset.offline = 'true';
   }
   if (connection === session) refreshTimer = setTimeout(() => poll(connection), 1600);
 }
@@ -193,14 +265,7 @@ byId('search').addEventListener('submit', async event => {
   try {
     const { tracks } = await request('search', { query: byId('query').value }, connection);
     if (search !== pendingSearch || connection !== session) return;
-    byId('results').replaceChildren(...tracks.map(track => trackRow(track, async add => {
-      add.disabled = true;
-      try {
-        await request('send', { event: { type: 'add', track, next: false } }, connection);
-        add.textContent = 'Ajouté';
-        show('result-status', '« ' + track.title + ' » envoyé au lecteur de l’hôte.');
-      } catch (error) { add.disabled = false; show('result-status', error.message); }
-    })));
+    byId('results').replaceChildren(...tracks.map(track => trackRow(track, button => void addToQueue(track, button, connection))));
     byId('results').hidden = !tracks.length;
     show('result-status', tracks.length ? '' : 'Aucun morceau trouvé.');
   } catch (error) {
@@ -218,4 +283,5 @@ byId('transport').addEventListener('click', async event => {
 });
 
 landing();
+setInterval(() => { if (session) renderProgress(); }, 500);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});

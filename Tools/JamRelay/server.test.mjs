@@ -100,8 +100,12 @@ test('an invitation grants guest access to one room and expires when the host en
   assert.deepEqual(await send('search', host.invite, { room, token: guest.token, query: 'Deer Dance' }), [200, { tracks: [track] }]);
   assert.equal((await send('leave', host.invite, { room, token: host.token }))[0], 403);
   assert.equal((await send('send', host.invite, { room, token: guest.token, event: { type: 'add', track } }))[0], 200);
+  const historyTrack = { ...track, id: 'octave:played-Deer Dance|System Of A Down|Toxicity', album: 'Toxicity' };
+  assert.equal((await send('send', host.invite, { room, token: guest.token, event: { type: 'add', track: historyTrack } }))[0], 200);
+  assert.equal((await send('send', host.invite, { room, token: guest.token, event: { type: 'add', track: { ...track, id: 'octave:played-' } } }))[0], 400);
   const [, polled] = await send('poll', key, { room, token: host.token });
   assert.deepEqual(polled.events[0].event.track, track);
+  assert.deepEqual(polled.events[1].event.track, historyTrack);
   assert.equal((await send('leave', host.invite, { room, token: guest.token }))[0], 200);
   assert.equal((await send('poll', host.invite, { room, token: guest.token }))[0], 403);
   assert.equal((await send('leave', key, { room, token: host.token }))[0], 200);

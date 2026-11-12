@@ -307,7 +307,7 @@ struct JamView: View {
         let upcoming = state?.upcoming ?? []
         if !upcoming.isEmpty {
             Section("À suivre") {
-                ForEach(Array(upcoming.prefix(40).enumerated()), id: \.offset) { _, track in
+                ForEach(Array(upcoming.enumerated()), id: \.offset) { _, track in
                     row(track, addedBy: state?.addedBy[track.id])
                 }
             }

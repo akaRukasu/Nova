@@ -74,7 +74,7 @@ on('remote:command', (command: any) => {
     case 'playTracks': if (tracks.length) player.play(tracks, Number(command.index) || 0, !!command.shuffled, source,
       Math.max(0, Number(command.position) || 0), command.paused === true); break;
     case 'switchSource': if (source) player.switchSource(source); break;
-    case 'enqueue': player.enqueue(tracks); break;
+    case 'enqueue': player.enqueue(tracks, typeof command.index === 'number' && Number.isSafeInteger(command.index) ? command.index : undefined); break;
     case 'playNext': if (tracks[0]) player.playNext(tracks[0]); break;
     case 'jump': {
       const position = playerState.get().index + 1 + (Number(command.value) || 0);

@@ -338,11 +338,12 @@ class Engine {
     this.queueEdited(queue[index + 1]);
   }
 
-  enqueue(tracks: Track[]) {
+  enqueue(tracks: Track[], position?: number) {
     if (!tracks.length) return;
     if (!playerState.get().queue.length) return this.play(tracks);
     const { queue, index } = playerState.get();
-    set({ queue: [...queue, ...tracks] });
+    const at = position == null ? queue.length : Math.min(queue.length, Math.max(index + 1, position));
+    set({ queue: [...queue.slice(0, at), ...tracks, ...queue.slice(at)] });
     this.queueEdited(queue[index + 1]);
   }
 
@@ -501,20 +502,28 @@ class Engine {
 
   followJam(queue: Track[], index: number, position: number, playing: boolean) {
     const target = queue[index];
-    if (!target || isOctaveId(target.id)) return;
-    this.preferredSource = undefined;
-    queue = queue.filter((track) => !isOctaveId(track.id));
-    index = queue.indexOf(target);
-    if (currentTrack()?.id !== target.id) {
+    if (!target || (!supportsOctave && isOctaveId(target.id))) return;
+    if (!supportsOctave) {
+      queue = queue.filter(track => !isOctaveId(track.id));
+      index = queue.indexOf(target);
+    }
+    const source = isOctaveId(target.id) ? 'octave' : 'youtube';
+    const previous = playerState.get();
+    this.preferredSource = source;
+    if (previous.queue[previous.index]?.id !== target.id || previous.source !== source) {
+      this.unshuffled = null;
+      this.playlistId = undefined;
       set({ queue, index });
       this.load(position, !playing);
       return;
     }
     set({ queue, index });
-    if (playerState.get().loading) return;
-    if (Math.abs(this.deck.currentTime - position) > 1.5) this.deck.currentTime = position;
-    if (playing && this.deck.paused) this.resume();
-    if (!playing && !this.deck.paused) this.pause();
+    if (previous.queue[previous.index + 1]?.id !== queue[index + 1]?.id) this.queueEdited(previous.queue[previous.index + 1], true);
+    if (previous.loading || previous.error) return;
+    const time = this.usingOctave ? timeState.get().time : this.deck.currentTime;
+    if (Math.abs(time - position) > 1.5) this.seek(position);
+    if (playing && !previous.playing) this.resume();
+    if (!playing && previous.playing) this.pause();
   }
 
   // MARK: Chargement

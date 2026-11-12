@@ -565,15 +565,18 @@ final class PlayerModel {
         enqueue([track])
     }
 
-    func enqueue(_ tracks: [Track]) {
+    func enqueue(_ tracks: [Track], at position: Int? = nil) {
         if RemoteControl.shared.isActive {
-            Task { await RemoteControl.shared.send(["action": "enqueue"], tracks: tracks) }
+            var command: [String: Any] = ["action": "enqueue"]
+            if let position { command["index"] = position }
+            Task { await RemoteControl.shared.send(command, tracks: tracks) }
             return
         }
         guard !tracks.isEmpty else { return }
         guard current != nil else { play(tracks); return }
         let previous = upNext.first
-        queue.append(contentsOf: tracks)
+        let at = position.map { min(queue.count, max(index + 1, $0)) } ?? queue.count
+        queue.insert(contentsOf: tracks, at: at)
         queueEdited(previous)
     }
 

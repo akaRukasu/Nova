@@ -183,8 +183,7 @@ final class JamSession: NSObject {
         case .hello(let name):
             self.message = "\(name) a rejoint le Jam"
         case .add(let track, let next):
-            addedBy[track.id] = guest
-            next ? player.playNext(track) : player.enqueue(track)
+            insertJamTrack(track, guest: guest, next: next)
         case .command(let command):
             guard guestsCanControl else { return }
             switch command {
@@ -197,6 +196,16 @@ final class JamSession: NSObject {
             return
         }
         broadcastState()
+    }
+
+    private func insertJamTrack(_ track: Track, guest: String, next: Bool) {
+        if next {
+            player.playNext(track)
+        } else {
+            let pending = player.upNext.prefix { addedBy[$0.id] != nil }.count
+            player.enqueue([track], at: max(0, player.index + 1) + pending)
+        }
+        addedBy[track.id] = guest
     }
 
     @discardableResult
@@ -381,12 +390,10 @@ final class JamSession: NSObject {
     func add(_ track: Track, next: Bool = false) {
         switch role {
         case .host:
-            addedBy[track.id] = publicName
-            next ? player.playNext(track) : player.enqueue(track)
+            insertJamTrack(track, guest: publicName, next: next)
             broadcastState()
         case .guest:
             send(.add(track, next: next))
-            message = "« \(track.title) » ajouté au Jam"
         case .none:
             break
         }
@@ -488,6 +495,17 @@ final class JamSession: NSObject {
                 guard let data = try? JSONEncoder().encode(LibraryStore.HistorySnapshot.WireTrack(track)),
                       let wire = try? JSONSerialization.jsonObject(with: data) else { return }
                 payload["event"] = ["type": "add", "track": wire, "next": next]
+                Task {
+                    do {
+                        _ = try await remote.circle.request("send", fields: payload)
+                        guard self.remote?.token == remote.token else { return }
+                        self.message = "« \(track.title) » envoyé au Jam"
+                    } catch {
+                        guard self.remote?.token == remote.token else { return }
+                        self.message = error.localizedDescription
+                    }
+                }
+                return
             case .command(let command):
                 payload["event"] = ["type": "command", "command": command.rawValue]
             case .hello, .ended: return
@@ -497,7 +515,12 @@ final class JamSession: NSObject {
         }
         guard let session, !session.connectedPeers.isEmpty,
               let data = try? JSONEncoder().encode(message) else { return }
-        try? session.send(data, toPeers: session.connectedPeers, with: .reliable)
+        do {
+            try session.send(data, toPeers: session.connectedPeers, with: .reliable)
+            if case .add(let track, _) = message { self.message = "« \(track.title) » envoyé au Jam" }
+        } catch {
+            if case .add = message { self.message = "Impossible d’envoyer ce titre au Jam." }
+        }
     }
 
     fileprivate func peer(_ peer: MCPeerID, changed newState: MCSessionState) {
