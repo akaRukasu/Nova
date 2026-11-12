@@ -39,17 +39,37 @@ export function artistNames(value: string): string[] {
     .filter(Boolean);
 }
 
+function recordingCredits(track: Track) {
+  const suffix = track.title.match(/\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$/i);
+  const names = artistNames(track.artist).map(normalize).filter(Boolean);
+  const guests = artistNames(suffix?.[1] ?? suffix?.[2] ?? suffix?.[3] ?? '').map(normalize).filter(Boolean);
+  return {
+    title: normalize(suffix ? track.title.slice(0, suffix.index) : track.title),
+    artist: normalize(track.artist),
+    lead: names[0],
+    guests: [...new Set([...names.slice(1), ...guests])],
+  };
+}
+
+export function recordingSearchQueries(track: Track): string[] {
+  const identity = recordingCredits(track);
+  const lead = mainArtist(track.artist);
+  return [...new Set([
+    `${track.title} ${track.artist}`,
+    `${track.title} ${lead}`,
+    `${identity.title} ${lead}`,
+  ])];
+}
+
 export function matchRecording(wanted: Track, candidates: Track[]): Track | undefined {
-  const title = normalize(wanted.title);
-  const artist = normalize(wanted.artist);
+  const { title, artist, lead, guests } = recordingCredits(wanted);
   if (!title || !artist) return undefined;
-  const artists = artistNames(wanted.artist).map(normalize).filter(Boolean);
   const matchingCredits = candidates.filter((candidate) => {
-    if (normalize(candidate.title) !== title) return false;
-    if (normalize(candidate.artist) === artist) return true;
-    const names = artistNames(candidate.artist).map(normalize).filter(Boolean);
-    return Boolean(artists[0] && names[0] === artists[0]
-      && (names.every((name) => artists.includes(name)) || artists.every((name) => names.includes(name))));
+    const found = recordingCredits(candidate);
+    if (found.title !== title || (found.artist !== artist && (!lead || found.lead !== lead))) return false;
+    if (!found.guests.every(name => guests.includes(name)) && !guests.every(name => found.guests.includes(name))) return false;
+    if (normalize(candidate.title) === normalize(wanted.title)) return true;
+    return Boolean(wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 8);
   });
   const exact = matchingCredits.filter((candidate) =>
     !wanted.duration || !candidate.duration || Math.abs(candidate.duration - wanted.duration) <= 8);

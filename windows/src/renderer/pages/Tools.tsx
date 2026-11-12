@@ -521,7 +521,7 @@ export function SettingsPage() {
       </section>
       <section>
         <h3>À propos</h3>
-        <p className="muted">{isAndroid ? 'Nova pour Android 0.4.1' : 'Nova pour Windows 0.4.8'} · paroles LRCLIB · concerts Ticketmaster.</p>
+        <p className="muted">{isAndroid ? 'Nova pour Android 0.4.1' : 'Nova pour Windows 0.4.9'} · paroles LRCLIB · concerts Ticketmaster.</p>
       </section>
     </div>
   );

@@ -22,3 +22,14 @@ test('a long clip difference requires a matching audio release in both catalogue
   assert.equal(confirmClipRecording(babyClip, [baby], [{ ...babySong, title: '...Baby One More Time (Instrumental)' }]), undefined);
   assert.equal(confirmClipRecording(babyClip, [baby, { ...baby, id: 'octave:2' }], [babySong]), undefined);
 });
+
+test('guest credits in the title and artist line identify the same recording in both directions', () => {
+  const single = { id: 'octave:2074494067', title: 'Cross Off', artist: 'Mark Morton', album: 'Cross Off', duration: 253, square: true };
+  const previous = { ...single, id: 'octave:played-old', artist: 'Mark Morton & Chester Bennington', duration: 249 };
+  const youtube = { id: 'CDvegZR4ivI', title: 'Cross Off (avec Chester Bennington)', artist: 'Mark Morton', album: 'Anesthetic', duration: 254, square: true };
+  assert.equal(matchRecording(previous, [youtube]), youtube);
+  assert.equal(matchRecording(youtube, [single]), single);
+  assert.equal(matchRecording(previous, [{ ...youtube, title: 'Cross Off (avec autre artiste)' }]), undefined);
+  assert.equal(matchRecording(previous, [{ ...youtube, title: 'Cross Off (Live)' }]), undefined);
+  assert.equal(matchRecording(previous, [{ ...youtube, duration: 310 }]), undefined);
+});

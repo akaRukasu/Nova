@@ -156,11 +156,32 @@ actor OctaveCatalog {
             .joined(separator: " ")
     }
     nonisolated static func lead(_ value: String) -> String {
-        value.components(separatedBy: ",").first ?? value
+        names(value).first ?? value
+    }
+    private nonisolated static func names(_ value: String) -> [String] {
+        value.replacingOccurrences(of: #"\s*(?:[,;&]|\s+(?:et|and|feat\.?|ft\.?)\s+)\s*"#,
+                                   with: "|", options: .regularExpression)
+            .split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    private nonisolated static func credits(_ track: Track) -> (title: String, guests: Set<String>) {
+        let pattern = #"\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$"#
+        let artistGuests = names(track.artist).dropFirst().map(normalize)
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: track.title, range: NSRange(track.title.startIndex..<track.title.endIndex, in: track.title)),
+              let range = Range(match.range, in: track.title) else { return (normalize(track.title), Set(artistGuests)) }
+        let guests = (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: track.title) }
+            .flatMap { names(String(track.title[$0])) }.map(normalize)
+        return (normalize(String(track.title[..<range.lowerBound])), Set(artistGuests + guests))
     }
     nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
-        normalize(wanted.title) == normalize(candidate.title)
-            && normalize(lead(wanted.artist)) == normalize(lead(candidate.artist))
+        let a = credits(wanted), b = credits(candidate)
+        guard !a.title.isEmpty, a.title == b.title,
+              normalize(wanted.artist) == normalize(candidate.artist)
+                || normalize(lead(wanted.artist)) == normalize(lead(candidate.artist)),
+              a.guests.isSubset(of: b.guests) || b.guests.isSubset(of: a.guests) else { return false }
+        if normalize(wanted.title) == normalize(candidate.title) { return true }
+        guard let left = wanted.duration, let right = candidate.duration else { return false }
+        return abs(left - right) <= 8
     }
     private func suitable(_ wanted: Track, _ tracks: [Track]) -> Track? {
         let exact = tracks.filter {
@@ -174,9 +195,24 @@ actor OctaveCatalog {
     func recording(_ track: Track) async throws -> Track? {
         if Self.trackURL(track) != nil { return track }
         if let known = recordings[track.id] { return known }
-        let query = track.title + " " + Self.lead(track.artist)
-        let tracks = try await search(query, scope: .songs).flatMap(\.tracks).filter { Self.trackURL($0) != nil }
+        let lead = Self.lead(track.artist)
+        let query = track.title + " " + lead
+        let alternate = Self.credits(track).title + " " + lead
+        var shelves = try await search(query, scope: .all)
+        var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
+        if suitable(track, tracks) == nil, alternate != query {
+            let extra = try await search(alternate, scope: .all)
+            shelves += extra
+            let known = Set(tracks.map(\.id))
+            tracks += extra.flatMap(\.tracks).filter { Self.trackURL($0) != nil && !known.contains($0.id) }
+        }
         var result = suitable(track, tracks)
+        if let album = track.album, Self.normalize(result?.album ?? "") != Self.normalize(album),
+           let release = shelves.flatMap(\.items).compactMap(\.collection).first(where: {
+               $0.kind == .album && Self.normalize($0.title) == Self.normalize(album) && Self.normalize($0.subtitle) == Self.normalize(lead)
+           }), let page = try? await collection(release), let exact = suitable(track, page.tracks) {
+            result = exact
+        }
         if result == nil, !track.hasSquareArtwork {
             let possible = tracks.filter { Self.sameRecording(track, $0) && $0.duration != nil }
             if !possible.isEmpty, let songs = try? await InnerTubeClient().search(query, scope: .songs) {
@@ -196,7 +232,11 @@ actor OctaveCatalog {
     }
     func youtubeRecording(_ track: Track) async throws -> Track? {
         if !track.id.hasPrefix("octave:") { return track }
-        let shelves = try await InnerTubeClient().search(track.title + " " + Self.lead(track.artist), scope: .songs)
-        return suitable(track, shelves.flatMap(\.tracks))
+        let lead = Self.lead(track.artist)
+        for query in [track.title + " " + track.artist, Self.credits(track).title + " " + lead] {
+            let shelves = try await InnerTubeClient().search(query, scope: .songs)
+            if let found = suitable(track, shelves.flatMap(\.tracks)) { return found }
+        }
+        return nil
     }
 }

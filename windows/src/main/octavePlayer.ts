@@ -7,6 +7,7 @@ import {
 } from '../shared/octave.js';
 import type { OctaveAudioSettings, Track } from '../shared/types.js';
 import { findRecording } from './octave.js';
+import { mainArtist } from './matcher.js';
 
 const navigationOrigins = new Set([octaveOrigin, 'https://api.octavestreaming.com', 'https://discord.com']);
 const interval = 250;
@@ -23,6 +24,7 @@ type OctaveMedia = { read(): { position: number; duration: number; ended: boolea
 type Playback = {
   request: number; track: Track; source: Track; position: number; duration: number; heard: number; recorded: boolean; playing: boolean;
   stoppedAt?: number;
+  metadataChangedAt?: number;
   next?: { track: Track; source: Track };
 };
 
@@ -429,7 +431,7 @@ export class OctavePlayer {
     const id = octaveCatalogId(track.id);
     if (id && sample.id) return sample.id === id;
     return clean(track.title) === clean(sample.title)
-      && (clean(track.artist) === clean(sample.artist) || sample.artist.split(/,\s*/).some((artist) => clean(track.artist) === clean(artist)));
+      && (clean(track.artist) === clean(sample.artist) || clean(mainArtist(track.artist)) === clean(mainArtist(sample.artist)));
   }
 
   private async observe(contents: WebContents): Promise<void> {
@@ -449,6 +451,10 @@ export class OctavePlayer {
       const delta = sample.position - playback.position;
       let next: Track | undefined;
       if (!this.matches(playback.source, sample) && sample.playing) {
+        playback.metadataChangedAt ??= Date.now();
+        if (Math.abs(sample.duration - playback.duration) < 0.2
+          && sample.position > 1.5 && sample.position >= playback.position - 1
+          && Date.now() - playback.metadataChangedAt < 750) return;
         const planned = playback.next;
         playback.next = undefined;
         const key = JSON.stringify([sample.title, sample.artist, sample.album]);
@@ -462,6 +468,7 @@ export class OctavePlayer {
         playback.heard = 0;
         playback.recorded = false;
       }
+      playback.metadataChangedAt = undefined;
       if (!sample.playing && !playback.stoppedAt
         && (sample.ended || (playback.playing && playback.duration > 0 && playback.duration - playback.position < 1.5))) {
         playback.stoppedAt = Date.now();

@@ -1,6 +1,6 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
-import { confirmClipRecording, mainArtist, matchRecording, normalize } from './matcher.js';
+import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
 const base = 'https://api.octavestreaming.com/api';
@@ -100,16 +100,25 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
   if (octaveCatalogId(track.id) && track.albumId) return track;
   const cached = recordings.get(track.id);
   if (cached) return cached;
-  const queries = new Set([
-    `${track.title} ${track.artist}`, `${track.title} ${mainArtist(track.artist)}`,
-    `${normalize(track.title)} ${mainArtist(track.artist)}`,
-  ]);
+  const queries = recordingSearchQueries(track);
   const possibleAudio = new Map<string, Track>();
   for (const query of queries) {
-    const shelves = await search(query, 'song');
-    const candidates = shelves.flatMap((shelf) => shelf.items).flatMap((item) =>
+    const items = (await search(query, 'all')).flatMap((shelf) => shelf.items);
+    const candidates = items.flatMap((item) =>
       item.type === 'track' && item.track.albumId ? [item.track] : []);
-    const found = candidates.find((candidate) => candidate.id === track.id) ?? matchRecording(track, candidates);
+    const exactId = candidates.find((candidate) => candidate.id === track.id);
+    if (exactId) return rememberRecording(track.id, exactId);
+    const found = matchRecording(track, candidates);
+    const album = normalize(track.album ?? '');
+    if (album && normalize(found?.album ?? '') !== album) {
+      const release = items.flatMap(item => item.type === 'collection' ? [item.collection] : []).find(item =>
+        item.kind === 'album' && normalize(item.title) === album && normalize(item.subtitle ?? '') === normalize(mainArtist(track.artist)));
+      if (release) {
+        const page = await collection(release).catch(() => undefined);
+        const sameRelease = page && matchRecording(track, page.tracks);
+        if (sameRelease) return rememberRecording(track.id, sameRelease);
+      }
+    }
     if (found) return rememberRecording(track.id, found);
     if (track.square === false) {
       for (const candidate of candidates) {
