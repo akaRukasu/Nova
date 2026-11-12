@@ -1,6 +1,6 @@
 import { findRecording } from '../main/octave';
 import { sameRecordingCredits } from '../main/matcher';
-import { octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveTrackUrl } from '../shared/octave';
+import { octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveQueueQueries, octaveTrackUrl } from '../shared/octave';
 import type { OctaveCommand, OctavePlayback, OctaveStart } from '../shared/octave';
 import type { OctaveAudioSettings, Track } from '../shared/types';
 
@@ -159,13 +159,15 @@ export class AndroidOctavePlayer {
     const id = source && octaveCatalogId(source.id);
     if (!id || !source || source.id === active.source.id || this.active !== active) return;
     let searched = false;
-    for (let i = 0; this.active === active && i < 20; i++) {
+    const queries = octaveQueueQueries(source);
+    for (let i = 0; this.active === active && i < queries.length * 8; i++) {
+      if (i % 8 === 0) searched = false;
       if (await this.call<boolean>('queue', { id })) {
         if (this.active !== active) return;
         active.next = { track, source };
         return source.id;
       }
-      if (!searched) searched = Boolean(await this.call('search', { query: `${source.title} ${source.artist}` }));
+      if (!searched) searched = Boolean(await this.call('search', { query: queries[Math.floor(i / 8)] }));
       await wait(280);
     }
   }

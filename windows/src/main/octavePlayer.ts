@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BaseWindow, session, shell, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 import {
-  octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveTrackUrl,
+  octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveQueueQueries, octaveTrackUrl,
   type OctaveCommand, type OctavePlayback, type OctaveStart,
 } from '../shared/octave.js';
 import type { OctaveAudioSettings, Track } from '../shared/types.js';
@@ -474,12 +474,13 @@ export class OctavePlayer {
     if (new URL(contents.getURL()).pathname !== '/search') {
       await contents.executeJavaScript('document.querySelector(\'a[href="/search"]\')?.click()', true).catch(() => undefined);
     }
-    const query = JSON.stringify(`${source.title} ${source.artist}`);
+    const queries = octaveQueueQueries(source);
     let submitted = false;
-    for (let attempt = 0; attempt < 18 && ready(); attempt++) {
+    for (let attempt = 0; attempt < queries.length * 8 && ready(); attempt++) {
+      if (attempt % 8 === 0) submitted = false;
       if (await enqueue()) return ready() ? queued() : undefined;
       if (!submitted && ready()) {
-        submitted = await contents.executeJavaScript(`(${searchInOctave.toString()})(${query})`, true).catch(() => false);
+        submitted = await contents.executeJavaScript(`(${searchInOctave.toString()})(${JSON.stringify(queries[Math.floor(attempt / 8)])})`, true).catch(() => false);
       }
       await wait(350);
     }

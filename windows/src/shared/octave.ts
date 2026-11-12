@@ -29,6 +29,10 @@ export interface OctavePlayback {
 
 export const isOctaveId = (id: string) => id.startsWith(prefix);
 
+export function octaveQueueQueries(track: Track): string[] {
+  return [...new Set([`${track.title} ${track.artist}`, `"${track.title}" ${track.artist}`, `${track.artist} ${track.title}`])];
+}
+
 export function octaveId(value: unknown): string | undefined {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined;
   const id = String(value);

@@ -207,12 +207,14 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
     func enqueue(_ track: Track) async -> Bool {
         let request = generation
         guard let id = OctaveCatalog.id(track.id) else { return false }
+        let queries = [track.title + " " + track.artist, "\"" + track.title + "\" " + track.artist, track.artist + " " + track.title]
         var searched = false
-        for _ in 0..<22 {
+        for attempt in 0..<queries.count * 8 {
+            if attempt % 8 == 0 { searched = false }
             guard generation == request, !Task.isCancelled, !panel else { return false }
             if await call("queue", args: ["id": id]) as? Bool == true { return generation == request }
             if !searched {
-                searched = await call("search", args: ["query": track.title + " " + track.artist]) as? Bool == true
+                searched = await call("search", args: ["query": queries[attempt / 8]]) as? Bool == true
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
