@@ -4,7 +4,7 @@ import type { Lyrics, Track } from '../../shared/types';
 import { api, isAndroid } from '../lib/api';
 import { jam } from '../lib/jam';
 import { isLiked, library, toggleLike } from '../lib/library';
-import { currentTrack, player, playerState, timeState, waveState } from '../lib/player';
+import { currentTrack, player, playerState, timeState } from '../lib/player';
 import { open } from '../lib/router';
 import { Store, useStore } from '../lib/store';
 import { Artwork, trackArtwork } from './Artwork';
@@ -14,40 +14,19 @@ import { formatTime } from './TrackRow';
 
 export const nowPlayingOpen = new Store<false | 'artwork' | 'lyrics' | 'queue'>(false);
 
-/** Forme d'onde du titre (analyse de Nova) : la partie déjà jouée prend la couleur de la pochette. */
-function Waveform({ levels, progress }: { levels: number[]; progress: number }) {
-  const width = 600, height = 28, step = width / levels.length;
-  const played = Math.round(progress * levels.length);
-  return (
-    <svg className="waveform" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      {levels.map((level, i) => {
-        const h = Math.max(2, level * height);
-        return <rect key={i} x={i * step + step * 0.18} y={(height - h) / 2} width={step * 0.64} height={h} rx={step * 0.3}
-          className={i < played ? 'played' : ''} />;
-      })}
-    </svg>
-  );
-}
-
 function Progress({ compact }: { compact?: boolean }) {
   const { time, duration } = useStore(timeState);
-  const wave = useStore(waveState);
-  const track = useStore(playerState).queue[playerState.get().index];
   const [dragging, setDragging] = useState<number | null>(null);
   const value = dragging ?? time;
   const max = duration || 1;
-  const levels = compact && wave && wave.id === track?.id ? wave.levels : null;
   return (
-    <div className={`progress ${compact ? 'compact' : ''} ${levels ? 'has-wave' : ''}`}>
+    <div className={`progress ${compact ? 'compact' : ''}`}>
       <span className="time">{formatTime(value) || '0:00'}</span>
-      <div className="seek">
-        {levels && <Waveform levels={levels} progress={Math.min(value, max) / max} />}
-        <input type="range" min={0} max={max} step={0.5} value={Math.min(value, max)}
+      <input type="range" min={0} max={max} step={0.5} value={Math.min(value, max)}
         style={{ '--fill': `${(Math.min(value, max) / max) * 100}%` } as React.CSSProperties}
         onChange={(e) => setDragging(Number(e.target.value))}
         onMouseUp={() => { if (dragging != null) player.seek(dragging); setDragging(null); }}
         onKeyUp={() => { if (dragging != null) player.seek(dragging); setDragging(null); }} />
-      </div>
       <span className="time">{duration ? `-${formatTime(Math.max(0, duration - value)) || '0:00'}` : ''}</span>
     </div>
   );
