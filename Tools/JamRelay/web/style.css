@@ -104,6 +104,10 @@ button:disabled { opacity: .72; cursor: default; }
 .transport-button.skip-forward span::after, .transport-button.skip-back span::after { content: ""; position: absolute; right: 0; top: 2px; width: 3px; height: 14px; border-radius: 1px; background: currentColor; }
 .transport-button[data-command="pause"] span::before { width: 5px; height: 17px; border: 0; border-radius: 1.5px; background: currentColor; left: 4px; box-shadow: 8px 0 currentColor; }
 .search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; margin-top: 14px; }
+.search-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.search-heading > button { flex: none; min-height: 44px; padding-inline: 10px; font-size: .81rem; }
+.search-heading > button span { color: var(--accent-light); }
+#queue-panel { scroll-margin-top: 82px; }
 .search button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .search-icon { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor; border-radius: 50%; position: relative; }
 .search-icon::after { content: ""; position: absolute; width: 6px; height: 2px; right: -5px; bottom: -3px; transform: rotate(45deg); background: currentColor; border-radius: 1px; }

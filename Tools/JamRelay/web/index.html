@@ -62,7 +62,10 @@
         </section>
         <div class="session-content">
         <section class="panel tracks" aria-labelledby="add-title">
-          <h2 id="add-title">Ajouter un morceau</h2>
+          <header class="search-heading">
+            <h2 id="add-title">Ajouter un morceau</h2>
+            <button id="view-queue" type="button" class="quiet" hidden>Voir la file <span aria-hidden="true">↓</span></button>
+          </header>
           <form id="search" class="search">
             <input id="query" type="search" aria-label="Titre ou artiste" placeholder="Titre ou artiste sur Octave" required minlength="2" maxlength="100">
             <button class="primary"><span class="search-icon" aria-hidden="true"></span> Chercher</button>
@@ -70,7 +73,7 @@
           <p id="result-status" class="muted" role="status" hidden></p>
           <ul id="results" class="track-list" hidden></ul>
         </section>
-        <section class="panel tracks" aria-labelledby="next-title">
+        <section class="panel tracks" id="queue-panel" aria-labelledby="next-title" tabindex="-1">
           <header class="queue-heading"><h2 id="next-title">À suivre</h2><span id="queue-count" class="queue-count" hidden></span></header>
           <p id="queue-empty" class="muted">La file d’attente est vide.</p>
           <ol id="queue" class="track-list"></ol>

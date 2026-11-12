@@ -1,4 +1,4 @@
-const cacheName = 'nova-jam-shell-v2';
+const cacheName = 'nova-jam-shell-v3';
 const files = ['./', 'app.js', 'style.css', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 const urls = new Set(files.map(file => new URL(file, self.registration.scope).href));
 

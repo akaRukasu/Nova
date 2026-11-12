@@ -158,6 +158,7 @@ function render() {
   toggle.setAttribute('aria-label', state?.playing ? 'Pause' : 'Lire');
   toggle.dataset.command = state?.playing ? 'pause' : 'play';
   byId('queue-empty').hidden = next.length > 0;
+  byId('view-queue').hidden = next.length === 0;
   show('queue-count', next.length ? String(next.length) : '');
   const signature = JSON.stringify(next.map(track => [track, state.addedBy?.[track.id]]));
   if (queueSignature !== signature) {
@@ -280,6 +281,12 @@ byId('transport').addEventListener('click', async event => {
     await request('send', { event: { type: 'command', command } });
     show('status', '');
   } catch (error) { show('status', error.message); }
+});
+
+byId('view-queue').addEventListener('click', () => {
+  const panel = byId('queue-panel');
+  panel.focus({ preventScroll: true });
+  panel.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
 });
 
 landing();
