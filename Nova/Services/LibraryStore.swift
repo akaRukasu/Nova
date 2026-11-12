@@ -18,6 +18,8 @@ final class LibraryStore {
         var plays: Int
     }
     private(set) var listeningYears: [String: [String: ListeningEntry]] = [:]
+    private var historyClearedAt: Double?
+    private var historyRemoved: [String: Double] = [:]
     /// Tous les morceaux de la bibliothèque (likés, playlists, historique), sans doublons.
     private(set) var songs: [Track] = []
     /// Titres ajoutés à la bibliothèque (bouton « + »), du plus récent au plus ancien.
@@ -39,6 +41,8 @@ final class LibraryStore {
         var addedTracks: [Track]?
         var savedDates: [String: Date]?
         var listeningYears: [String: [String: ListeningEntry]]?
+        var historyClearedAt: Double?
+        var historyRemoved: [String: Double]?
     }
 
     @ObservationIgnored private let directory: URL = FileManager.default
@@ -59,6 +63,8 @@ final class LibraryStore {
             addedTracks = snapshot.addedTracks ?? []
             savedDates = snapshot.savedDates ?? [:]
             listeningYears = snapshot.listeningYears ?? [:]
+            historyClearedAt = snapshot.historyClearedAt
+            historyRemoved = snapshot.historyRemoved ?? [:]
         } else if let data = try? Data(contentsOf: directory.appendingPathComponent("recents.json")),
                   let old = try? JSONDecoder().decode([Track].self, from: data) {
             // Historique de l'étape 1.
@@ -249,13 +255,101 @@ final class LibraryStore {
     }
 
     func removeRecents(at offsets: IndexSet) {
+        let now = Date().timeIntervalSince1970 * 1000
+        for index in offsets where recents.indices.contains(index) { historyRemoved[recents[index].id] = now }
         recents.remove(atOffsets: offsets)
         save(rebuildingSongs: false)
     }
 
     func clearRecents() {
         recents = []
+        historyClearedAt = Date().timeIntervalSince1970 * 1000
+        historyRemoved = [:]
         save(rebuildingSongs: false)
+    }
+
+    struct HistorySnapshot: Codable {
+        struct WireTrack: Codable {
+            var id: String
+            var title: String
+            var artist: String
+            var album: String?
+            var duration: Double?
+            var artwork: URL?
+            var artistId: String?
+            var albumId: String?
+            var square: Bool?
+
+            init(_ track: Track) {
+                id = track.id
+                title = track.title
+                artist = track.artist
+                album = track.album
+                duration = track.duration
+                artwork = track.artworkURL
+                artistId = track.artistID
+                albumId = track.albumID
+                square = track.hasSquareArtwork
+            }
+
+            var track: Track {
+                Track(id: id, title: title, artist: artist, album: album, duration: duration,
+                      artworkURL: artwork, artistID: artistId, albumID: albumId)
+            }
+        }
+        struct Entry: Codable {
+            var track: WireTrack
+            var playedAt: Double
+        }
+        var version = 1
+        var clearedAt: Double?
+        var removed: [String: Double]?
+        var entries: [Entry]
+    }
+
+    func listeningHistory() -> HistorySnapshot {
+        HistorySnapshot(clearedAt: historyClearedAt, removed: historyRemoved,
+                        entries: recents.map {
+                            let date = stats[$0.id]?.lastPlayed?.timeIntervalSince1970 ?? 0
+                            return .init(track: .init($0), playedAt: date * 1000)
+                        })
+    }
+
+    func mergeHistory(_ incoming: HistorySnapshot) {
+        guard incoming.version == 1 else { return }
+        let local = listeningHistory()
+        let cleared = max(historyClearedAt ?? 0, incoming.clearedAt ?? 0)
+        var removed = historyRemoved
+        for (id, date) in incoming.removed ?? [:] { removed[id] = max(removed[id] ?? 0, date) }
+        removed = removed.filter { $0.value > cleared }
+        var entries: [String: HistorySnapshot.Entry] = [:]
+        for entry in local.entries + incoming.entries {
+            let id = entry.track.id
+            if (cleared > 0 && entry.playedAt <= cleared) || (removed[id].map { entry.playedAt <= $0 } ?? false) { continue }
+            if let previous = entries[id], previous.playedAt >= entry.playedAt { continue }
+            entries[id] = entry
+        }
+        let recent = entries.values.sorted {
+            $0.playedAt == $1.playedAt ? $0.track.id < $1.track.id : $0.playedAt > $1.playedAt
+        }.prefix(1000)
+        let tracks = recent.map { $0.track.track }
+        let changes = tracks != recents || cleared != (historyClearedAt ?? 0) || removed != historyRemoved
+            || recent.contains { $0.playedAt > (stats[$0.track.id]?.lastPlayed?.timeIntervalSince1970 ?? 0) * 1000 + 0.01 }
+        guard changes else { return }
+        recents = tracks
+        historyClearedAt = cleared > 0 ? cleared : nil
+        historyRemoved = removed
+        for entry in recent {
+            let id = entry.track.id
+            var info = stats[id] ?? TrackStats(playCount: 1)
+            if entry.playedAt > 0 {
+                let date = Date(timeIntervalSince1970: entry.playedAt / 1000)
+                info.lastPlayed = max(info.lastPlayed ?? date, date)
+            }
+            stats[id] = info
+        }
+        pendingWrite?.cancel()
+        writeNow()
     }
 
     // MARK: Titres likés
@@ -548,7 +642,8 @@ final class LibraryStore {
         pendingWrite = nil
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
-                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears)
+                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
+                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved)
         let directory = directory, fileURL = fileURL
         Task.detached(priority: .utility) {
             do {

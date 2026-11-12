@@ -57,6 +57,13 @@ actor OctaveCatalog {
     }
 
     struct Catalog: Decodable {
+        struct Top: Decodable {
+            let tracks: [Entry]?
+            init(from decoder: Decoder) throws {
+                // Recherche et suggestions renvoient une fiche "top", la page artiste une liste.
+                tracks = try? decoder.singleValueContainer().decode([Entry].self)
+            }
+        }
         var tracks: [Entry]?
         var albums: [Entry]?
         var artists: [Entry]?
@@ -64,7 +71,7 @@ actor OctaveCatalog {
         var album: Entry?
         var playlist: Entry?
         var artist: Entry?
-        var top: [Entry]?
+        var top: Top?
         var related: [Entry]?
         var bio: String?
         var queries: [String]?
@@ -98,7 +105,11 @@ actor OctaveCatalog {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
-        return try JSONDecoder().decode(Catalog.self, from: data)
+        do {
+            return try JSONDecoder().decode(Catalog.self, from: data)
+        } catch is DecodingError {
+            throw OctaveWebPlayerCatalogError.invalidResponse
+        }
     }
 
     private func shelves(_ result: Catalog, scope: SearchScope, charts: Bool = false) -> [Shelf] {
@@ -143,7 +154,7 @@ actor OctaveCatalog {
     func artist(_ id: String) async throws -> BrowsePage {
         guard let id = Self.id(id) else { throw NovaError.emptyPage }
         var result = try await request("artist/" + id)
-        result.tracks = result.top
+        result.tracks = result.top?.tracks
         result.artists = result.related
         return BrowsePage(header: PageHeader(title: result.artist?.name ?? "", description: result.bio,
                                               artworkURL: result.artist?.artwork), shelves: shelves(result, scope: .all))
@@ -173,12 +184,18 @@ actor OctaveCatalog {
             .flatMap { names(String(track.title[$0])) }.map(normalize)
         return (normalize(String(track.title[..<range.lowerBound])), Set(artistGuests + guests))
     }
-    nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
+    private nonisolated static func sameCredits(_ wanted: Track, _ candidate: Track) -> Bool {
         let a = credits(wanted), b = credits(candidate)
-        guard !a.title.isEmpty, a.title == b.title,
-              normalize(wanted.artist) == normalize(candidate.artist)
-                || normalize(lead(wanted.artist)) == normalize(lead(candidate.artist)),
-              a.guests.isSubset(of: b.guests) || b.guests.isSubset(of: a.guests) else { return false }
+        guard !a.title.isEmpty, a.title == b.title else { return false }
+        if normalize(wanted.artist) == normalize(candidate.artist) || normalize(lead(wanted.artist)) == normalize(lead(candidate.artist)) {
+            return a.guests.isSubset(of: b.guests) || b.guests.isSubset(of: a.guests)
+        }
+        let left = Set(names(wanted.artist).map(normalize)).union(a.guests)
+        let right = Set(names(candidate.artist).map(normalize)).union(b.guests)
+        return !left.isEmpty && !right.isEmpty && (left.isSubset(of: right) || right.isSubset(of: left))
+    }
+    nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
+        guard sameCredits(wanted, candidate) else { return false }
         if normalize(wanted.title) == normalize(candidate.title) { return true }
         guard let left = wanted.duration, let right = candidate.duration else { return false }
         return abs(left - right) <= 8
@@ -206,8 +223,11 @@ actor OctaveCatalog {
         let alternate = Self.credits(track).title + " " + lead
         var shelves = try await search(query, scope: .all)
         var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
-        if suitable(track, tracks) == nil, alternate != query {
-            let extra = try await search(alternate, scope: .all)
+        var queries = [alternate] + Self.names(track.artist).dropFirst().map { track.title + " " + $0 }
+        if let album = track.album { queries.append(album + " " + lead) }
+        var searched = Set([query])
+        for other in queries where suitable(track, tracks) == nil && searched.insert(other).inserted {
+            let extra = try await search(other, scope: .all)
             shelves += extra
             let known = Set(tracks.map(\.id))
             tracks += extra.flatMap(\.tracks).filter { Self.trackURL($0) != nil && !known.contains($0.id) }
@@ -219,10 +239,11 @@ actor OctaveCatalog {
            }), let page = try? await collection(release), let exact = suitable(track, page.tracks) {
             result = exact
         }
-        if result == nil, !track.hasSquareArtwork {
-            let possible = tracks.filter { Self.sameRecording(track, $0) && $0.duration != nil }
-            if !possible.isEmpty, let songs = try? await InnerTubeClient().search(query, scope: .songs) {
-                let canonical = songs.flatMap(\.tracks).filter { $0.hasSquareArtwork && Self.sameRecording(track, $0) }
+        if result == nil, !track.hasSquareArtwork || track.album == nil {
+            let possible = tracks.filter { Self.sameCredits(track, $0) && $0.duration != nil }
+            for audioQuery in [query] + queries where result == nil && !possible.isEmpty {
+                guard let songs = try? await InnerTubeClient().search(audioQuery, scope: .songs) else { continue }
+                let canonical = songs.flatMap(\.tracks).filter { $0.id != track.id && $0.hasSquareArtwork && Self.sameCredits(track, $0) }
                 let confirmed = possible.filter { candidate in canonical.contains { song in
                     guard let a = song.duration, let b = candidate.duration else { return false }
                     return abs(a - b) <= 3
@@ -245,4 +266,9 @@ actor OctaveCatalog {
         }
         return nil
     }
+}
+
+private enum OctaveWebPlayerCatalogError: LocalizedError {
+    case invalidResponse
+    var errorDescription: String? { "Le catalogue Octave a renvoyé une réponse illisible. Réessaie dans un instant." }
 }

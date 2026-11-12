@@ -2,9 +2,11 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
+import type { HistorySnapshot } from '../shared/historySync.js';
 import { defaultSettings } from '../shared/types.js';
 import { isOctaveId, type OctaveCommand } from '../shared/octave.js';
 import { searchConcerts } from './concerts.js';
@@ -41,6 +43,23 @@ if (safeDisplay) app.disableHardwareAcceleration();
 
 let window: BrowserWindow | null = null;
 const sendToUI = (channel: string, ...args: unknown[]) => window?.webContents.send(channel, ...args);
+const pendingHistory = new Map<string, (value: HistorySnapshot) => void>();
+function exchangeHistory(incoming: HistorySnapshot): Promise<HistorySnapshot> {
+  if (!uiReady || !window || window.isDestroyed()) return Promise.reject(new Error('Bibliothèque Nova indisponible.'));
+  return new Promise((resolve, reject) => {
+    const id = randomUUID();
+    const timer = setTimeout(() => {
+      pendingHistory.delete(id);
+      reject(new Error('La bibliothèque Nova ne répond pas.'));
+    }, 8000);
+    pendingHistory.set(id, (snapshot) => {
+      clearTimeout(timer);
+      pendingHistory.delete(id);
+      resolve(snapshot);
+    });
+    sendToUI('phone:history', id, incoming);
+  });
+}
 jam.setSender(sendToUI);
 const octavePlayer = new OctavePlayer(
   () => window,
@@ -468,7 +487,10 @@ app.whenReady().then(async () => {
     const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
     const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
     return { playlists, tracks };
-  }).catch(() => undefined);
+  }, exchangeHistory).catch(() => undefined);
+  ipcMain.handle('phone:history-result', (event, id: string, history: HistorySnapshot) => {
+    if (event.sender === window?.webContents) pendingHistory.get(id)?.(history);
+  });
   handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
   handle('phone:unpair', () => unpair());
   handle('phone:network', () => networkStatus());

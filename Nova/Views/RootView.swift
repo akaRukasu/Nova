@@ -116,6 +116,7 @@ struct RootView: View {
         }
         // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .onChange(of: player.library.historyRevision) { _, _ in PCSync.shared.libraryChanged(player.library) }
         .task {
             player.octave.warmUp()
             PCSync.shared.startHeartbeat(library: player.library)

@@ -47,6 +47,7 @@ function recordingCredits(track: Track) {
     title: normalize(suffix ? track.title.slice(0, suffix.index) : track.title),
     artist: normalize(track.artist),
     lead: names[0],
+    names: [...new Set([...names, ...guests])],
     guests: [...new Set([...names.slice(1), ...guests])],
   };
 }
@@ -58,16 +59,24 @@ export function recordingSearchQueries(track: Track): string[] {
     `${track.title} ${track.artist}`,
     `${track.title} ${lead}`,
     `${identity.title} ${lead}`,
+    ...artistNames(track.artist).slice(1).map(artist => `${track.title} ${artist}`),
   ])];
+}
+
+export function sameRecordingCredits(wanted: Track, candidate: Track): boolean {
+  const a = recordingCredits(wanted), b = recordingCredits(candidate);
+  if (!a.title || a.title !== b.title || !a.names.length || !b.names.length) return false;
+  if (a.lead === b.lead || a.artist === b.artist) {
+    return a.guests.every(name => b.guests.includes(name)) || b.guests.every(name => a.guests.includes(name));
+  }
+  return a.names.every(name => b.names.includes(name)) || b.names.every(name => a.names.includes(name));
 }
 
 export function matchRecording(wanted: Track, candidates: Track[]): Track | undefined {
   const { title, artist, lead, guests } = recordingCredits(wanted);
   if (!title || !artist) return undefined;
   const matchingCredits = candidates.filter((candidate) => {
-    const found = recordingCredits(candidate);
-    if (found.title !== title || (found.artist !== artist && (!lead || found.lead !== lead))) return false;
-    if (!found.guests.every(name => guests.includes(name)) && !guests.every(name => found.guests.includes(name))) return false;
+    if (!sameRecordingCredits(wanted, candidate)) return false;
     if (normalize(candidate.title) === normalize(wanted.title)) return true;
     return Boolean(wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 8);
   });
@@ -91,15 +100,11 @@ export function matchRecording(wanted: Track, candidates: Track[]): Track | unde
 }
 
 export function confirmClipRecording(clip: Track, candidates: Track[], songs: Track[]): Track | undefined {
-  if (clip.square !== false) return undefined;
-  const title = normalize(clip.title);
-  const artist = normalize(clip.artist);
-  if (!title || !artist) return undefined;
-  const audio = songs.filter(song => song.square && song.duration && normalize(song.title) === title
-    && normalize(mainArtist(song.artist)) === artist);
+  if (clip.square !== false && clip.album) return undefined;
+  const audio = songs.filter(song => song.id !== clip.id && song.square && song.duration && sameRecordingCredits(clip, song));
   const confirmed = candidates.filter(candidate => candidate.square && candidate.duration
-    && normalize(candidate.title) === title && normalize(candidate.artist) === artist
-    && audio.some(song => Math.abs(song.duration! - candidate.duration!) <= 3));
+    && sameRecordingCredits(clip, candidate)
+    && audio.some(song => sameRecordingCredits(song, candidate) && Math.abs(song.duration! - candidate.duration!) <= 3));
   return confirmed.length === 1 ? confirmed[0] : undefined;
 }
 

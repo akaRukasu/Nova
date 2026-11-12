@@ -52,3 +52,12 @@ test('old Octave covers request the native image size for each surface', () => {
   assert.equal(sizedArtwork(cover, 780), cover.replace('/56x56-', '/1000x1000-'));
   assert.equal(sizedArtwork(cover.replace('dzcdn.net', 'other.example'), 780), cover.replace('dzcdn.net', 'other.example'));
 });
+
+test('YouTube artist ordering and a square clip cover do not hide Joseph', () => {
+  const reordered = { ...clip, artist: 'Serj Tankian, Corey Taylor et Falling In Reverse', square: true };
+  const song = { ...clip, id: 'lKVZKG7CcMU', artist: 'Falling In Reverse, Corey Taylor et Serj Tankian',
+    duration: 250, square: true, album: 'Joseph' };
+  assert.equal(matchRecording(song, [joseph]), joseph);
+  assert.equal(confirmClipRecording(reordered, [joseph], [song]), joseph);
+  assert.equal(confirmClipRecording({ ...reordered, artist: 'Luke Holland' }, [joseph], [song]), undefined);
+});

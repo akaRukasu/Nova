@@ -412,7 +412,7 @@ struct SettingsView: View {
                     if let last = PCSync.shared.lastSync {
                         LabeledContent("Dernier envoi", value: last.formatted(date: .abbreviated, time: .shortened))
                     }
-                    Button("Envoyer maintenant") { Task { try? await PCSync.shared.sync(library: library, force: true) } }
+                    Button("Synchroniser maintenant") { Task { try? await PCSync.shared.sync(library: library, force: true) } }
                         .disabled(PCSync.shared.isSyncing)
                     Button("Dissocier", role: .destructive) { PCSync.shared.unpair() }
                 }

@@ -11,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -141,6 +142,71 @@ class NovaLink {
 
     void unpair() {
         prefs.edit().putString("token", newToken()).putBoolean("paired", false).remove("phoneName").remove("lastSync").apply();
+    }
+
+    interface HistoryCallback { void complete(String history, String error); }
+
+    void exchangeHistory(String host, int port, String token, String json, HistoryCallback callback) {
+        pool.execute(() -> {
+            try {
+                if (host == null || !host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}") || port < 1 || port > 65535
+                        || token == null || !token.matches("[0-9a-f]{32}") || json == null) {
+                    throw new IllegalArgumentException("Lien de synchronisation Nova invalide.");
+                }
+                InetAddress address = InetAddress.getByName(host);
+                if (!(address instanceof Inet4Address) || !(address.isSiteLocalAddress() || address.isLinkLocalAddress())) {
+                    throw new IllegalArgumentException("Le PC doit être sur ton réseau local.");
+                }
+                byte[] body = json.getBytes(StandardCharsets.UTF_8);
+                if (body.length > 4_000_000) throw new IllegalArgumentException("L’historique est trop volumineux.");
+                try (Socket socket = new Socket()) {
+                    socket.connect(new InetSocketAddress(address, port), 4000);
+                    socket.setSoTimeout(12000);
+                    String header = "POST /history HTTP/1.1\r\nHost: " + host + ":" + port
+                            + "\r\nConnection: close\r\nContent-Type: application/json\r\nX-Nova-Token: " + token
+                            + "\r\nX-Nova-Device: Android\r\nContent-Length: " + body.length + "\r\n\r\n";
+                    OutputStream out = socket.getOutputStream();
+                    out.write(header.getBytes(StandardCharsets.US_ASCII));
+                    out.write(body);
+                    out.flush();
+                    InputStream in = new BufferedInputStream(socket.getInputStream());
+                    ByteArrayOutputStream response = new ByteArrayOutputStream();
+                    int tail = 0;
+                    while (tail != 0x0D0A0D0A) {
+                        int value = in.read();
+                        if (value < 0 || response.size() >= 8192) throw new java.io.IOException();
+                        response.write(value);
+                        tail = (tail << 8) | value;
+                    }
+                    String[] lines = response.toString("US-ASCII").split("\r\n");
+                    if (lines[0].contains(" 403 ")) {
+                        callback.complete(null, "Le PC a refusé l’association. Copie un nouveau lien dans Nova pour Windows.");
+                        return;
+                    }
+                    int length = -1;
+                    for (String line : lines) {
+                        if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+                            length = Integer.parseInt(line.substring(15).trim());
+                        }
+                    }
+                    if (!lines[0].contains(" 200 ") || length < 1 || length > 4_000_000) {
+                        callback.complete(null, "Mets Nova à jour sur le PC pour synchroniser l’historique.");
+                        return;
+                    }
+                    byte[] payload = new byte[length];
+                    for (int offset = 0; offset < length;) {
+                        int count = in.read(payload, offset, length - offset);
+                        if (count < 0) throw new java.io.IOException();
+                        offset += count;
+                    }
+                    callback.complete(new String(payload, StandardCharsets.UTF_8), null);
+                }
+            } catch (IllegalArgumentException error) {
+                callback.complete(null, error.getMessage());
+            } catch (Exception error) {
+                callback.complete(null, "PC inaccessible. Ouvre Nova sur le PC et vérifie le réseau local.");
+            }
+        });
     }
 
     void setRemoteState(String state) {

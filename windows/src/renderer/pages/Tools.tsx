@@ -8,6 +8,7 @@ import { api, isAndroid, on, supportsOctave } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import { player } from '../lib/player';
+import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
@@ -174,6 +175,8 @@ export function PhoneTransfer() {
   const last = sync.lastSync ?? pairing?.lastSync;
   const paired = pairing?.paired || !!sync.lastSync;
   return (
+    <>
+    {isAndroid && <PCHistoryTransfer />}
     <section className="phone-transfer">
       <div>
         <h3>Depuis l’iPhone</h3>
@@ -190,6 +193,8 @@ export function PhoneTransfer() {
         )}
         <div className="row-buttons">
           <button className="button" onClick={() => void show()}><Icon name="import" size={16} /> {paired ? 'Afficher le QR code' : 'Associer l’iPhone'}</button>
+          {!isAndroid && <button className="button secondary" onClick={() => void refresh().then(found =>
+            navigator.clipboard.writeText(found.link)).then(() => setResult('Lien d’association copié. Colle-le dans Nova sur Android.')).catch(error => setError(errorText(error)))}>Copier le lien pour Android</button>}
           <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
           {paired && <button className="button secondary danger" onClick={() => void api.unpairPhone().then(refresh).then(() => setQr(undefined))}>Dissocier</button>}
         </div>
@@ -209,7 +214,37 @@ export function PhoneTransfer() {
       </div>
       {qr && <img className="qr" src={qr} data-link={pairing?.link} alt="QR code à scanner avec l’iPhone" />}
     </section>
+    </>
   );
+}
+
+function PCHistoryTransfer() {
+  const status = useStore(pcHistory);
+  const [link, setLink] = useState('');
+  const [error, setError] = useState<string>();
+  return <section className="phone-transfer">
+    <div>
+      <h3>Historique avec le PC</h3>
+      <p className="muted">{status.name
+        ? `Associé à ${status.name}. L’historique s’échange quand Nova est ouvert sur les deux appareils, sur le réseau local.`
+        : 'Sur ton PC, ouvre Importer puis copie le lien pour Android et colle-le ici pour partager ton historique.'}</p>
+      {!status.name && <div className="row-buttons">
+        <input type="password" autoComplete="off" aria-label="Lien d’association du PC" value={link}
+          placeholder="Lien d’association Nova" onChange={event => setLink(event.target.value)} />
+        <button className="button" disabled={!link.trim() || status.syncing} onClick={() => {
+          setError(undefined);
+          void pairPCHistory(link).then(() => setLink('')).catch(error => setError(errorText(error)));
+        }}>Associer le PC</button>
+      </div>}
+      {status.name && <div className="row-buttons">
+        <button className="button" disabled={status.syncing} onClick={() => void syncPCHistory()}>
+          {status.syncing ? 'Synchronisation…' : 'Synchroniser maintenant'}</button>
+        <button className="button secondary" disabled={status.syncing} onClick={unpairPCHistory}>Dissocier</button>
+      </div>}
+      {status.lastSync && <p className="success">Historique synchronisé à {new Date(status.lastSync).toLocaleTimeString('fr-FR')}.</p>}
+      {(error || status.error) && <p className="error" role="status">{error || status.error}</p>}
+    </div>
+  </section>;
 }
 
 /** Titres introuvables : nouvel essai, ou choix à la main parmi les résultats de recherche. */

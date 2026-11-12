@@ -4,8 +4,9 @@ import type {
   Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
+import { listeningHistory, mergeListeningHistory, type HistorySnapshot } from '../../shared/historySync';
 import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
-import { api, on } from './api';
+import { api, isAndroid, on } from './api';
 import { Store } from './store';
 
 export const library = new Store<LibraryState>({
@@ -38,6 +39,7 @@ export async function loadLibrary() {
   // Le compte YouTube (likes, playlists) arrive après coup : l'interface s'affiche sans l'attendre,
   // même si YouTube est lent ou ne répond pas.
   void refreshAccount();
+  if (isAndroid) void import('./pcHistory').then(module => module.startPCHistory());
 }
 
 /** Bibliothèque relue au démarrage : un élément abîmé (synchronisation interrompue…) est écarté au lieu de tout bloquer. */
@@ -129,12 +131,25 @@ export function recordPlay(track: Track, playedAt = Date.now()) {
 }
 
 export function removeRecent(id: string) {
-  update((state) => ({ ...state, recents: state.recents.filter((t) => t.id !== id) }));
+  update((state) => ({ ...state, recents: state.recents.filter((t) => t.id !== id),
+    historyChanges: { ...state.historyChanges, removed: { ...state.historyChanges?.removed, [id]: Date.now() } } }));
 }
 
 export function clearRecents() {
-  update((state) => ({ ...state, recents: [], listeningYears: {} }));
+  update((state) => ({ ...state, recents: [], listeningYears: {}, historyChanges: { clearedAt: Date.now() } }));
 }
+
+export function mergeHistory(snapshot: HistorySnapshot) {
+  const before = listeningHistory(library.get());
+  const merged = mergeListeningHistory(library.get(), snapshot);
+  const after = listeningHistory(merged);
+  if (JSON.stringify(before) !== JSON.stringify(after)) update(() => merged);
+  return after;
+}
+
+on('phone:history', (id: string, incoming: HistorySnapshot) => {
+  void window.nova.invoke('phone:history-result', id, mergeHistory(incoming));
+});
 
 export function addSearch(query: string) {
   const text = query.trim();
@@ -421,16 +436,14 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
       return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId } : p;
     });
     const replaced = new Set(merged.map((p) => p.id));
-    const lastPlayed = (t: Track) => stats[t.id]?.lastPlayed ?? 0;
-    const history = [...recents, ...state.recents].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i)
-      .sort((a, b) => lastPlayed(b) - lastPlayed(a)).slice(0, 1000);
+    const history = mergeListeningHistory({ ...state, stats }, { version: 1,
+      entries: recents.map(track => ({ track, playedAt: phoneDate(raw?.stats?.[track.id]?.lastPlayed) ?? 0 })),
+    });
     const known = new Set(state.saved.map((c) => c.id));
     return {
-      ...state,
-      stats,
+      ...history,
       liked: [...liked, ...state.liked].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i),
       playlists: [...merged, ...state.playlists.filter((p) => !replaced.has(p.id))],
-      recents: history,
       added: dedupe([...added, ...(state.added ?? [])]),
       saved: [...state.saved, ...saved.filter((c) => !known.has(c.id))],
       searches: [...state.searches, ...((raw?.searches ?? []) as string[]).filter((s) => !state.searches.includes(s))].slice(0, 30),

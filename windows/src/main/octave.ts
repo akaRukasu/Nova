@@ -1,9 +1,14 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
-import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries } from './matcher.js';
+import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries, sameRecordingCredits } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
 const base = 'https://api.octavestreaming.com/api';
+let catalogFetch: typeof fetch = (...args) => fetch(...args);
+
+export function configureOctaveCatalog(fetcher: typeof fetch) {
+  catalogFetch = fetcher;
+}
 
 interface OctaveEntry {
   id?: string | number;
@@ -29,9 +34,11 @@ interface Catalog {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(12_000) }).catch(() => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const response = await catalogFetch(`${base}${path}`, { signal: controller.signal }).catch(() => {
     throw new Error('Impossible de joindre le catalogue Octave. Vérifie ta connexion Internet.');
-  });
+  }).finally(() => clearTimeout(timeout));
   if (!response.ok) throw new Error(`Le catalogue Octave est indisponible pour cette demande (${response.status}).`);
   return response.json() as Promise<T>;
 }
@@ -96,10 +103,10 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
 
 const recordings = new Map<string, Track>();
 
-export async function findRecording(track: Track): Promise<Track | undefined> {
-  if (octaveCatalogId(track.id) && track.albumId) return track;
+export async function findRecording(track: Track, excluding?: string): Promise<Track | undefined> {
+  if (octaveCatalogId(track.id) && track.albumId && !excluding) return track;
   const cached = recordings.get(track.id);
-  if (cached) return cached;
+  if (cached && !excluding) return cached;
   const queries = recordingSearchQueries(track);
   const album = normalize(track.album ?? '');
   const lead = normalize(mainArtist(track.artist));
@@ -110,7 +117,7 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
   for (const query of new Set(queries)) {
     const items = (await search(query, 'all')).flatMap((shelf) => shelf.items);
     const candidates = items.flatMap((item) =>
-      item.type === 'track' && item.track.albumId ? [item.track] : []);
+      item.type === 'track' && item.track.albumId && item.track.id !== excluding ? [item.track] : []);
     const exactId = candidates.find((candidate) => candidate.id === track.id);
     if (exactId) return rememberRecording(track.id, exactId);
     const found = matchRecording(track, candidates);
@@ -122,26 +129,27 @@ export async function findRecording(track: Track): Promise<Track | undefined> {
       if (release) {
         checkedReleases.add(release.id);
         const page = await collection(release).catch(() => undefined);
-        const sameRelease = page && matchRecording(track, page.tracks);
+        const sameRelease = page && matchRecording(track, page.tracks.filter(candidate => candidate.id !== excluding));
         if (sameRelease) return rememberRecording(track.id, sameRelease);
       }
     }
     if (found && !track.id.startsWith('octave:played-')) return rememberRecording(track.id, found);
     fallback ??= found;
-    if (track.square === false) {
+    if (track.square === false || !track.album) {
       for (const candidate of candidates) {
-        if (candidate.square && normalize(candidate.title) === normalize(track.title)
-          && normalize(candidate.artist) === normalize(track.artist)) possibleAudio.set(candidate.id, candidate);
+        if (candidate.square && sameRecordingCredits(track, candidate)) possibleAudio.set(candidate.id, candidate);
       }
     }
   }
   if (fallback) return rememberRecording(track.id, fallback);
   if (!possibleAudio.size) return undefined;
   // Le clip peut inclure une scène ou un générique. Confirmer l'édition avec la piste audio YouTube Music.
-  const shelves = await searchYouTube(`${track.title} ${track.artist}`, 'song').catch(() => []);
-  const audio = shelves.flatMap((shelf) => shelf.items).flatMap((item) => item.type === 'track' ? [item.track] : []);
-  const confirmed = confirmClipRecording(track, [...possibleAudio.values()], audio);
-  return confirmed ? rememberRecording(track.id, confirmed) : undefined;
+  for (const query of new Set(queries)) {
+    const shelves = await searchYouTube(query, 'song').catch(() => []);
+    const audio = shelves.flatMap(shelf => shelf.items).flatMap(item => item.type === 'track' ? [item.track] : []);
+    const confirmed = confirmClipRecording(track, [...possibleAudio.values()], audio);
+    if (confirmed) return rememberRecording(track.id, confirmed);
+  }
 }
 
 function rememberRecording(id: string, found: Track): Track {

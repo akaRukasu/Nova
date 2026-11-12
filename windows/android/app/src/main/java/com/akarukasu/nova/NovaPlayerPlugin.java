@@ -491,6 +491,15 @@ public class NovaPlayerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void exchangeHistory(PluginCall call) {
+        link.exchangeHistory(call.getString("host"), call.getInt("port", 0), call.getString("token"), call.getString("history"),
+                (history, error) -> {
+                    if (error != null) call.reject(error);
+                    else call.resolve(new JSObject().put("history", history));
+                });
+    }
+
+    @PluginMethod
     public void unpair(PluginCall call) {
         link.unpair();
         call.resolve();

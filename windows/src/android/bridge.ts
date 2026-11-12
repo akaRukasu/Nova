@@ -27,6 +27,7 @@ interface NovaPlayer {
   openExternal(options: { url: string }): Promise<void>;
   isTV(): Promise<{ tv: boolean }>;
   syncInfo(): Promise<{ pcId: string; token: string; port: number; address: string; name: string; paired: boolean; phoneName?: string; lastSync?: number }>;
+  exchangeHistory(options: { host: string; port: number; token: string; history: string }): Promise<{ history: string }>;
   unpair(): Promise<void>;
   setRemoteState(options: { state: string }): Promise<void>;
   jamHost(options: { name: string }): Promise<{ port: number; addresses: string[] }>;
@@ -71,13 +72,17 @@ async function nativeFetch(input: RequestInfo | URL, init?: RequestInit): Promis
   if (typeof init?.body === 'string') data = init.body;
   else if (init?.body instanceof URLSearchParams) data = init.body.toString();
   else if (request && method !== 'GET' && method !== 'HEAD') data = await request.clone().text();
-  const response = await CapacitorHttp.request({ url, method, headers, data, responseType: 'text' });
+  const response = await CapacitorHttp.request({ url, method, headers, data, responseType: 'text',
+    connectTimeout: 12_000, readTimeout: 12_000 });
   const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
   const result = new Response(response.status === 204 || response.status === 304 ? null : body, { status: response.status, headers: response.headers });
   Object.defineProperty(result, 'url', { value: response.url ?? url });
   return result;
 }
-if (Capacitor.isNativePlatform()) Platform.shim.fetch = nativeFetch as typeof fetch;
+if (Capacitor.isNativePlatform()) {
+  Platform.shim.fetch = nativeFetch as typeof fetch;
+  octave.configureOctaveCatalog(nativeFetch as typeof fetch);
+}
 
 // MARK: Disque
 
@@ -205,6 +210,8 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
     const query = new URLSearchParams({ u: `http://${info.address}:${info.port}/sync`, t: info.token, n: info.name, id: info.pcId });
     return { link: `nova://sync?${query.toString()}`, address: `${info.address}:${info.port}`, paired: info.paired, phoneName: info.phoneName, lastSync: info.lastSync };
   },
+  'phone:exchange-history': async (host: string, port: number, token: string, history: string) =>
+    JSON.parse((await native.exchangeHistory({ host, port, token, history })).history),
   'phone:unpair': () => native.unpair(),
   'phone:network': () => ({ publicNetworks: [], allowed: true }),
   'phone:allowNetwork': () => true,

@@ -184,6 +184,7 @@ export interface LibraryState {
   searches: string[];
   stats: Record<string, TrackStats>;
   listeningYears?: Record<string, ListeningYear>;
+  historyChanges?: import('./historySync.js').HistoryChanges;
   settings: Settings;
 }
 
