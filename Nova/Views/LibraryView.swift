@@ -773,13 +773,15 @@ struct LibraryPlaylistsView: View {
         .listStyle(.plain)
         .navigationTitle("Playlists")
         .toolbar {
-            if library.playlists.count > 1 {
-                Menu {
-                    Picker("Trier les playlists", selection: $playlistSort) {
-                        ForEach(PlaylistSort.allCases, id: \.self) { sort in Text(sort.rawValue).tag(sort) }
-                    }
-                } label: { Label("Trier les playlists", systemImage: "arrow.up.arrow.down") }
-                if playlistSort == .manual { EditButton() }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if library.playlists.count > 1 {
+                    Menu {
+                        Picker("Trier les playlists", selection: $playlistSort) {
+                            ForEach(PlaylistSort.allCases, id: \.self) { sort in Text(sort.rawValue).tag(sort) }
+                        }
+                    } label: { Label("Trier les playlists", systemImage: "arrow.up.arrow.down") }
+                    if playlistSort == .manual { EditButton() }
+                }
             }
         }
         .sheet(isPresented: $showSmartEditor) {
