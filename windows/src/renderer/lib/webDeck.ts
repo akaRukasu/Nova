@@ -25,6 +25,9 @@ export class WebDeck extends EventTarget {
   private timeAt = 0;
   private speed = 1;
   private bass = 0;
+  /** Égaliseur : appliqué dès que la page du lecteur joue (son circuit audio n'existe qu'à ce moment-là). */
+  private eq: number[] = [0, 0, 0, 0, 0];
+  private eqSent = false;
   private waiting: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(private readonly number: number) {
@@ -42,6 +45,7 @@ export class WebDeck extends EventTarget {
     this.duration = NaN;
     this.ad = false;
     this.started = false;
+    this.eqSent = false;
   }
 
   get currentTime() {
@@ -85,6 +89,17 @@ export class WebDeck extends EventTarget {
     if (this.timeAt) { this.time = this.currentTime; this.timeAt = performance.now(); }
     this.speed = value;
     void call('webplayer:command', this.number, { type: 'rate', value });
+  }
+
+  setEqualizer(bands: number[]) {
+    this.eq = bands;
+    this.eqSent = false;
+    if (this.started) this.sendEqualizer();
+  }
+
+  private sendEqualizer() {
+    this.eqSent = true;
+    void call('webplayer:command', this.number, { type: 'eq', bands: this.eq });
   }
 
   /** Basses (dB, 0 = inchangées) : échange des basses pendant les transitions. */
@@ -140,7 +155,10 @@ export class WebDeck extends EventTarget {
       payload = { ...payload, type: 'playing' };
     }
     this.lastType = payload.type;
-    if (payload.type === 'playing') this.started = true;
+    if (payload.type === 'playing') {
+      this.started = true;
+      if (!this.eqSent) this.sendEqualizer();
+    }
     if (payload.type === 'playing' && this.waiting) {
       clearTimeout(this.waiting.timer);
       this.waiting.resolve();

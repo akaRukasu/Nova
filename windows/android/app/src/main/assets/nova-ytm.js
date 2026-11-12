@@ -4,7 +4,12 @@
   if (window.__nova) return;
   var expected = '', volume = 0.8, video = null, lastSent = 0;
   function currentId() { try { return new URL(location.href).searchParams.get('v') || ''; } catch (e) { return ''; } }
-  function isAd() { return !!document.querySelector('#movie_player.ad-showing, .ad-showing, .ytp-ad-player-overlay'); }
+  function isAd() {
+    if (document.querySelector('#movie_player.ad-showing, .ad-showing, .ad-interrupting')) return true;
+    var ui = document.querySelectorAll('.ytp-ad-player-overlay, .ytp-ad-player-overlay-layout, .ytp-ad-preview-container, .ytp-ad-simple-ad-badge, .ytp-ad-badge, .ytp-ad-duration-remaining, .ytp-ad-skip-button-container');
+    for (var i = 0; i < ui.length; i++) if (ui[i].offsetParent !== null) return true;
+    return false;
+  }
   function report(type) {
     if (!video) return;
     NovaBridge.post(JSON.stringify({
@@ -73,7 +78,13 @@
       }
     };
   }
-  var audio = null, measures = [];
+  var audio = null, measures = [], eqBands = [0, 0, 0, 0, 0];
+  function applyEqualizer() {
+    if (!audio || !audio.eq) return;
+    var now = audio.context.currentTime;
+    for (var i = 0; i < audio.eq.length; i++) audio.eq[i].gain.setTargetAtTime(eqBands[i] || 0, now, 0.05);
+    audio.preamp.gain.setTargetAtTime(Math.pow(10, -(Math.max.apply(null, [0].concat(eqBands)) * 0.7) / 20), now, 0.05);
+  }
   function setupAudio(element) {
     if (audio && audio.element === element) return;
     try {
@@ -81,7 +92,15 @@
       var source = context.createMediaElementSource(element);
       var bass = context.createBiquadFilter();
       bass.type = 'lowshelf'; bass.frequency.value = 200; bass.gain.value = 0;
-      source.connect(bass); bass.connect(context.destination);
+      var mute = context.createGain(), preamp = context.createGain(), eq = [], previous = bass;
+      source.connect(bass);
+      [60, 250, 1000, 4000, 12000].forEach(function (frequency, i) {
+        var filter = context.createBiquadFilter();
+        filter.type = i === 0 ? 'lowshelf' : i === 4 ? 'highshelf' : 'peaking';
+        filter.frequency.value = frequency; filter.Q.value = 1;
+        previous.connect(filter); previous = filter; eq.push(filter);
+      });
+      previous.connect(preamp); preamp.connect(mute); mute.connect(context.destination);
       var tap = context.createScriptProcessor(2048, 2, 1);
       var factor = Math.max(1, Math.round(context.sampleRate / 11025)), rate = context.sampleRate / factor;
       var meter = createMeter(rate), reduced = new Float32Array(Math.ceil(2048 / factor));
@@ -104,7 +123,8 @@
       };
       source.connect(tap); tap.connect(context.destination);
       context.resume();
-      audio = { element: element, context: context, bass: bass, frameRate: rate / 256 };
+      audio = { element: element, context: context, bass: bass, mute: mute, eq: eq, preamp: preamp, frameRate: rate / 256 };
+      applyEqualizer();
     } catch (e) {
       audio = { element: element, context: null, bass: null };
     }
@@ -120,12 +140,19 @@
   var mutedForAd = false;
   function handleAds() {
     if (!video) return;
-    if (isAd()) {
-      if (!video.muted) { video.muted = true; mutedForAd = true; }
+    var ad = isAd(), videos = document.querySelectorAll('video'), i;
+    if (audio && audio.mute) audio.mute.gain.value = ad ? 0 : 1;
+    if (ad) {
+      for (i = 0; i < videos.length; i++) if (!videos[i].muted) { videos[i].muted = true; mutedForAd = true; }
       var skip = document.querySelector(skipButtons);
       if (skip && skip.offsetParent !== null) skip.click();
-    } else if (mutedForAd) { video.muted = false; mutedForAd = false; }
+    } else if (mutedForAd) {
+      for (i = 0; i < videos.length; i++) videos[i].muted = false;
+      mutedForAd = false;
+    }
   }
+  setInterval(handleAds, 100);
+
   setInterval(function () {
     var found = document.querySelector('video');
     if (found) attach(found);
@@ -141,6 +168,7 @@
       if (c.type === 'volume') { if (c.value != null) volume = c.value; applyVolume(); }
       if (c.type === 'stop') { expected = ''; if (video) video.pause(); }
       if (c.type === 'rate' && video && c.value) { video.preservesPitch = true; video.playbackRate = c.value; }
+      if (c.type === 'eq' && c.bands) { eqBands = c.bands; applyEqualizer(); }
       if (c.type === 'bass' && audio && audio.bass && c.value != null) audio.bass.gain.setTargetAtTime(c.value, audio.context.currentTime, 0.05);
     }
   };

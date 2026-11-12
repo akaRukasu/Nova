@@ -119,6 +119,8 @@ export interface Settings {
   engine: 'auto' | 'direct' | 'web';
   /** Égaliseur de volume : les titres très forts sont baissés au niveau des autres. */
   normalizeVolume?: boolean;
+  /** Préréglage de l'égaliseur (voir equalizer.ts). */
+  equalizer?: string;
 }
 
 export const defaultSettings: Settings = {

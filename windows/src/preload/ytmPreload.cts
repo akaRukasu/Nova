@@ -8,7 +8,9 @@ let video: HTMLVideoElement | null = null;
 let lastSent = 0;
 
 const currentId = () => new URL(location.href).searchParams.get('v') ?? '';
-const isAd = () => !!document.querySelector('#movie_player.ad-showing, .ad-showing, .ytp-ad-player-overlay');
+// Publicité en cours : marques du lecteur de YouTube (classe « ad-showing », badges, compte à rebours, bouton « Passer »).
+const isAd = () => !!document.querySelector('#movie_player.ad-showing, .ad-showing, .ad-interrupting')
+  || [...document.querySelectorAll<HTMLElement>('.ytp-ad-player-overlay, .ytp-ad-player-overlay-layout, .ytp-ad-preview-container, .ytp-ad-simple-ad-badge, .ytp-ad-badge, .ytp-ad-duration-remaining, .ytp-ad-skip-button-container')].some((element) => element.offsetParent !== null);
 
 function report(type: string) {
   if (!video) return;
@@ -97,7 +99,16 @@ function createMeter(sampleRate: number) {
   };
 }
 
-let audio: { element: HTMLVideoElement; context: AudioContext; bass: BiquadFilterNode } | null = null;
+let audio: { element: HTMLVideoElement; context: AudioContext; bass: BiquadFilterNode; mute?: GainNode; eq?: BiquadFilterNode[]; preamp?: GainNode } | null = null;
+/** Égaliseur demandé par Nova (cinq bandes, dB), appliqué dès que le circuit audio existe. */
+let eqBands = [0, 0, 0, 0, 0];
+
+function applyEqualizer() {
+  if (!audio?.eq || !audio.preamp) return;
+  const now = audio.context.currentTime;
+  eqBands.forEach((gain, i) => audio!.eq![i]?.gain.setTargetAtTime(gain, now, 0.05));
+  audio.preamp.gain.setTargetAtTime(10 ** (-(Math.max(0, ...eqBands) * 0.7) / 20), now, 0.05);
+}
 let measures: number[][] = [];
 
 /** Le son de la page passe par Nova : mesuré pendant la lecture, avec un filtre des basses pour les transitions. */
@@ -110,7 +121,17 @@ function setupAudio(element: HTMLVideoElement) {
     bass.type = 'lowshelf';
     bass.frequency.value = 200;
     bass.gain.value = 0;
-    source.connect(bass).connect(context.destination);
+    // Coupure du son des publicités dans le circuit de Nova : YouTube ne peut pas la défaire.
+    const mute = context.createGain();
+    const eq = [60, 250, 1000, 4000, 12000].map((frequency, i, all) => {
+      const filter = context.createBiquadFilter();
+      filter.type = i === 0 ? 'lowshelf' : i === all.length - 1 ? 'highshelf' : 'peaking';
+      filter.frequency.value = frequency;
+      filter.Q.value = 1;
+      return filter;
+    });
+    const preamp = context.createGain();
+    eq.reduce<AudioNode>((previous, filter) => previous.connect(filter), source.connect(bass)).connect(preamp).connect(mute).connect(context.destination);
     const tap = context.createScriptProcessor(2048, 2, 1);
     const factor = Math.max(1, Math.round(context.sampleRate / 11025));
     const rate = context.sampleRate / factor;
@@ -137,7 +158,8 @@ function setupAudio(element: HTMLVideoElement) {
     source.connect(tap);
     tap.connect(context.destination);
     void context.resume();
-    audio = { element, context, bass };
+    audio = { element, context, bass, mute, eq, preamp };
+    applyEqualizer();
   } catch {
     // Son déjà relié ailleurs par la page : pas de mesure ni de filtre, la lecture continue normalement.
     audio = { element, context: null as unknown as AudioContext, bass: null as unknown as BiquadFilterNode };
@@ -157,12 +179,17 @@ let mutedForAd = false;
 
 function handleAds() {
   if (!video) return;
-  if (isAd()) {
-    if (!video.muted) { video.muted = true; mutedForAd = true; }
+  const ad = isAd();
+  if (audio?.mute) audio.mute.gain.value = ad ? 0 : 1;
+  if (ad) {
+    // Toutes les vidéos de la page (YouTube peut passer la publicité dans un autre lecteur).
+    for (const element of document.querySelectorAll('video')) {
+      if (!element.muted) { element.muted = true; mutedForAd = true; }
+    }
     const skip = document.querySelector<HTMLElement>(skipButtons);
     if (skip && skip.offsetParent !== null) skip.click();
   } else if (mutedForAd) {
-    video.muted = false;
+    for (const element of document.querySelectorAll('video')) element.muted = false;
     mutedForAd = false;
   }
 }
@@ -174,8 +201,10 @@ setInterval(() => {
   if (found && !found.paused) setupAudio(found);
   handleAds();
 }, 300);
+// Vérification plus fréquente des publicités : le son est coupé dès leurs premières notes.
+setInterval(handleAds, 100);
 
-ipcRenderer.on('ytm:command', (_event, command: { type: string; value?: number; videoId?: string; volume?: number }) => {
+ipcRenderer.on('ytm:command', (_event, command: { type: string; value?: number; videoId?: string; volume?: number; bands?: number[] }) => {
   switch (command.type) {
     case 'expect':
       expected = command.videoId ?? '';
@@ -201,6 +230,9 @@ ipcRenderer.on('ytm:command', (_event, command: { type: string; value?: number; 
     case 'rate':
       // Tempo calé sur le titre précédent, sans changer la hauteur des notes.
       if (video && command.value) { video.preservesPitch = true; video.playbackRate = command.value; }
+      break;
+    case 'eq':
+      if (command.bands) { eqBands = command.bands; applyEqualizer(); }
       break;
     case 'bass':
       if (audio?.bass && command.value != null) audio.bass.gain.setTargetAtTime(command.value, audio.context.currentTime, 0.05);

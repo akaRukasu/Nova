@@ -58,6 +58,59 @@ function useDiscoverSections() {
   return sections;
 }
 
+/** Grande carte « Reprendre l'écoute » : dernier titre écouté, pochette floutée en fond. */
+function ResumeCard({ track }: { track: Track }) {
+  const art = track.artwork?.replace(/=w\d+-h\d+/, '=w600-h600');
+  return (
+    <div className="resume-card">
+      <div className="resume-bg" style={{ backgroundImage: art ? `url("${art}")` : undefined }} />
+      <Artwork track={track} size={148} radius={10} />
+      <div className="resume-info">
+        <p className="eyebrow">Reprendre l’écoute</p>
+        <h2>{track.title}</h2>
+        <p className="resume-artist">{track.artist}</p>
+        <div className="row-buttons">
+          <button className="button" onClick={() => player.play([track])}><Icon name="play" size={16} /> Lecture</button>
+          {track.artistId && <button className="button glass" onClick={() => open({ name: 'artist', id: track.artistId!, title: track.artist })}>Voir l’artiste</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Écoutés récemment, sans répétition : un album écouté plusieurs fois n'apparaît qu'une fois. */
+function recentItems(recents: Track[]): Item[] {
+  const seen = new Set<string>();
+  const items: Item[] = [];
+  for (const track of recents) {
+    if (items.length >= 20) break;
+    if (track.albumId && track.album) {
+      if (seen.has(track.albumId)) continue;
+      seen.add(track.albumId);
+      items.push({ type: 'collection', collection: { id: track.albumId, kind: 'album', title: track.album, subtitle: track.artist, artwork: track.artwork } });
+    } else if (!seen.has(track.id)) {
+      seen.add(track.id);
+      items.push({ type: 'track', track });
+    }
+  }
+  return items;
+}
+
+/** Sélection rapide : la grille de titres de YouTube Music, sinon la radio du dernier titre écouté. */
+function useQuickPicks(seed: Track | undefined, youtube: Shelf | undefined) {
+  const [shelf, setShelf] = useState<Shelf>();
+  useEffect(() => {
+    if (youtube || !seed) return;
+    let alive = true;
+    void api.radio(seed.id).then((tracks) => {
+      if (!alive || tracks.length < 4) return;
+      setShelf({ id: 'quick-picks', title: 'Sélection rapide', layout: 'grid', items: tracks.slice(1, 25).map((track) => ({ type: 'track', track })) });
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [seed?.id, !!youtube]);
+  return youtube ?? shelf;
+}
+
 export function HomePage() {
   const state = useStore(library);
   const { data, error, loading, reload, setData } = useCached('home', () => api.home());
@@ -87,21 +140,32 @@ export function HomePage() {
     return () => observer.disconnect();
   }, [data]);
 
-  const shelves = data?.shelves ?? [];
+  const all = data?.shelves ?? [];
+  // Grille de titres de YouTube Music (« Sélection rapide ») mise en avant, juste après les mix.
+  const youtubePicks = all.find((shelf) => shelf.layout === 'grid' && shelf.items.some((i) => i.type === 'track'));
+  const quickPicks = useQuickPicks(state.recents[0], youtubePicks);
+  const shelves = all.filter((shelf) => shelf !== youtubePicks);
+  const { data: explore } = useCached('explore', () => api.explore(), 60 * 60_000);
+  const moods = explore?.shelves.find((shelf) => shelf.items.length > 6 && shelf.items.every((i) => i.type === 'category'));
   return (
-    <div className="page">
-      <PageTitle>{greeting()}</PageTitle>
-      {mixes.length > 0 && (
-        <section className="shelf">
-          <header className="shelf-header"><h2 className="link" onClick={() => open({ name: 'mix', kind: mixes[0].id })}>Tes mix <Icon name="forward" size={18} /></h2></header>
-          <div className="carousel">{mixes.map((kind) => <MixCard key={kind.id} kind={kind} />)}</div>
+    <div className="page home">
+      <div className="home-heading">
+        <PageTitle>{greeting()}</PageTitle>
+        <p className="muted home-date">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+      </div>
+      {(state.recents[0] || mixes.length > 0) && (
+        <section className="home-hero">
+          {state.recents[0] && <ResumeCard track={state.recents[0]} />}
+          {mixes.map((kind) => <MixCard key={kind.id} kind={kind} />)}
         </section>
       )}
+      {quickPicks && <ShelfView shelf={{ ...quickPicks, title: quickPicks.title || 'Sélection rapide' }} />}
       {state.recents.length > 0 && (
-        <ShelfView shelf={{ id: 'recents', title: 'Écoutés récemment', layout: 'cards', items: state.recents.slice(0, 20).map((track) => ({ type: 'track', track })) }}
+        <ShelfView shelf={{ id: 'recents', title: 'Écoutés récemment', layout: 'cards', items: recentItems(state.recents) }}
           moreRoute={{ name: 'history' }} />
       )}
       {personal.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
+      {moods && <ShelfView shelf={{ ...moods, title: 'Humeurs et genres' }} moreRoute={{ name: 'explore' }} />}
       {shelves.slice(0, 3).map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
       {discover.map((section) => (
         <div key={section.seed.id} className="discover-section">

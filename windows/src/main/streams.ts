@@ -60,6 +60,13 @@ const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 export function handleStreams() {
   protocol.handle('nova-stream', async (request) => {
     const id = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''));
+    // NOVA_TEST_AUDIO_DIR : fichiers locaux (vérification automatique de la lecture directe).
+    if (process.env.NOVA_TEST_AUDIO_DIR) {
+      const { readFile } = await import('node:fs/promises');
+      const data = await readFile(`${process.env.NOVA_TEST_AUDIO_DIR}/${id}.wav`).catch(() => null);
+      if (!data) return new Response('absent', { status: 404 });
+      return new Response(data, { headers: { 'content-type': 'audio/wav', 'access-control-allow-origin': '*', 'content-length': String(data.length) } });
+    }
     const range = request.headers.get('range') ?? 'bytes=0-';
     for (let attempt = 0; attempt < 3; attempt++) {
       try {

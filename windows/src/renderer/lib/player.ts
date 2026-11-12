@@ -6,6 +6,7 @@ import {
   type MixPlan, type TrackAnalysis,
 } from './analysis';
 import { api, isAndroid, on } from './api';
+import { createChain, eqBands } from './equalizer';
 import { after, cancel, every, type Timer } from './timers';
 import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
 import { Store } from './store';
@@ -96,7 +97,7 @@ class Engine {
       }
     }, 2000);
     this.setupMediaSession();
-    this.restoreSession();
+    // Au lancement, le lecteur est vide : rien ne joue et aucun titre n'attend dans la barre de lecture.
     window.addEventListener('beforeunload', () => this.saveSession());
     setInterval(() => this.saveSession(), 15_000);
   }
@@ -106,6 +107,8 @@ class Engine {
     this.decks.forEach((deck) => { deck.pause(); deck.removeAttribute('src'); });
     this.decks = mode === 'web' ? [new WebDeck(0), new WebDeck(1)] : [new Audio(), new Audio()];
     this.decks.forEach((deck, number) => {
+      // Lecture directe : son lisible par Web Audio (égaliseur), le flux de Nova l'autorise.
+      if (deck instanceof HTMLAudioElement) deck.crossOrigin = 'anonymous';
       deck.preload = 'auto';
       deck.volume = playerState.get().volume;
       deck.addEventListener('timeupdate', () => number === this.active && this.tick());
@@ -125,6 +128,7 @@ class Engine {
       deck.addEventListener('adchange', () => number === this.active && set({ ad: (deck as WebDeck).ad }));
       deck.addEventListener('measures', (event) => this.collect((event as CustomEvent).detail));
     });
+    this.applyEqualizer();
   }
 
   /** Change de moteur et relance le titre en cours au même endroit. */
@@ -517,6 +521,31 @@ class Engine {
     if (playerState.get().transitioning) set({ transitioning: false });
   }
 
+  // MARK: Égaliseur
+
+  private graph: { context: AudioContext; chains: Map<HTMLAudioElement, ReturnType<typeof createChain>> } | null = null;
+  private equalizer = '';
+
+  /** Préréglage choisi dans Réglages : lecteur de YouTube Music (dans sa page) ou lecture directe (Web Audio). */
+  applyEqualizer() {
+    this.equalizer = library.get().settings.equalizer ?? 'off';
+    const bands = eqBands(this.equalizer);
+    for (const deck of this.decks) if (deck instanceof WebDeck) deck.setEqualizer(bands);
+    const audio = this.decks.filter((deck): deck is HTMLAudioElement => deck instanceof HTMLAudioElement);
+    // Égaliseur jamais activé : le son ne passe pas par Web Audio (rien ne change).
+    if (!audio.length || (!this.graph && bands.every((gain) => gain === 0))) return;
+    const graph = this.graph ??= { context: new AudioContext(), chains: new Map() };
+    for (const deck of audio) {
+      let chain = graph.chains.get(deck);
+      if (!chain) {
+        chain = createChain(graph.context, graph.context.createMediaElementSource(deck), graph.context.destination);
+        graph.chains.set(deck, chain);
+      }
+      chain.set(bands);
+    }
+    void graph.context.resume();
+  }
+
   // MARK: AutoMix calé sur le tempo
 
   /** Mesures du son envoyées par le lecteur de YouTube Music pendant l'écoute. */
@@ -831,21 +860,13 @@ class Engine {
     if (!queue.length) return;
     localStorage.setItem('session', JSON.stringify({ queue: queue.slice(Math.max(0, index - 50), index + 200), id: queue[index]?.id, time }));
   }
-
-  private restoreSession() {
-    try {
-      const saved = JSON.parse(localStorage.getItem('session') ?? 'null');
-      if (!saved?.queue?.length) return;
-      const index = Math.max(0, saved.queue.findIndex((t: Track) => t.id === saved.id));
-      set({ queue: saved.queue, index });
-      setTime({ time: saved.time ?? 0 });
-    } catch {
-      // Session illisible : on repart de zéro.
-    }
-  }
 }
 
 export const player = new Engine();
+// Préréglage de l'égaliseur changé dans Réglages : appliqué tout de suite.
+library.subscribe(() => {
+  if ((library.get().settings.equalizer ?? 'off') !== (player as unknown as { equalizer: string }).equalizer) player.applyEqualizer();
+});
 // Accès pour les tests automatiques.
 (window as unknown as { novaPlayer: Engine }).novaPlayer = player;
 

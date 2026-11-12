@@ -17,12 +17,29 @@ function Entry({ route, icon, label, active }: { route: Route; icon: string; lab
   );
 }
 
+function SectionToggle({ id, label, collapsed, toggle }: { id: string; label: string; collapsed: Record<string, boolean>; toggle: (id: string) => void }) {
+  return (
+    <button className={`side-section ${collapsed[id] ? 'collapsed' : ''}`} onClick={() => toggle(id)} aria-expanded={!collapsed[id]}>
+      {label}<Icon name="chevronDown" size={12} />
+    </button>
+  );
+}
+
 export function Sidebar() {
   useStore(router);
   const state = useStore(library);
   const user = useStore(account);
   const route = currentRoute();
   const [query, setQuery] = useState('');
+  // Rubriques repliées (Bibliothèque, Playlists, Playlists partagées) : mémorisé.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('sidebarCollapsed') ?? '{}'); } catch { return {}; }
+  });
+  const toggleSection = (id: string) => setCollapsed((current) => {
+    const next = { ...current, [id]: !current[id] };
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(next));
+    return next;
+  });
   const is = (name: Route['name'], id?: string) => route.name === name && (!id || ('id' in route && route.id === id));
 
   return (
@@ -40,17 +57,17 @@ export function Sidebar() {
         <Entry route={{ name: 'concerts' }} icon="ticket" label="Concerts" active={is('concerts')} />
         <Entry route={{ name: 'jam' }} icon="jam" label="Jam" active={is('jam')} />
       </nav>
-      <div className="side-title">Bibliothèque</div>
-      <nav>
+      <div className="side-title"><SectionToggle id="library" label="Bibliothèque" collapsed={collapsed} toggle={toggleSection} /></div>
+      {!collapsed.library && <nav>
         <Entry route={{ name: 'recent' }} icon="clock" label="Ajouts récents" active={is('recent')} />
         <Entry route={{ name: 'songs' }} icon="music" label="Morceaux" active={is('songs')} />
         <Entry route={{ name: 'liked' }} icon="heart" label="Titres likés" active={is('liked')} />
         <Entry route={{ name: 'albums' }} icon="album" label="Albums et artistes" active={is('albums')} />
         <Entry route={{ name: 'history' }} icon="clock" label="Historique" active={is('history')} />
         {user.signedIn && <Entry route={{ name: 'youtubePlaylists' }} icon="radio" label="Playlists YouTube" active={is('youtubePlaylists')} />}
-      </nav>
+      </nav>}
       <div className="side-title">
-        Playlists
+        <SectionToggle id="playlists" label="Playlists" collapsed={collapsed} toggle={toggleSection} />
         <button className="icon-button" aria-label="Nouvelle playlist" onClick={(e) => showMenu(e, [
           { label: 'Nouvelle playlist…', icon: 'list', action: async () => {
             const name = await ask('Nouvelle playlist', '', 'Créer');
@@ -63,8 +80,23 @@ export function Sidebar() {
           } },
         ])}><Icon name="plus" size={16} /></button>
       </div>
+      {!collapsed.playlists && (
+      <nav className="side-playlists">
+        {(state.smartPlaylists ?? []).map((p) => (
+          <Entry key={p.id} route={{ name: 'smart', id: p.id }} icon="smart" label={p.name} active={is('smart', p.id)} />
+        ))}
+        {state.playlists.map((p) => (
+          <div key={p.id} onContextMenu={(e) => showMenu(e, [
+            { label: 'Renommer…', action: async () => { const name = await ask('Renommer la playlist', p.name, 'Renommer'); if (name) renamePlaylist(p.id, name); } },
+            { label: 'Supprimer', icon: 'trash', danger: true, action: () => { deletePlaylist(p.id); notify(`« ${p.name} » supprimée`); } },
+          ])}>
+            <Entry route={{ name: 'playlist', id: p.id }} icon="list" label={p.name} active={is('playlist', p.id)} />
+          </div>
+        ))}
+      </nav>
+      )}
       <div className="side-title">
-        Playlists partagées
+        <SectionToggle id="shared" label="Playlists partagées" collapsed={collapsed} toggle={toggleSection} />
         <button className="icon-button" aria-label="Playlist partagée" onClick={(e) => showMenu(e, user.signedIn ? [
           { label: 'Nouvelle playlist partagée…', icon: 'jam', action: async () => {
             const name = await ask('Nouvelle playlist partagée', '', 'Créer');
@@ -85,6 +117,7 @@ export function Sidebar() {
           <Icon name="plus" size={16} />
         </button>
       </div>
+      {!collapsed.shared && (
       <nav>
         {(state.shared ?? []).map((s) => (
           <div key={s.id} onContextMenu={(e) => showMenu(e, [
@@ -96,19 +129,7 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-      <nav className="side-playlists">
-        {(state.smartPlaylists ?? []).map((p) => (
-          <Entry key={p.id} route={{ name: 'smart', id: p.id }} icon="smart" label={p.name} active={is('smart', p.id)} />
-        ))}
-        {state.playlists.map((p) => (
-          <div key={p.id} onContextMenu={(e) => showMenu(e, [
-            { label: 'Renommer…', action: async () => { const name = await ask('Renommer la playlist', p.name, 'Renommer'); if (name) renamePlaylist(p.id, name); } },
-            { label: 'Supprimer', icon: 'trash', danger: true, action: () => { deletePlaylist(p.id); notify(`« ${p.name} » supprimée`); } },
-          ])}>
-            <Entry route={{ name: 'playlist', id: p.id }} icon="list" label={p.name} active={is('playlist', p.id)} />
-          </div>
-        ))}
-      </nav>
+      )}
       <div className="side-footer">
         <button className="side-entry" onClick={() => root({ name: 'import' })}><Icon name="import" size={18} /><span>Importer</span></button>
         <button className="side-entry" onClick={() => root({ name: 'settings' })}>

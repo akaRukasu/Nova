@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } from '../../shared/types';
 import { Icon } from '../components/icons';
+import { EQ_PRESETS } from '../lib/equalizer';
 import { api, isAndroid, on } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
@@ -415,6 +416,13 @@ export function SettingsPage() {
           <span className="muted small">Haute : le meilleur flux de YouTube Music, en général l’Opus (environ 160 kbit/s, plus fin que l’AAC
             à 128 kbit/s), 256 kbit/s avec YouTube Premium. Avec le lecteur officiel, la qualité est celle choisie dans les réglages de YouTube Music.</span>
         </label>
+        <label className="field">Égaliseur
+          <select value={settings.equalizer ?? 'off'} onChange={(e) => updateSettings({ equalizer: e.target.value })}>
+            {EQ_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+          </select>
+          <span className="muted small">« Amélioration du son » donne plus de présence et de relief (basses et aigus un peu relevés), comme sur
+            Apple Music. Le volume est légèrement ajusté pour ne jamais saturer. Désactivé : le son tel que YouTube le fournit.</span>
+        </label>
         <label className="field">Transitions entre les titres
           <select value={settings.transition} onChange={(e) => updateSettings({ transition: e.target.value as typeof settings.transition })}>
             <option value="automix">AutoMix (DJ)</option><option value="crossfade">Fondu enchaîné</option><option value="off">Désactivées</option>
@@ -425,7 +433,7 @@ export function SettingsPage() {
               sa première écoute ; les transitions deviennent calées dès qu’il revient.</span>
           )}
         </label>
-        <label className="toggle-row"><input type="checkbox" checked={settings.normalizeVolume !== false} onChange={(e) => updateSettings({ normalizeVolume: e.target.checked })} /> Égaliseur de volume (titres très forts baissés au niveau des autres)</label>
+        <label className="toggle-row"><input type="checkbox" checked={settings.normalizeVolume !== false} onChange={(e) => updateSettings({ normalizeVolume: e.target.checked })} /> Volume égalisé entre les titres (titres très forts baissés au niveau des autres)</label>
         {settings.transition === 'crossfade' && (
           <label className="field">Durée du fondu : {settings.crossfadeSeconds} s
             <input type="range" min={1} max={12} value={settings.crossfadeSeconds} onChange={(e) => updateSettings({ crossfadeSeconds: Number(e.target.value) })} />
@@ -438,7 +446,7 @@ export function SettingsPage() {
             <option value="direct">Flux direct</option>
           </select>
           <span className="muted small">Si YouTube refuse la lecture directe (« confirme que tu n’es pas un robot »), Nova passe tout seul au lecteur officiel
-            de YouTube Music, avec ton compte. Sans YouTube Premium, ses publicités sont diffusées.</span>
+            de YouTube Music, avec ton compte. Sans YouTube Premium, ses publicités ont le son coupé et sont passées dès que YouTube le permet.</span>
         </label>}
         <label className="toggle-row"><input type="checkbox" checked={settings.autoplayRadio} onChange={(e) => updateSettings({ autoplayRadio: e.target.checked })} /> Lecture automatique (titres similaires à la fin de la file)</label>
         <label className="toggle-row"><input type="checkbox" checked={settings.recordHistory} onChange={(e) => updateSettings({ recordHistory: e.target.checked })} /> Historique d’écoute</label>
