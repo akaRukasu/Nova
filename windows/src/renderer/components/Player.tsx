@@ -216,11 +216,13 @@ function QueuePanel() {
   const { settings } = useStore(library);
   const { autoplay } = playbackOptions(settings, state.source);
   const upcoming = state.queue.map((track, position) => ({ track, position })).slice(state.index + 1, state.index + 101);
+  const automatic = state.source === 'octave' && autoplay ? (state.autoplayQueue ?? [])
+    .filter(track => !upcoming.some(item => item.track.id === track.id || item.track.title === track.title && item.track.artist === track.artist)) : [];
   const [dragged, setDragged] = useState<number | null>(null);
   return (
     <div className="queue">
       <h3>À suivre</h3>
-      {!upcoming.length && <p className="muted">{autoplay ? 'AutoPlay enchaînera des titres similaires.' : 'La file d’attente est vide.'}</p>}
+      {!upcoming.length && !automatic.length && <p className="muted">{autoplay ? 'AutoPlay prépare les prochains titres…' : 'La file d’attente est vide.'}</p>}
       {upcoming.map(({ track, position }) => (
         <div key={`${track.id}-${position}`} className="queue-row" draggable
           onDragStart={() => setDragged(position)} onDragOver={(e) => e.preventDefault()}
@@ -233,6 +235,12 @@ function QueuePanel() {
           <button className="icon-button" onClick={() => player.removeFromQueue(position)} aria-label="Retirer"><Icon name="close" size={14} /></button>
         </div>
       ))}
+      {automatic.length > 0 && <h3>AutoPlay · Octave</h3>}
+      {automatic.map(track => <div className="queue-row" key={track.id} onDoubleClick={() => player.play([track])}>
+        <Artwork track={track} size={40} radius={5} />
+        <div className="row-text"><div className="row-title">{track.title}</div><div className="row-subtitle">{track.artist}</div></div>
+        <button className="icon-button" aria-label={`Lire ${track.title}`} onClick={() => player.play([track])}><Icon name="play" size={16} /></button>
+      </div>)}
     </div>
   );
 }

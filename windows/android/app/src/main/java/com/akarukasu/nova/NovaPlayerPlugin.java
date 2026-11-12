@@ -316,6 +316,10 @@ public class NovaPlayerPlugin extends Plugin {
         view.getSettings().setDomStorageEnabled(true);
         view.getSettings().setMediaPlaybackRequiresUserGesture(false);
         view.getSettings().setUseWideViewPort(true);
+        view.getSettings().setOffscreenPreRaster(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        }
         String script = readAsset("nova-octave.js");
         boolean documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
         if (documentStart) WebViewCompat.addDocumentStartJavaScript(view, script, Collections.singleton(OCTAVE));
@@ -354,7 +358,9 @@ public class NovaPlayerPlugin extends Plugin {
     private void attachOctaveInBackground() {
         ViewGroup parent = (ViewGroup) octave.getParent();
         if (parent != null) parent.removeView(octave);
-        octave.setAlpha(0f);
+        // Un calque à alpha zéro suspend le rendu et les animations temporelles du mix.
+        // Le lecteur reste derrière l’interface et conserve son horloge de rendu.
+        octave.setAlpha(0.01f);
         octave.setFocusable(false);
         octave.setImportantForAccessibility(WebView.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         ViewGroup root = getActivity().findViewById(android.R.id.content);

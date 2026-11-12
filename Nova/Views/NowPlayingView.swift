@@ -394,6 +394,14 @@ struct QueueView: View {
                         Text("À la fin de la file, Nova continue avec la radio du dernier titre.")
                     }
                 }
+                if player.source == .octave && !player.autoplayQueue.isEmpty {
+                    Section("AutoPlay · Octave") {
+                        ForEach(player.autoplayQueue) { track in
+                            Button { player.play([track]) } label: { TrackRow(track: track) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
             }
             .navigationTitle("File d'attente")
             .navigationBarTitleDisplayMode(.inline)

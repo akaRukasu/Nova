@@ -1,4 +1,5 @@
 import { findRecording } from '../main/octave';
+import { sameRecordingCredits } from '../main/matcher';
 import { octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveTrackUrl } from '../shared/octave';
 import type { OctaveCommand, OctavePlayback, OctaveStart } from '../shared/octave';
 import type { OctaveAudioSettings, Track } from '../shared/types';
@@ -7,6 +8,8 @@ type Sample = {
   id?: string; title: string; artist: string; album?: string; artwork?: string;
   position: number | null; duration: number; playing: boolean; audible: boolean; ended: boolean;
   blocked?: 'sign-in' | 'interaction';
+  upcoming?: Track[];
+  mixing?: boolean;
 };
 type Playback = {
   request: number; track: Track; source: Track; position: number; heard: number; recorded: boolean; playing: boolean;
@@ -14,11 +17,9 @@ type Playback = {
 };
 const settingsURL = octaveOrigin + '/settings';
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const clean = (value: string) => value.normalize('NFKC').trim().toLowerCase();
 const matches = (track: Track, sample: Sample) => sample.id && octaveCatalogId(track.id)
-  ? octaveCatalogId(track.id) === sample.id
-  : clean(track.title) === clean(sample.title)
-    && [sample.artist, sample.artist.split(/,| & /)[0]].some(artist => clean(track.artist) === clean(artist));
+  ? octaveCatalogId(track.id) === sample.id && sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist})
+  : sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist});
 
 export class AndroidOctavePlayer {
   settings = octaveAudioDefaults;
@@ -183,6 +184,12 @@ export class AndroidOctavePlayer {
         return;
       }
       if (sample.position == null || !sample.title) return;
+      if (sample.mixing) {
+        if (matches(active.source, sample)) active.position = sample.position;
+        this.publish({request:active.request,time:active.position,duration:active.source.duration ?? sample.duration,
+          playing:sample.playing,mixing:true,upcoming:sample.upcoming});
+        return;
+      }
       let next: Track | undefined;
       if (sample.playing && !matches(active.source, sample)) {
         const planned = active.next;
@@ -203,7 +210,8 @@ export class AndroidOctavePlayer {
       active.position = sample.position;
       active.playing = sample.playing;
       if (ended) await this.stop();
-      this.publish({ request: active.request, time: sample.position, duration: sample.duration, playing: sample.playing, track: next, ended });
+      this.publish({ request: active.request, time: sample.position, duration: sample.duration, playing: sample.playing, track: next, ended,
+        upcoming: sample.upcoming, mixing: sample.mixing });
       if (!next && !active.recorded && sample.audible && elapsed > 0 && elapsed < 2) {
         active.heard += elapsed;
         if (active.heard >= 5) { active.recorded = true; this.record(active.track); }

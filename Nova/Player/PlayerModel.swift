@@ -32,6 +32,7 @@ final class PlayerModel {
     private(set) var currentIsVideoOnly = false
     /// Transition AutoMix / fondu en cours (badge dans le lecteur).
     private(set) var isTransitioning = false
+    private(set) var autoplayQueue: [Track] = []
     var errorMessage: String?
     private(set) var source: PlaybackSource = .octave
     var showsOctaveAccount = false
@@ -886,6 +887,7 @@ final class PlayerModel {
         try Task.checkCancellation()
         guard octaveSession == session else { throw CancellationError() }
         octaveTrack = recording
+        autoplayQueue = []
         isLoading = false
         isPlaying = state.playing
         if state.duration > 0 { duration = state.duration }
@@ -916,6 +918,17 @@ final class PlayerModel {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, !Task.isCancelled, octaveSession == session, let selected = octaveTrack else { return }
                 guard let sample = await octave.sample(), !Task.isCancelled, octaveSession == session else { continue }
+                if let upcoming = sample.upcoming {
+                    let tracks = upcoming.map(\.track)
+                    if autoplayQueue != tracks { autoplayQueue = tracks }
+                }
+                if let mixing = sample.mixing { isTransitioning = mixing }
+                if sample.mixing == true {
+                    if sample.matches(selected), let position = sample.position { currentTime = position }
+                    isPlaying = sample.playing
+                    updateNowPlaying()
+                    continue
+                }
                 if sample.blocked == "sign-in" {
                     await octave.stop()
                     isPlaying = false

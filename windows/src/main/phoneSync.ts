@@ -166,7 +166,7 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
   port = (server.address() as { port: number }).port;
   try {
     bonjour = new Bonjour();
-    service = bonjour.publish({ name: `Nova ${os.hostname()}`.slice(0, 60), type: 'nova-sync', port, txt: { id: pairing.pcId } });
+    service = bonjour.publish({ name: `Nova ${os.hostname().slice(0, 42)} ${pairing.pcId.slice(0, 8)}`, type: 'nova-sync', port, txt: { id: pairing.pcId } });
   } catch {
     // Bonjour indisponible : l'adresse mémorisée par l'iPhone sert de secours.
   }

@@ -52,7 +52,27 @@
       playing: session?.playbackState === 'playing' || Boolean(audio && !audio.paused && !audio.ended),
       audible: Boolean(audio && !audio.paused && !audio.muted && audio.readyState >= 2),
       ended: Boolean(audio?.ended), blocked: blocked(),
+      mixing: Boolean(document.querySelector('[data-automix-indicator]')),
+      upcoming: upcoming(),
     };
+  }
+
+  function upcoming() {
+    const save = buttons('Save queue as playlist')[0];
+    if (!save) {
+      buttons('Queue').find(button => !button.closest('main'))?.click();
+      return [];
+    }
+    return [...document.querySelectorAll('[data-track-id]')].filter(row =>
+      row.querySelector('button[aria-label="Remove from queue"]') && / · Autoplay/.test(row.textContent))
+      .slice(0, 30).flatMap(row => {
+        const name = row.querySelector('button > div > p:first-child > span.truncate')?.textContent?.trim();
+        const artist = row.querySelector('button > div > p:nth-child(2)')?.cloneNode(true);
+        artist?.querySelectorAll('span').forEach(node => node.remove());
+        const id = row.getAttribute('data-track-id');
+        if (!name || !artist?.textContent?.trim() || !/^\d{1,20}$/.test(id)) return [];
+        return [{id:'octave:'+id,title:name,artist:artist.textContent.trim(),artwork:row.querySelector('img')?.src,square:true}];
+      });
   }
 
   function settings(options) {

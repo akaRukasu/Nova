@@ -32,6 +32,7 @@ export interface PlayerState {
   ad: boolean;
   mode: EngineMode;
   source?: PlaybackSource;
+  autoplayQueue?: Track[];
   sleepAt?: number;
   error?: string;
 }
@@ -215,7 +216,7 @@ class Engine {
     this.octaveNext = undefined;
     this.octaveLoaded = false;
     this.octaveSignIn = false;
-    set({ source: 'octave', loading: !paused, playing: false, ad: false, error: undefined });
+    set({ source: 'octave', loading: !paused, playing: false, ad: false, error: undefined, autoplayQueue: [] });
     this.dropPreloaded();
     this.deck.pause();
     this.deck.removeAttribute('src');
@@ -256,6 +257,10 @@ class Engine {
 
   private updateOctave(status: OctavePlayback) {
     if (!this.usingOctave || status.request !== this.octaveRequest || !this.octaveLoaded) return;
+    if (status.upcoming && JSON.stringify(status.upcoming) !== JSON.stringify(playerState.get().autoplayQueue)) {
+      set({ autoplayQueue: status.upcoming });
+    }
+    if (typeof status.mixing === 'boolean' && status.mixing !== playerState.get().transitioning) set({ transitioning: status.mixing });
     if (status.signIn) {
       this.octaveLoaded = false;
       this.octaveSignIn = true;

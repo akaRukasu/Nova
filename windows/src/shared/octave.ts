@@ -22,6 +22,8 @@ export interface OctavePlayback {
   ended?: boolean;
   signIn?: boolean;
   track?: Track;
+  upcoming?: Track[];
+  mixing?: boolean;
 }
 
 export const isOctaveId = (id: string) => id.startsWith(prefix);

@@ -7,18 +7,19 @@ import {
 } from '../shared/octave.js';
 import type { OctaveAudioSettings, Track } from '../shared/types.js';
 import { findRecording } from './octave.js';
-import { mainArtist } from './matcher.js';
+import { sameRecordingCredits } from './matcher.js';
 
 const navigationOrigins = new Set([octaveOrigin, 'https://api.octavestreaming.com', 'https://discord.com']);
 const interval = 250;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const clean = (value: string) => value.normalize('NFKC').trim().toLocaleLowerCase('fr');
 
 type Sample = {
   id?: string; title: string; artist: string; album?: string; artwork?: string; position?: number; duration: number; playing: boolean;
   blocked?: 'sign-in' | 'interaction';
   targetRow?: boolean;
   ended?: boolean;
+  upcoming?: Track[];
+  mixing?: boolean;
 };
 type OctaveMedia = { read(): { position: number; duration: number; ended: boolean } | undefined; seek(seconds: number): boolean };
 type Playback = {
@@ -37,6 +38,20 @@ function readPlayback(targetId?: string): Sample {
     .find((slider) => slider.getClientRects().length && Number(slider.max) > 0);
   const gate = document.querySelector('[aria-label="Link Discord to unlock Octave"]');
   const notice = document.querySelector('[aria-label="Welcome to Octave"], #owner-note-title');
+  const queueOpen = Boolean(document.querySelector('button[aria-label="Save queue as playlist"]'));
+  if (!queueOpen && player?.playbackState === 'playing') {
+    [...document.querySelectorAll<HTMLButtonElement>('button[aria-label="Queue"]')].find(button => !button.closest('main'))?.click();
+  }
+  const upcoming: Track[] = queueOpen ? [...document.querySelectorAll<HTMLElement>('[data-track-id]')]
+    .filter(row => row.querySelector('button[aria-label="Remove from queue"]') && / · Autoplay/.test(row.textContent ?? ''))
+    .slice(0, 30).flatMap(row => {
+      const title = row.querySelector('button > div > p:first-child > span.truncate')?.textContent?.trim();
+      const artist = row.querySelector('button > div > p:nth-child(2)')?.cloneNode(true) as HTMLElement | undefined;
+      artist?.querySelectorAll('span').forEach(node => node.remove());
+      const id = row.dataset.trackId;
+      return title && artist?.textContent?.trim() && id && /^\d{1,20}$/.test(id)
+        ? [{id:'octave:'+id,title,artist:artist.textContent.trim(),artwork:row.querySelector('img')?.src,square:true}] : [];
+    }) : [];
   return {
     id: document.querySelector<HTMLElement>('[data-track-id][data-active="true"]')?.dataset.trackId,
     title: metadata?.title ?? '', artist: metadata?.artist ?? '',
@@ -47,6 +62,8 @@ function readPlayback(targetId?: string): Sample {
     ended: media?.ended,
     blocked: gate?.getClientRects().length ? 'sign-in' : notice?.getClientRects().length ? 'interaction' : undefined,
     targetRow: targetId ? Boolean(document.querySelector(`main [data-track-id="${targetId}"]`)) : undefined,
+    upcoming,
+    mixing: Boolean(document.querySelector('[data-automix-indicator]')),
   };
 }
 
@@ -327,15 +344,15 @@ export class OctavePlayer {
     return this.preparing;
   }
 
-  async play(track: Track, request: number, volume: number, position: number): Promise<OctaveStart> {
+  async play(track: Track, request: number, volume: number, position: number, excluding?: string): Promise<OctaveStart> {
     const previous = this.playback;
     const paused = this.stop();
     const operation = this.operation;
     this.hide();
-    const selected = await findRecording(track);
+    const selected = await findRecording(track, excluding);
     if (this.operation !== operation) return 'cancelled';
     const id = selected && octaveCatalogId(selected.id);
-    if (!selected || !id) return 'not-found';
+    if (!selected || !id) return excluding ? 'unavailable' : 'not-found';
     const contents = this.contents();
     const url = new URL(octaveTrackUrl(selected));
     let sample: Sample | undefined;
@@ -384,6 +401,7 @@ export class OctavePlayer {
     }
     if (!sample || sample.position === undefined) {
       this.stop();
+      if (!excluding) return this.play(track, request, volume, position, selected.id);
       return 'unavailable';
     }
     await this.runControl(contents, { type: 'volume', value: volume });
@@ -407,6 +425,9 @@ export class OctavePlayer {
       if (sample?.blocked) return sample;
       const matches = sample && this.matches(track, sample);
       if (matches && sample.playing && sample.position !== undefined) return sample;
+      if (matches && !sample.playing && sentAt && Date.now() - sentAt >= 900) {
+        await this.runControl(contents, { type: 'play' });
+      }
       if ((!matches || !sample.targetRow) && Date.now() - start >= 4500) return;
       if (!sentAt || (!retried && !matches && Date.now() - sentAt >= 1800)) {
         const sent = await contents.executeJavaScript(`(${selectTrack.toString()})(${JSON.stringify(id)}, ${Boolean(sentAt)})`, true).catch(() => false);
@@ -483,9 +504,8 @@ export class OctavePlayer {
 
   private matches(track: Track, sample: Sample): boolean {
     const id = octaveCatalogId(track.id);
-    if (id && sample.id) return sample.id === id;
-    return clean(track.title) === clean(sample.title)
-      && (clean(track.artist) === clean(sample.artist) || clean(mainArtist(track.artist)) === clean(mainArtist(sample.artist)));
+    if (id && sample.id && sample.id !== id) return false;
+    return sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist});
   }
 
   private async observe(contents: WebContents): Promise<void> {
@@ -502,6 +522,14 @@ export class OctavePlayer {
         return;
       }
       if (!sample.title || sample.position === undefined) return;
+      if (sample.mixing) {
+        // Octave peut publier les métadonnées du titre entrant avant la fin du fondu.
+        // Attendre la fin de sa transition avant de déplacer la file Nova.
+        if (this.matches(playback.source, sample)) playback.position = sample.position;
+        this.status({request:playback.request,time:playback.position,duration:playback.duration,
+          playing:sample.playing, mixing:true, upcoming:sample.upcoming});
+        return;
+      }
       const delta = sample.position - playback.position;
       let next: Track | undefined;
       if (!this.matches(playback.source, sample) && sample.playing) {
@@ -536,7 +564,8 @@ export class OctavePlayer {
       playback.playing = sample.playing;
       playback.position = sample.position;
       playback.duration = sample.duration || playback.duration;
-      this.status({ request: playback.request, time: sample.position, duration: playback.duration, playing: sample.playing, track: next });
+      this.status({ request: playback.request, time: sample.position, duration: playback.duration, playing: sample.playing, track: next,
+        upcoming: sample.upcoming, mixing: sample.mixing });
       if (!next && !playback.recorded && sample.playing && contents.isCurrentlyAudible() && delta > 0 && delta < 2) {
         playback.heard += delta;
         if (playback.heard >= 5) {

@@ -15,6 +15,13 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
     struct Sample: Decodable {
+        struct Upcoming: Decodable {
+            var id: String
+            var title: String
+            var artist: String
+            var artwork: URL?
+            var track: Track { Track(id: id, title: title, artist: artist, artworkURL: artwork) }
+        }
         var id: String?
         var title: String
         var artist: String
@@ -26,6 +33,8 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var audible: Bool
         var ended: Bool
         var blocked: String?
+        var upcoming: [Upcoming]?
+        var mixing: Bool?
 
         func matches(_ track: Track) -> Bool {
             if let id, let expected = OctaveCatalog.id(track.id) { return id == expected }
