@@ -188,7 +188,7 @@ final class LibraryStore {
             let date = savedDates[album.id] ?? .distantPast
             let index = byID[album.id] ?? groups.firstIndex {
                 $0.title.localizedStandardCompare(album.title) == .orderedSame
-                    && $0.artist.localizedStandardCompare(album.subtitle ?? "") == .orderedSame
+                    && $0.artist.localizedStandardCompare(album.subtitle) == .orderedSame
             }
             if let index {
                 groups[index].added = max(groups[index].added, date)

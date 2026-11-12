@@ -669,12 +669,32 @@ struct LibraryPlaylistsView: View {
     @State private var showSmartEditor = false
     @AppStorage("novaPlaylistSort") private var playlistSort = PlaylistSort.manual
 
-    private enum PlaylistSort: String, CaseIterable {
+    private enum PlaylistSort: String, CaseIterable, Identifiable {
         case manual = "Ordre manuel"
         case az = "Nom A à Z"
         case za = "Nom Z à A"
         case played = "Écoutées récemment"
         case added = "Ajoutées récemment"
+
+        var id: String { rawValue }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(PlaylistSort.allCases) { sort in
+                Button {
+                    playlistSort = sort
+                } label: {
+                    if sort == playlistSort {
+                        Label(sort.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(sort.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Label("Trier · " + playlistSort.rawValue, systemImage: "arrow.up.arrow.down")
+        }
     }
 
     private var orderedPlaylists: [UserPlaylist] {
@@ -695,6 +715,7 @@ struct LibraryPlaylistsView: View {
     var body: some View {
         let playlists = orderedPlaylists
         List {
+            if playlists.count > 1 { sortMenu }
             Button {
                 router.newPlaylistTracks = []
             } label: {
@@ -758,11 +779,14 @@ struct LibraryPlaylistsView: View {
                         }
                     }
                 }
+                .moveDisabled(playlistSort != .manual)
             }
             .onDelete { offsets in
                 for index in offsets { library.deletePlaylist(playlists[index].id) }
             }
-            .onMove(perform: playlistSort == .manual ? library.movePlaylists : nil)
+            .onMove { from, to in
+                if playlistSort == .manual { library.movePlaylists(from: from, to: to) }
+            }
             ForEach(library.saved.filter { $0.kind == .playlist }) { collection in
                 NavigationLink(value: Route.collection(collection)) {
                     CollectionRow(collection: collection)
@@ -772,18 +796,7 @@ struct LibraryPlaylistsView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Playlists")
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if library.playlists.count > 1 {
-                    Menu {
-                        Picker("Trier les playlists", selection: $playlistSort) {
-                            ForEach(PlaylistSort.allCases, id: \.self) { sort in Text(sort.rawValue).tag(sort) }
-                        }
-                    } label: { Label("Trier les playlists", systemImage: "arrow.up.arrow.down") }
-                    if playlistSort == .manual { EditButton() }
-                }
-            }
-        }
+        .toolbar { if library.playlists.count > 1 { EditButton() } }
         .sheet(isPresented: $showSmartEditor) {
             SmartPlaylistEditor(playlist: SmartPlaylist(name: "Playlist intelligente"))
         }
