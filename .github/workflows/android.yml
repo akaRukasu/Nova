@@ -4,6 +4,13 @@ on:
   push:
     paths:
       - "windows/**"
+      - "Nova/Resources/nova-octave.js"
+      - ".github/workflows/android.yml"
+  pull_request:
+    branches: [etape-2]
+    paths:
+      - "windows/**"
+      - "Nova/Resources/nova-octave.js"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -16,6 +23,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'push' || github.ref_name != 'codex/nova-mobile-octave'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -79,7 +87,7 @@ jobs:
           ls -la ../Nova-Android.apk
 
       - name: Publier
-        if: github.ref_name != 'codex/nova-mobile-octave'
+        if: github.event_name != 'pull_request' && github.ref_name != 'codex/nova-mobile-octave'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -93,7 +101,7 @@ jobs:
             --prerelease
 
       - name: Garder l’APK de validation
-        if: github.ref_name == 'codex/nova-mobile-octave'
+        if: github.event_name == 'pull_request' || github.ref_name == 'codex/nova-mobile-octave'
         uses: actions/upload-artifact@v4
         with:
           name: Nova-Android
