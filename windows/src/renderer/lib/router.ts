@@ -14,6 +14,7 @@ export type Route =
   | { name: 'songs' }
   | { name: 'liked' }
   | { name: 'history' }
+  | { name: 'wrapped' }
   | { name: 'albums' }
   | { name: 'recent' }
   | { name: 'youtubePlaylists' }

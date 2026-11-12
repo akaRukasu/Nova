@@ -19,16 +19,18 @@ struct Track: Identifiable, Codable, Hashable {
     }
 
     var shareURL: URL {
-        URL(string: "https://music.youtube.com/watch?v=\(id)")!
+        if id.hasPrefix("octave:") { return OctaveCatalog.trackURL(self) ?? OctaveCatalog.searchURL(self) }
+        return URL(string: "https://music.youtube.com/watch?v=\(id)")!
     }
 
     /// Vrai titre musical avec pochette carrée (les clips n'ont qu'une miniature 16:9).
     var hasSquareArtwork: Bool {
-        artworkURL?.host?.contains("googleusercontent") == true
+        artworkURL?.host?.contains("googleusercontent") == true || id.hasPrefix("octave:")
     }
 
     /// Miniatures 16:9 de la vidéo, de la meilleure à la plus petite, puis la pochette.
     var videoThumbnailURLs: [URL] {
+        if id.hasPrefix("octave:") { return artworkURL.map { [$0] } ?? [] }
         let names = ["maxresdefault.jpg", "hq720.jpg", "sddefault.jpg"]
         var urls = names.compactMap { URL(string: "https://i.ytimg.com/vi/\(id)/\($0)") }
         if let artworkURL { urls.append(artworkURL) }
@@ -43,6 +45,7 @@ struct Track: Identifiable, Codable, Hashable {
     /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées). Sans pochette carrée,
     /// la vraie pochette HD est d'abord cherchée sur YouTube Music (voir `ArtworkResolver`).
     var squareArtworkURLs: [URL] {
+        if id.hasPrefix("octave:") { return artworkURL.map { [$0] } ?? [] }
         var urls: [URL] = []
         if hasSquareArtwork, let artworkURL { urls.append(artworkURL) }
         if !hasSquareArtwork, let placeholder = ArtworkResolver.placeholderURL(for: id) { urls.append(placeholder) }

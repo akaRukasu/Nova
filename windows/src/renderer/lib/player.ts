@@ -1,11 +1,12 @@
 // Lecteur : file d'attente, aléatoire, répétition, AutoMix / fondu enchaîné (deux lecteurs audio),
 // reprise automatique si le flux coupe, commandes multimédias de Windows, minuterie.
 import type { Track } from '../../shared/types';
+import { isOctaveId, type OctavePlayback, type PlaybackSource } from '../../shared/octave';
 import {
   analyzeMeasures, analyzeSamples, bassSwap, gainFor, mixVolumes, planMix, saveAnalysis, savedAnalysis,
   type MixPlan, type TrackAnalysis,
 } from './analysis';
-import { api, isAndroid, on } from './api';
+import { api, isAndroid, on, supportsOctave } from './api';
 import { createChain, eqBands } from './equalizer';
 import { after, cancel, every, type Timer } from './timers';
 import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
@@ -29,6 +30,7 @@ export interface PlayerState {
   /** Publicité de YouTube en cours (lecteur officiel, compte sans Premium). */
   ad: boolean;
   mode: EngineMode;
+  source?: PlaybackSource;
   sleepAt?: number;
   error?: string;
 }
@@ -87,9 +89,23 @@ class Engine {
   private preloaded: { id: string; deck: Deck; ready: boolean } | null = null;
   private analyzing = new Set<string>();
   private analysisChain: Promise<unknown> = Promise.resolve();
+  private octaveRequest = 0;
+  private octaveLoaded = false;
+  private octaveSignIn = false;
+  private octaveNext?: { id: string; recordingId: string };
+  private preferredSource?: PlaybackSource;
+  private loadRequest = 0;
+  private youtubeTrack?: Track;
+  private get usingOctave() { return playerState.get().source === 'octave'; }
 
   constructor() {
     this.createDecks(playerState.get().mode);
+    if (supportsOctave) {
+      on('octave:status', (status: OctavePlayback) => this.updateOctave(status));
+      on('octave:connected', () => {
+        if (this.usingOctave && this.octaveSignIn) this.resume();
+      });
+    }
     // Surveillance : flux bloqué plus de 10 s → relancé au même endroit (lien neuf si besoin).
     setInterval(() => {
       if (this.stalledSince && playerState.get().playing && !(this.deck as WebDeck).ad && Date.now() - this.stalledSince > 10_000) {
@@ -111,21 +127,21 @@ class Engine {
       if (deck instanceof HTMLAudioElement) deck.crossOrigin = 'anonymous';
       deck.preload = 'auto';
       deck.volume = playerState.get().volume;
-      deck.addEventListener('timeupdate', () => number === this.active && this.tick());
-      deck.addEventListener('ended', () => number === this.active && this.trackEnded());
+      deck.addEventListener('timeupdate', () => number === this.active && !this.usingOctave && this.tick());
+      deck.addEventListener('ended', () => number === this.active && !this.usingOctave && this.trackEnded());
       deck.addEventListener('playing', () => {
-        if (number !== this.active) return;
+        if (number !== this.active || this.usingOctave) return;
         this.stalledSince = 0;
         set({ loading: false, playing: true });
       });
-      deck.addEventListener('waiting', () => number === this.active && (this.stalledSince ||= Date.now()));
-      deck.addEventListener('error', () => number === this.active && this.recover('erreur de flux'));
+      deck.addEventListener('waiting', () => number === this.active && !this.usingOctave && (this.stalledSince ||= Date.now()));
+      deck.addEventListener('error', () => number === this.active && !this.usingOctave && this.recover('erreur de flux'));
       deck.addEventListener('loadedmetadata', () => {
-        if (number !== this.active) return;
+        if (number !== this.active || this.usingOctave) return;
         const track = currentTrack();
         if (track && !track.duration && !durations.get(track.id) && Number.isFinite(deck.duration)) setTime({ duration: deck.duration });
       });
-      deck.addEventListener('adchange', () => number === this.active && set({ ad: (deck as WebDeck).ad }));
+      deck.addEventListener('adchange', () => number === this.active && !this.usingOctave && set({ ad: (deck as WebDeck).ad }));
       deck.addEventListener('measures', (event) => this.collect((event as CustomEvent).detail));
     });
     this.applyEqualizer();
@@ -142,7 +158,7 @@ class Engine {
     this.createDecks(mode);
     this.active = 0;
     set({ mode, ad: false });
-    if (restart && currentTrack()) this.load(position, !wasPlaying);
+    if (restart && currentTrack() && !this.usingOctave) this.load(position, !wasPlaying);
   }
 
   private get deck() {
@@ -151,8 +167,10 @@ class Engine {
 
   // MARK: Commandes
 
-  play(tracks: Track[], start = 0, shuffle = false) {
+  play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false) {
     if (!tracks.length) return;
+    this.preferredSource = source ?? (supportsOctave ? 'octave' : undefined);
+    start = Math.min(Math.max(Math.trunc(start) || 0, 0), tracks.length - 1);
     if (shuffle) {
       this.unshuffled = tracks;
       const first = tracks[start] && start > 0 ? [tracks[start]] : [];
@@ -160,14 +178,120 @@ class Engine {
       set({ queue: [...first, ...rest], index: 0, shuffled: true });
     } else {
       this.unshuffled = null;
-      set({ queue: tracks, index: Math.min(Math.max(start, 0), tracks.length - 1), shuffled: false });
+      set({ queue: tracks, index: start, shuffled: false });
     }
-    this.load();
-    if (playerState.get().queue.length - playerState.get().index <= 1) void this.extendWithRadio();
+    this.load(position, paused);
+    if (!paused && playerState.get().queue.length - playerState.get().index <= 1) void this.extendWithRadio();
+  }
+
+  playPlaylist(tracks: Track[], start = 0, shuffle = false) {
+    this.play(tracks, start, shuffle, supportsOctave ? library.get().settings.playlistSource ?? 'octave' : undefined);
+  }
+
+  switchSource(source: PlaybackSource) {
+    const state = playerState.get();
+    if (!supportsOctave || !currentTrack()) return;
+    this.preferredSource = source;
+    if (state.source === source && !state.error) return;
+    this.load(timeState.get().time, !state.playing && !state.loading && !state.error);
   }
 
   startRadio(track: Track) {
     this.play([track]);
+  }
+
+  openOctave(url?: string) {
+    this.pause();
+    if (this.usingOctave) {
+      this.octaveLoaded = false;
+      this.octaveRequest++;
+    }
+    void api.openOctave(url).catch(() => notify('Impossible d’ouvrir le lecteur Octave.'));
+  }
+
+  private playOctave(track: Track, startAt: number, paused: boolean) {
+    const request = ++this.octaveRequest;
+    this.octaveNext = undefined;
+    this.octaveLoaded = false;
+    this.octaveSignIn = false;
+    set({ source: 'octave', loading: !paused, playing: false, ad: false, error: undefined });
+    this.dropPreloaded();
+    this.deck.pause();
+    this.deck.removeAttribute('src');
+    this.deck.load();
+    setTime({ time: startAt, duration: track.duration ?? 0 });
+    this.updateMediaSession();
+    this.saveSession();
+    if (paused) return;
+    void api.playOctave(track, request, playerState.get().volume, startAt).then((result) => {
+      if (request !== this.octaveRequest || result === 'cancelled') return;
+      this.octaveLoaded = result === 'playing';
+      this.octaveSignIn = result === 'sign-in';
+      const error = result === 'sign-in' ? 'Connecte Octave, puis relance la lecture.'
+        : result === 'interaction' ? 'Ferme la fenêtre dans Octave, puis relance la lecture.'
+        : result === 'not-found' ? 'Version introuvable sur Octave. Change la source pour l’écouter.'
+        : result === 'unavailable' ? 'Ce titre ne démarre pas sur Octave.' : undefined;
+      set({ loading: false, playing: this.octaveLoaded, error });
+      if (this.octaveLoaded) {
+        void api.octaveCommand(request, { type: 'volume', value: playerState.get().volume }).catch(() => undefined);
+        this.prepareOctaveNext(request);
+      }
+    }).catch(() => {
+      if (request === this.octaveRequest) set({ loading: false, playing: false, error: 'Impossible de démarrer Octave.' });
+    });
+  }
+
+  private prepareOctaveNext(request: number) {
+    if (this.preferredSource !== 'octave') return;
+    const { queue, index } = playerState.get();
+    const next = queue[index + 1];
+    if (!next) return;
+    void api.octaveQueueNext(request, next).then((recordingId) => {
+      if (recordingId && request === this.octaveRequest && playerState.get().index === index) {
+        this.octaveNext = { id: next.id, recordingId };
+      }
+    }).catch(() => undefined);
+  }
+
+  private updateOctave(status: OctavePlayback) {
+    if (!this.usingOctave || status.request !== this.octaveRequest || !this.octaveLoaded) return;
+    if (status.signIn) {
+      this.octaveLoaded = false;
+      this.octaveSignIn = true;
+      setTime({ time: status.time, duration: status.duration });
+      set({ loading: false, playing: false, error: 'Reconnecte Octave pour reprendre la lecture.' });
+      return;
+    }
+    if (status.track) {
+      const next = status.track;
+      const { queue, index } = playerState.get();
+      const upcoming = queue[index + 1];
+      const matches = upcoming?.id === next.id || (upcoming?.id === this.octaveNext?.id && next.id === this.octaveNext?.recordingId) || (
+        upcoming?.title === next.title && upcoming.artist === next.artist
+        && (!upcoming.duration || !next.duration || Math.abs(upcoming.duration - next.duration) <= 8)
+      );
+      if (this.preferredSource === 'octave' && upcoming && !matches) {
+        set({ index: index + 1 });
+        this.load();
+        return;
+      }
+      playerState.set((state) => {
+        const { queue, index } = state;
+        if (matches) return { ...state, index: index + 1 };
+        return { ...state, index: index + 1, queue: [...queue.slice(0, index + 1), next, ...queue.slice(index + 1)] };
+      });
+      this.updateMediaSession();
+      this.saveSession();
+      this.octaveNext = undefined;
+      this.prepareOctaveNext(status.request);
+    }
+    setTime({ time: status.time, duration: status.duration || timeState.get().duration });
+    if (status.playing !== playerState.get().playing) set({ playing: status.playing });
+    if (status.ended) {
+      this.octaveLoaded = false;
+      if (playerState.get().repeat === 'one') this.load();
+      else if (playerState.get().index + 1 < playerState.get().queue.length || playerState.get().repeat === 'all') this.next(false);
+    }
   }
 
   playNext(track: Track) {
@@ -209,16 +333,38 @@ class Engine {
   }
 
   resume() {
-    if (!currentTrack()) return;
+    if (!currentTrack() || playerState.get().loading) return;
+    if (!isAndroid) void api.claimMediaShortcuts().catch(() => undefined);
+    if (this.usingOctave) {
+      if (!this.octaveLoaded) return this.load(timeState.get().time);
+      void api.octaveCommand(this.octaveRequest, { type: 'play' }).then((resumed) => {
+        if (!resumed && this.usingOctave && !playerState.get().playing) this.load(timeState.get().time);
+      }).catch(() => undefined);
+      return;
+    }
     if (!this.deck.src) return this.load(timeState.get().time);
-    void this.deck.play().catch(() => this.recover('reprise'));
-    set({ playing: true });
+    const request = this.loadRequest;
+    void this.deck.play().catch(() => {
+      if (request === this.loadRequest) this.recover('reprise');
+    });
   }
 
   pause() {
+    this.loadRequest++;
+    if (this.usingOctave) {
+      if (this.octaveLoaded) void api.octaveCommand(this.octaveRequest, { type: 'pause' }).catch(() => undefined);
+      else {
+        this.octaveRequest++;
+        this.octaveSignIn = false;
+        void api.stopOctave().catch(() => undefined);
+      }
+      set({ playing: false, loading: false });
+      this.saveSession();
+      return;
+    }
     this.finishFade();
     this.deck.pause();
-    set({ playing: false });
+    set({ playing: false, loading: false });
     this.saveSession();
   }
 
@@ -229,12 +375,21 @@ class Engine {
         set({ index: 0 });
         return this.load();
       }
+      if (this.usingOctave) {
+        if (manual && this.octaveLoaded) void api.octaveCommand(this.octaveRequest, { type: 'next' }).catch(() => undefined);
+        return;
+      }
       void this.extendWithRadio(true);
+      return;
+    }
+    if (manual && this.usingOctave && this.octaveLoaded && this.octaveNext?.id === queue[index + 1].id) {
+      void api.octaveCommand(this.octaveRequest, { type: 'next' }).catch(() => undefined);
       return;
     }
     // AutoMix : même au passage manuel, les deux titres se fondent brièvement.
     const transition = library.get().settings.transition;
-    if (manual && transition !== 'off' && playerState.get().playing && !this.followingJam) {
+    if (manual && transition !== 'off' && playerState.get().playing && !this.followingJam && !this.usingOctave
+      && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id)) {
       return this.beginTransition(3);
     }
     set({ index: index + 1 });
@@ -249,8 +404,13 @@ class Engine {
   }
 
   seek(seconds: number) {
-    this.finishFade();
     const target = Math.max(0, seconds);
+    if (this.usingOctave) {
+      if (this.octaveLoaded) void api.octaveCommand(this.octaveRequest, { type: 'seek', value: target }).catch(() => undefined);
+      setTime({ time: target });
+      return;
+    }
+    this.finishFade();
     if (target < this.expectedDuration() - 1) this.endHandled = false;
     this.deck.currentTime = target;
     setTime({ time: target });
@@ -259,7 +419,8 @@ class Engine {
   setVolume(volume: number) {
     localStorage.setItem('volume', String(volume));
     set({ volume });
-    if (!this.fadeTimer) this.deck.volume = volume * this.gain;
+    if (this.usingOctave) void api.octaveCommand(this.octaveRequest, { type: 'volume', value: volume }).catch(() => undefined);
+    else if (!this.fadeTimer) this.deck.volume = volume * this.gain;
   }
 
   toggleShuffle() {
@@ -299,7 +460,10 @@ class Engine {
 
   followJam(queue: Track[], index: number, position: number, playing: boolean) {
     const target = queue[index];
-    if (!target) return;
+    if (!target || isOctaveId(target.id)) return;
+    this.preferredSource = undefined;
+    queue = queue.filter((track) => !isOctaveId(track.id));
+    index = queue.indexOf(target);
     if (currentTrack()?.id !== target.id) {
       set({ queue, index });
       this.load(position, !playing);
@@ -323,17 +487,51 @@ class Engine {
   private load(startAt = 0, paused = false) {
     const track = currentTrack();
     if (!track) return;
+    const request = ++this.loadRequest;
+    this.youtubeTrack = undefined;
+    if (!isAndroid && !paused) void api.claimMediaShortcuts().catch(() => undefined);
     this.finishFade();
     cancel(this.tempoTimer);
     this.endHandled = false;
     this.stalledSince = 0;
+    clearTimeout(this.prefetchTimer);
+    const source = this.preferredSource ?? (isOctaveId(track.id) ? 'octave' : 'youtube');
+    if (supportsOctave && source === 'octave') return this.playOctave(track, startAt, paused);
+    if (this.usingOctave) {
+      this.octaveLoaded = false;
+      this.octaveRequest++;
+      void api.stopOctave().catch(() => undefined);
+      void api.hideOctave().catch(() => undefined);
+    }
     const known = track.duration ?? durations.get(track.id);
-    set({ loading: true, error: undefined });
+    set({ source: 'youtube', loading: !paused, playing: false, error: undefined });
     setTime({ time: startAt, duration: known ?? 0 });
-    if (!known) void this.fetchDuration(track);
-    if (!track.square) void this.resolveArtwork(track);
+    if (supportsOctave && isOctaveId(track.id)) {
+      this.deck.pause();
+      this.deck.removeAttribute('src');
+      this.deck.load();
+      void api.youtubeRecording(track).then((recording) => {
+        if (request !== this.loadRequest) return;
+        if (!recording) {
+          set({ loading: false, error: 'Version introuvable sur YouTube Music. Change la source pour l’écouter.' });
+          return;
+        }
+        this.loadYouTube(track, recording, startAt, paused, request);
+      }).catch(() => {
+        if (request === this.loadRequest) set({ loading: false, error: 'Impossible de joindre YouTube Music.' });
+      });
+      return;
+    }
+    this.loadYouTube(track, track, startAt, paused, request);
+  }
+
+  private loadYouTube(track: Track, recording: Track, startAt: number, paused: boolean, request: number) {
+    this.youtubeTrack = recording.id === track.id ? undefined : recording;
+    const known = track.duration ?? durations.get(track.id);
+    if (!known && track.id === recording.id) void this.fetchDuration(track);
+    if (!track.square && track.id === recording.id) void this.resolveArtwork(track);
     // Titre préchargé dans l'autre lecteur (YouTube Music) : il prend le relais tout de suite.
-    const ready = this.preloaded?.id === track.id && this.preloaded.ready && startAt < 1 && this.decks.includes(this.preloaded.deck) ? this.preloaded : null;
+    const ready = this.preloaded?.id === recording.id && this.preloaded.ready && startAt < 1 && this.decks.includes(this.preloaded.deck) ? this.preloaded : null;
     this.preloaded = null;
     if (ready) {
       this.deck.pause();
@@ -343,16 +541,24 @@ class Engine {
       this.dropPreloaded();
     }
     const deck = this.deck;
-    this.gain = gainFor(savedAnalysis(track.id), normalize());
+    this.gain = gainFor(savedAnalysis(recording.id), normalize());
     deck.playbackRate = 1;
     deck.volume = playerState.get().volume * this.gain;
-    if (!ready) deck.src = `nova-stream://audio/${encodeURIComponent(track.id)}`;
-    if (startAt > 1) deck.currentTime = startAt;
+    if (!ready) deck.src = `nova-stream://audio/${encodeURIComponent(recording.id)}`;
+    if (startAt > 1 && deck instanceof HTMLAudioElement && !deck.readyState) {
+      deck.addEventListener('loadedmetadata', () => {
+        if (request === this.loadRequest) deck.currentTime = startAt;
+      }, { once: true });
+    } else if (startAt > 1) {
+      deck.currentTime = startAt;
+    }
     if (paused) {
       set({ loading: false, playing: false });
     } else {
-      void deck.play().then(() => this.started(track)).catch((error) => {
-        if (error?.name !== 'AbortError') this.recover('démarrage');
+      void deck.play().then(() => {
+        if (request === this.loadRequest) this.started(track);
+      }).catch((error) => {
+        if (request === this.loadRequest && error?.name !== 'AbortError') this.recover('démarrage');
       });
     }
     this.updateMediaSession();
@@ -360,7 +566,7 @@ class Engine {
   }
 
   private started(track: Track) {
-    if (currentTrack()?.id !== track.id) return;
+    if (currentTrack()?.id !== track.id || this.usingOctave) return;
     set({ playing: true, loading: false });
     recordPlay(track);
     this.updateMediaSession();
@@ -369,11 +575,11 @@ class Engine {
     this.prefetchTimer = setTimeout(() => {
       const { queue, index } = playerState.get();
       const next = queue[index + 1];
-      if (next) void api.prefetch(next.id);
+      if (next && !isOctaveId(next.id)) void api.prefetch(next.id);
       // AutoMix (lecture directe) : le titre en cours et le suivant sont analysés en arrière-plan.
-      if (library.get().settings.transition !== 'off') {
+      if (!isOctaveId(track.id) && library.get().settings.transition !== 'off') {
         this.analyzeFile(track.id);
-        if (next) setTimeout(() => this.analyzeFile(next.id), 10_000);
+        if (next && !isOctaveId(next.id)) setTimeout(() => this.analyzeFile(next.id), 10_000);
       }
     }, 15_000);
   }
@@ -396,13 +602,16 @@ class Engine {
 
   private async extendWithRadio(thenAdvance = false) {
     const current = currentTrack();
-    if (!current || this.followingJam) return;
+    if (!current || this.followingJam || this.usingOctave) return;
     if (thenAdvance && !library.get().settings.autoplayRadio) {
       this.pause();
       this.seek(0);
       return;
     }
-    const radio = await api.radio(current.id).catch(() => [] as Track[]);
+    const recording = this.youtubeTrack ?? current;
+    const request = this.loadRequest;
+    const radio = await api.radio(recording.id).catch(() => [] as Track[]);
+    if (request !== this.loadRequest) return;
     const known = new Set(playerState.get().queue.map((t) => t.id));
     const fresh = radio.filter((t) => !known.has(t.id));
     if (!fresh.length) return;
@@ -420,7 +629,8 @@ class Engine {
     if (expected > 0 && Math.abs(timeState.get().duration - expected) > 0.5) setTime({ duration: expected });
     const settings = library.get().settings;
     const { queue, index, repeat, playing } = playerState.get();
-    const canMix = playing && !this.fadeTimer && !this.pending && repeat !== 'one' && index + 1 < queue.length && !this.followingJam
+    const canMix = playing && !this.fadeTimer && !this.pending && repeat !== 'one' && index + 1 < queue.length
+      && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id) && !this.followingJam
       && !(this.deck as WebDeck).ad && expected > 30;
     // AutoMix : transition préparée d'après l'analyse des deux titres (tempo, temps, fin), calée sur un temps.
     if (canMix && settings.transition === 'automix') {
@@ -787,8 +997,10 @@ class Engine {
     // Lecture directe refusée par YouTube (contrôle anti-robot) : bascule sur le lecteur officiel.
     if (playerState.get().mode === 'direct' && library.get().settings.engine !== 'direct' && !this.checkingRefusal) {
       this.checkingRefusal = true;
-      void api.streamError(track.id).then((detail) => {
+      const request = this.loadRequest;
+      void api.streamError(this.youtubeTrack?.id ?? track.id).then((detail) => {
         this.checkingRefusal = false;
+        if (request !== this.loadRequest) return;
         if (detail && /robot|bot|refus|sign in|connect|login|403|unavailable/i.test(detail) && currentTrack()?.id === track.id) {
           this.setMode('web');
         } else {
@@ -803,6 +1015,8 @@ class Engine {
   private checkingRefusal = false;
 
   private retry(track: Track, reason: string) {
+    const request = this.loadRequest;
+    const recordingId = this.youtubeTrack?.id ?? track.id;
     if (this.recoveryFor !== track.id) {
       this.recoveryFor = track.id;
       this.recoveries = 0;
@@ -811,8 +1025,8 @@ class Engine {
       this.recoveries = 0;
       set({ error: `« ${track.title} » ne peut pas être lu (${reason}).`, loading: false, playing: false });
       // Raison donnée par YouTube (contrôle anti-robot…), avec la solution.
-      void api.streamError(track.id).then((detail) => {
-        if (!detail || currentTrack()?.id !== track.id) return;
+      void api.streamError(recordingId).then((detail) => {
+        if (!detail || request !== this.loadRequest || currentTrack()?.id !== track.id) return;
         const robot = /robot|bot|sign in|connect/i.test(detail);
         set({ error: robot
           ? 'YouTube demande de confirmer que tu n’es pas un robot : connecte-toi à ton compte YouTube dans Réglages, puis relance le titre.'
@@ -824,9 +1038,9 @@ class Engine {
     const position = this.deck.currentTime || timeState.get().time;
     // Après un premier échec, on force un lien neuf (le processus principal en redemande un).
     const delay = this.recoveries > 1 ? 3000 : 300;
-    if (this.recoveries > 1) void api.invalidate(track.id);
+    if (this.recoveries > 1) void api.invalidate(recordingId);
     setTimeout(() => {
-      if (currentTrack()?.id === track.id) this.load(position);
+      if (request === this.loadRequest && currentTrack()?.id === track.id) this.load(position);
     }, delay);
   }
 
@@ -878,3 +1092,5 @@ on('media:key', (action: string) => {
 on('webplayer:consent', (visible: boolean) => {
   if (visible) notify('YouTube demande ton choix pour les cookies : réponds dans la fenêtre YouTube, la musique démarre ensuite.');
 });
+if (supportsOctave) on('octave:played', (track: Track, playedAt: number) => recordPlay(track, playedAt));
+if (supportsOctave) on('octave:sync-error', () => notify('Écoute gardée dans Nova. YouTube Music n’a pas accepté la synchronisation.'));

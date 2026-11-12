@@ -39,6 +39,32 @@ export function artistNames(value: string): string[] {
     .filter(Boolean);
 }
 
+export function matchRecording(wanted: Track, candidates: Track[]): Track | undefined {
+  const title = normalize(wanted.title);
+  const artist = normalize(wanted.artist);
+  if (!title || !artist) return undefined;
+  const artists = artistNames(wanted.artist).map(normalize).filter(Boolean);
+  const matchingCredits = candidates.filter((candidate) => {
+    if (normalize(candidate.title) !== title) return false;
+    if (normalize(candidate.artist) === artist) return true;
+    const names = artistNames(candidate.artist).map(normalize).filter(Boolean);
+    return Boolean(artists[0] && names[0] === artists[0]
+      && (names.every((name) => artists.includes(name)) || artists.every((name) => names.includes(name))));
+  });
+  const exact = matchingCredits.filter((candidate) =>
+    !wanted.duration || !candidate.duration || Math.abs(candidate.duration - wanted.duration) <= 8);
+  const album = normalize(wanted.album ?? '');
+  const match = (album ? exact.find((candidate) => normalize(candidate.album ?? '') === album) : undefined)
+    ?? exact.find((candidate) => wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 2)
+    ?? exact[0];
+  if (match || wanted.square !== false || !wanted.duration) return match;
+  // Un clip officiel peut ajouter une courte intro ou un générique au même enregistrement.
+  const audio = matchingCredits.filter((candidate) => candidate.square && candidate.duration
+    && normalize(candidate.artist) === artist && wanted.duration! > candidate.duration
+    && wanted.duration! - candidate.duration <= Math.min(15, wanted.duration! * 0.04));
+  return audio.length === 1 ? audio[0] : undefined;
+}
+
 type Scored = { track: Track; score: number };
 const unwanted = ['live', 'remix', 'cover', 'karaoke', 'instrumental', 'acoustic', 'acoustique', 'sped', 'slowed',
   'nightcore', '8d', 'reverb', 'extended', 'edit'];

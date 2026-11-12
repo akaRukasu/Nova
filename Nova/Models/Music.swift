@@ -24,6 +24,7 @@ struct MusicCollection: Identifiable, Codable, Hashable {
     var artworkURLs: [URL] { artworkURL.map { [$0] } ?? [] }
 
     var shareURL: URL {
+        if let key = OctaveCatalog.id(id) { return OctaveCatalog.origin.appending(path: kind.rawValue + "/" + key) }
         switch kind {
         case .artist: return URL(string: "https://music.youtube.com/channel/\(id)")!
         case .album: return URL(string: "https://music.youtube.com/browse/\(id)")!

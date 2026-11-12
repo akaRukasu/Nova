@@ -102,7 +102,18 @@ export interface TrackStats {
   lastPlayed?: number;
 }
 
+export type ListeningYear = Record<string, { track: Track; plays: number }>;
+
 export type Transition = 'off' | 'crossfade' | 'automix';
+
+export interface OctaveAudioSettings {
+  quality: 'low' | 'high' | 'lossless';
+  transition: Transition;
+  autoplay: boolean;
+  gapless: boolean;
+  soundCheck: boolean;
+  smartShuffle: boolean;
+}
 
 export interface Settings {
   region: string;
@@ -112,6 +123,9 @@ export interface Settings {
   crossfadeSeconds: number;
   autoplayRadio: boolean;
   recordHistory: boolean;
+  syncOctaveToYouTube?: boolean;
+  playlistSource?: 'octave' | 'youtube';
+  octaveAudio?: OctaveAudioSettings;
   ticketmasterKey: string;
   jamName: string;
   theme: 'system' | 'dark' | 'light';
@@ -131,6 +145,8 @@ export const defaultSettings: Settings = {
   crossfadeSeconds: 6,
   autoplayRadio: true,
   recordHistory: true,
+  syncOctaveToYouTube: true,
+  playlistSource: 'octave',
   ticketmasterKey: '',
   jamName: '',
   theme: 'system',
@@ -167,6 +183,7 @@ export interface LibraryState {
   saved: Collection[];
   searches: string[];
   stats: Record<string, TrackStats>;
+  listeningYears?: Record<string, ListeningYear>;
   settings: Settings;
 }
 

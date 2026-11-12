@@ -1,6 +1,7 @@
 // Étagères : carrousels de cartes, grilles de titres, listes, tuiles de catégories.
 import { useRef } from 'react';
 import type { Category, Collection, Item, Shelf, Track } from '../../shared/types';
+import { isOctaveId } from '../../shared/octave';
 import { api } from '../lib/api';
 import { player } from '../lib/player';
 import { open, routeForLink, type Route } from '../lib/router';
@@ -28,9 +29,10 @@ export function Card({ item, width = 176, onPlay }: { item: Item; width?: number
   if (item.type === 'category') return <CategoryTile category={item.category} />;
   if (item.type === 'track') {
     const track = item.track;
+    const playLabel = isOctaveId(track.id) ? `Lire ${track.title} dans Octave` : `Lire ${track.title}`;
     return (
       <div className="card" style={{ width }} onContextMenu={(e) => showMenu(e, trackMenu(track))}>
-        <button className="card-art" onClick={() => onPlay?.(track)}>
+        <button className="card-art" aria-label={playLabel} onClick={() => onPlay ? onPlay(track) : player.play([track])}>
           <Artwork track={track} size={width} radius={10} />
           <span className="card-play"><Icon name="play" size={18} /></span>
         </button>
@@ -47,7 +49,8 @@ export function Card({ item, width = 176, onPlay }: { item: Item; width?: number
         onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(routeFor(collection)); }}>
         <Artwork url={collection.artwork} size={width} radius={10} round={round} />
         {!round && (
-          <button className="card-play" onClick={(e) => { e.stopPropagation(); void playCollection(collection); }} aria-label="Lire">
+          <button className="card-play" onClick={(e) => { e.stopPropagation(); void playCollection(collection); }}
+            aria-label={`Lire ${collection.title}`}>
             <Icon name="play" size={18} />
           </button>
         )}

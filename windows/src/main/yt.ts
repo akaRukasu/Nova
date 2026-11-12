@@ -486,6 +486,14 @@ export async function stream(videoId: string, highQuality: boolean): Promise<Str
 
 // MARK: - Compte
 
+export async function addHistory(videoId: string): Promise<void> {
+  const client = await yt();
+  if (!client.session.logged_in) return;
+  const info = await client.music.getInfo(videoId);
+  const response = await info.addToWatchHistory();
+  if (!response.ok) throw new Error(`YouTube Music a refusé l’historique (${response.status}).`);
+}
+
 export async function accountInfo(): Promise<{ name?: string; photo?: string }> {
   const client = await yt();
   const info: any = await client.account.getInfo();

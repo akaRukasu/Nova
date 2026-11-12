@@ -1,7 +1,8 @@
 // Barre latérale, comme Apple Music pour Windows : recherche, rubriques, bibliothèque, playlists.
 import { useState } from 'react';
 import { account, createPlaylist, createShared, joinShared, library, notify, removeShared, sharedURL } from '../lib/library';
-import { api } from '../lib/api';
+import { api, isAndroid, supportsOctave } from '../lib/api';
+import { player } from '../lib/player';
 import { currentRoute, open, root, router, type Route } from '../lib/router';
 import { useStore } from '../lib/store';
 import { Icon } from './icons';
@@ -48,11 +49,12 @@ export function Sidebar() {
       <form className="side-search" onSubmit={(e) => { e.preventDefault(); if (query.trim()) open({ name: 'search', query: query.trim() }); }}>
         <Icon name="search" size={16} />
         <input placeholder="Rechercher" value={query} onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => route.name !== 'search' && open({ name: 'search' })} />
+          onFocus={() => isAndroid && route.name !== 'search' && open({ name: 'search' })} />
       </form>
       <nav>
         <Entry route={{ name: 'home' }} icon="home" label="Accueil" active={is('home')} />
-        <Entry route={{ name: 'explore' }} icon="grid" label="Nouveautés" active={is('explore')} />
+        <Entry route={{ name: 'explore' }} icon="grid" label={supportsOctave ? 'Classements' : 'Nouveautés'} active={is('explore')} />
+        {supportsOctave && <button className="side-entry" onClick={() => player.openOctave()}><Icon name="settings" size={18} /><span>Compte Octave</span></button>}
         <Entry route={{ name: 'mix', kind: 'discovery' }} icon="sparkles" label="Mes mix" active={is('mix')} />
         <Entry route={{ name: 'concerts' }} icon="ticket" label="Concerts" active={is('concerts')} />
         <Entry route={{ name: 'jam' }} icon="jam" label="Jam" active={is('jam')} />
@@ -64,6 +66,7 @@ export function Sidebar() {
         <Entry route={{ name: 'liked' }} icon="heart" label="Titres likés" active={is('liked')} />
         <Entry route={{ name: 'albums' }} icon="album" label="Albums et artistes" active={is('albums')} />
         <Entry route={{ name: 'history' }} icon="clock" label="Historique" active={is('history')} />
+        {supportsOctave && <Entry route={{ name: 'wrapped' }} icon="sparkles" label="Récap annuel" active={is('wrapped')} />}
         {user.signedIn && <Entry route={{ name: 'youtubePlaylists' }} icon="radio" label="Playlists YouTube" active={is('youtubePlaylists')} />}
       </nav>}
       <div className="side-title">

@@ -57,7 +57,8 @@ struct NowPlayingView: View {
 
                 titleBlock
             }
-            progress.padding(.top, 22)
+            if player.current != nil { PlaybackSourceMenu() }
+            progress.padding(.top, 6)
             controls.padding(.top, 18)
             modes.padding(.top, 10)
             Group {
@@ -89,6 +90,12 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showQueue) {
             QueueView()
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: Binding(
+            get: { player.showsOctaveAccount && router.showPlayer },
+            set: { if !$0 { player.showsOctaveAccount = false } }
+        ), onDismiss: { player.octave.hideAccount() }) {
+            OctaveAccountSheet()
         }
         .newPlaylistAlert(isActive: true)
         .alert("Oups", isPresented: Binding(

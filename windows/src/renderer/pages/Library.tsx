@@ -31,7 +31,7 @@ export function UserPlaylistPage({ id }: { id: string }) {
           <p className="eyebrow">Playlist{playlist.youtubeId ? ' · synchronisée avec YouTube' : ''}</p>
           <h1>{playlist.name}</h1>
           <div className="row-buttons">
-            <PlayShuffle tracks={shown} />
+            <PlayShuffle tracks={shown} playlist />
             <SortButton state={sort} />
             <button className="button secondary" onClick={async () => {
               const name = await ask('Renommer la playlist', playlist.name, 'Renommer');
@@ -48,7 +48,7 @@ export function UserPlaylistPage({ id }: { id: string }) {
         {shown.map((track, i) => (
           <div key={`${track.id}-${order[i]}`} draggable={sort.manual} onDragStart={() => setDragged(i)} onDragOver={(e) => e.preventDefault()}
             onDrop={() => { if (sort.manual && dragged != null && dragged !== i) moveInPlaylist(playlist.id, dragged, i); setDragged(null); }}>
-            <TrackRow track={track} index={i} onPlay={() => player.play(shown, i)}
+            <TrackRow track={track} index={i} onPlay={() => player.playPlaylist(shown, i)}
               extraMenu={[{ label: '', separator: true }, { label: 'Retirer de la playlist', icon: 'trash', danger: true, action: () => removeFromPlaylist(playlist.id, track.id) }]} />
           </div>
         ))}
@@ -113,7 +113,8 @@ export function HistoryPage() {
     <div className="page">
       <PageTitle actions={<>
         <input className="filter" placeholder="Rechercher dans l’historique" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {state.recents.length > 0 && <button className="button secondary" onClick={() => { if (confirm('Effacer tout l’historique ?')) clearRecents(); }}>Effacer</button>}
+        {(state.recents.length > 0 || Object.keys(state.listeningYears ?? {}).length > 0) && <button className="button secondary"
+          onClick={() => { if (confirm('Effacer tout l’historique et les données du récap annuel ?')) clearRecents(); }}>Effacer</button>}
       </>}>Historique</PageTitle>
       <PlayShuffle tracks={shown} />
       {!state.recents.length && <Empty icon="clock" title="Historique vide" text="Les titres que tu écoutes apparaîtront ici." />}
@@ -228,8 +229,8 @@ export function SmartPlaylistPage({ id }: { id: string }) {
           <label>Limiter à <input type="number" min={0} value={playlist.limit ?? 0} onChange={(e) => change({ limit: Number(e.target.value) || undefined })} /> titres</label>
         </div>
       )}
-      <PlayShuffle tracks={tracks} />
-      {tracks.length ? <TrackList tracks={tracks} /> : <p className="muted">Aucun titre ne correspond aux règles pour l’instant.</p>}
+      <PlayShuffle tracks={tracks} playlist />
+      {tracks.length ? <TrackList tracks={tracks} playlist /> : <p className="muted">Aucun titre ne correspond aux règles pour l’instant.</p>}
     </div>
   );
 }

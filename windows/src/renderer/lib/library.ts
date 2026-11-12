@@ -4,6 +4,7 @@ import type {
   Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
+import { isOctaveId } from '../../shared/octave';
 import { api, on } from './api';
 import { Store } from './store';
 
@@ -94,12 +95,16 @@ export function updateSettings(change: Partial<Settings>) {
 
 // MARK: Écoutes
 
-export function recordPlay(track: Track) {
+export function recordPlay(track: Track, playedAt = Date.now()) {
   update((state) => {
-    const stats = { ...state.stats, [track.id]: { playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: Date.now() } };
+    const stats = { ...state.stats, [track.id]: { playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
     if (!state.settings.recordHistory) return { ...state, stats };
     const recents = [track, ...state.recents.filter((t) => t.id !== track.id)].slice(0, 1000);
-    return { ...state, stats, recents };
+    const year = String(new Date(playedAt).getFullYear());
+    const recorded = state.listeningYears?.[year];
+    const entry = { track, plays: (recorded?.[track.id]?.plays ?? 0) + 1 };
+    const listeningYears = { ...state.listeningYears, [year]: { ...recorded, [track.id]: entry } };
+    return { ...state, stats, recents, listeningYears };
   });
 }
 
@@ -108,7 +113,7 @@ export function removeRecent(id: string) {
 }
 
 export function clearRecents() {
-  update((state) => ({ ...state, recents: [] }));
+  update((state) => ({ ...state, recents: [], listeningYears: {} }));
 }
 
 export function addSearch(query: string) {
@@ -145,7 +150,7 @@ export function toggleLike(track: Track) {
     ...state,
     liked: liked ? [track, ...state.liked] : state.liked.filter((t) => t.id !== track.id),
   }));
-  if (account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  if (!isOctaveId(track.id) && account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
   return liked;
 }
 
@@ -155,7 +160,7 @@ export function createPlaylist(name: string, tracks: Track[] = []): UserPlaylist
   const playlist: UserPlaylist = { id: crypto.randomUUID(), name: name.trim() || 'Nouvelle playlist', tracks: dedupe(tracks), created: Date.now() };
   update((state) => ({ ...state, playlists: [playlist, ...state.playlists] }));
   // Compte connecté : la playlist existe aussi sur YouTube (et donc sur l'iPhone).
-  if (account.get().signedIn) {
+  if (account.get().signedIn && !playlist.tracks.some((track) => isOctaveId(track.id))) {
     void api.createAccountPlaylist(playlist.name, playlist.tracks.map((t) => t.id)).then((youtubeId) => {
       if (youtubeId) update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === playlist.id ? { ...p, youtubeId } : p)) }));
     }).catch(() => undefined);
@@ -201,8 +206,9 @@ export function addToPlaylist(id: string, tracks: Track[]) {
   const known = new Set(playlist.tracks.map((t) => t.id)), keys = new Set(playlist.tracks.map(dedupeKey));
   const fresh = tracks.filter((t) => !known.has(t.id) && !keys.has(dedupeKey(t)) && !!known.add(t.id) && !!keys.add(dedupeKey(t)));
   update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...fresh] } : p)) }));
-  if (playlist.youtubeId && fresh.length && account.get().signedIn) {
-    void api.addToAccountPlaylist(playlist.youtubeId, fresh.map((t) => t.id)).catch(() => undefined);
+  const youtubeTracks = fresh.filter((track) => !isOctaveId(track.id));
+  if (playlist.youtubeId && youtubeTracks.length && account.get().signedIn) {
+    void api.addToAccountPlaylist(playlist.youtubeId, youtubeTracks.map((t) => t.id)).catch(() => undefined);
   }
   notify(fresh.length ? `Ajouté à « ${playlist.name} »` : 'Déjà dans la playlist');
 }
@@ -270,8 +276,10 @@ export function removeShared(id: string) {
 }
 
 export async function addToShared(entry: SharedPlaylist, tracks: Track[]) {
+  const ids = tracks.filter((track) => !isOctaveId(track.id)).map((track) => track.id);
+  if (!ids.length) return;
   try {
-    await api.addToAccountPlaylist(entry.id, tracks.map((t) => t.id));
+    await api.addToAccountPlaylist(entry.id, ids);
     notify(`Ajouté à « ${entry.title} » (visible chez tous les participants)`);
   } catch {
     notify('Ajout impossible : la collaboration est-elle activée sur cette playlist ?');

@@ -1,8 +1,8 @@
 {
   "name": "nova-windows",
   "productName": "Nova",
-  "version": "0.4.0",
-  "description": "Nova pour Windows : le catalogue de YouTube Music, façon Apple Music.",
+  "version": "0.4.8",
+  "description": "Nova pour Windows : lecture Octave intégrée et historique YouTube Music.",
   "main": "dist/main/main.js",
   "private": true,
   "scripts": {
@@ -78,7 +78,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "artifactName": "Nova-Windows-Setup.${ext}",
+      "artifactName": "Nova-Octave-${version}-Windows-Setup.${ext}",
       "shortcutName": "Nova",
       "createDesktopShortcut": true
     },

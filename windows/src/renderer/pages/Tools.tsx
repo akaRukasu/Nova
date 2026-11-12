@@ -1,11 +1,13 @@
 // Import depuis d'autres plateformes, concerts, Jam, réglages.
 import { useEffect, useState } from 'react';
-import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, Track } from '../../shared/types';
+import type { Concert, ImportedPlaylist, ImportedTrack, ImportProgress, OctaveAudioSettings, Track } from '../../shared/types';
+import { octaveAudioDefaults } from '../../shared/octave';
 import { Icon } from '../components/icons';
 import { EQ_PRESETS } from '../lib/equalizer';
-import { api, isAndroid, on } from '../lib/api';
+import { api, isAndroid, on, supportsOctave } from '../lib/api';
 import { jam, jamCommand, joinJam, leaveJam, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import { player } from '../lib/player';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
@@ -389,6 +391,8 @@ export function SettingsPage() {
   const state = useStore(library);
   const user = useStore(account);
   const settings = state.settings;
+  const octave = { ...octaveAudioDefaults, ...settings.octaveAudio };
+  const setOctave = (patch: Partial<OctaveAudioSettings>) => updateSettings({ octaveAudio: { ...octave, ...patch } });
   return (
     <div className="page narrow settings">
       <PageTitle>Réglages</PageTitle>
@@ -408,7 +412,47 @@ export function SettingsPage() {
         )}
       </section>
       <section>
-        <h3>Lecture</h3>
+        {supportsOctave && <>
+          <h3>Lecture Octave</h3>
+          <label className="field">Source des playlists
+            <select value={settings.playlistSource ?? 'octave'} onChange={(e) => updateSettings({
+              playlistSource: e.target.value === 'youtube' ? 'youtube' : 'octave',
+            })}>
+              <option value="octave">Octave</option>
+              <option value="youtube">YouTube Music</option>
+            </select>
+          </label>
+          <label className="field">Qualité Octave
+            <select value={octave.quality} onChange={(e) => setOctave({ quality: e.target.value as OctaveAudioSettings['quality'] })}>
+              <option value="low">Économie de données</option>
+              <option value="high">Haute</option>
+              <option value="lossless">Lossless (FLAC)</option>
+            </select>
+          </label>
+          <label className="field">Transitions Octave
+            <select value={octave.transition} onChange={(e) => setOctave({ transition: e.target.value as OctaveAudioSettings['transition'] })}>
+              <option value="off">Désactivées</option>
+              <option value="crossfade">Fondu enchaîné</option>
+              <option value="automix">AutoMix</option>
+            </select>
+          </label>
+          {([
+            ['autoplay', 'Autoplay · continuer avec des morceaux similaires'],
+            ['gapless', 'Lecture sans blanc entre les morceaux'],
+            ['soundCheck', 'Sound Check · égaliser le volume des morceaux'],
+            ['smartShuffle', 'Smart Shuffle · insérer des recommandations'],
+          ] as const).map(([key, label]) => (
+            <label className="toggle-row" key={key}><input type="checkbox" checked={octave[key]}
+              onChange={(e) => setOctave({ [key]: e.target.checked })} /> {label}</label>
+          ))}
+          <p className="muted small">Les changements s’appliquent au prochain morceau lancé depuis Nova.</p>
+          <button className="button secondary" onClick={() => player.openOctave()}>Compte et réglages avancés Octave</button>
+          <label className="toggle-row"><input type="checkbox" checked={settings.syncOctaveToYouTube !== false}
+            disabled={!settings.recordHistory} onChange={(e) => updateSettings({ syncOctaveToYouTube: e.target.checked })} />
+            Ajouter les écoutes Octave à mon historique YouTube Music</label>
+          {!user.signedIn && <p className="muted small">Connecte ton compte YouTube dans Nova pour synchroniser les morceaux trouvés sur YouTube Music.</p>}
+        </>}
+        <h3>{supportsOctave ? 'Lecture YouTube Music' : 'Lecture'}</h3>
         <label className="field">Qualité audio
           <select value={settings.highQuality ? 'high' : 'low'} onChange={(e) => updateSettings({ highQuality: e.target.value === 'high' })}>
             <option value="high">Haute</option><option value="low">Économie de données</option>
@@ -477,7 +521,7 @@ export function SettingsPage() {
       </section>
       <section>
         <h3>À propos</h3>
-        <p className="muted">Nova pour {isAndroid ? 'Android' : 'Windows'} 0.4 · catalogue YouTube Music · paroles LRCLIB · concerts Ticketmaster.</p>
+        <p className="muted">{isAndroid ? 'Nova pour Android 0.4.1' : 'Nova pour Windows 0.4.8'} · paroles LRCLIB · concerts Ticketmaster.</p>
       </section>
     </div>
   );

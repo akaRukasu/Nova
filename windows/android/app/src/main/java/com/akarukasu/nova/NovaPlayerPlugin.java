@@ -17,6 +17,7 @@ import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -27,6 +28,8 @@ import android.widget.TextView;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -41,6 +44,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Collections;
 
 /**
  * Lecture par le lecteur officiel de YouTube Music, chargé dans des WebView invisibles avec le compte
@@ -57,6 +61,10 @@ public class NovaPlayerPlugin extends Plugin {
     private FrameLayout overlay;
     private Runnable overlayClose;
     private PluginCall loginCall;
+    private static final String OCTAVE = "https://music.octavestreaming.com";
+    private WebView octave;
+    private PluginCall octaveNavigation;
+    private boolean octavePanel;
     static NovaPlayerPlugin instance;
     /** Réseau local : synchronisation et télécommande depuis l'iPhone, Jam. */
     private NovaLink link;
@@ -292,6 +300,118 @@ public class NovaPlayerPlugin extends Plugin {
         if (root != null) root.removeView(overlay);
         overlay = null;
         overlayClose = null;
+    }
+
+    private static boolean octaveOrigin(Uri uri) {
+        return "https".equals(uri.getScheme()) && uri.getUserInfo() == null
+                && (uri.getPort() == -1 || uri.getPort() == 443) && "music.octavestreaming.com".equals(uri.getHost());
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private WebView octaveView() {
+        if (octave != null) return octave;
+        WebView view = new WebView(getContext());
+        view.getSettings().setJavaScriptEnabled(true);
+        view.getSettings().setDomStorageEnabled(true);
+        view.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        view.getSettings().setUseWideViewPort(true);
+        String script = readAsset("nova-octave.js");
+        boolean documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
+        if (documentStart) WebViewCompat.addDocumentStartJavaScript(view, script, Collections.singleton(OCTAVE));
+        view.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView web, WebResourceRequest request) {
+                if (!request.isForMainFrame()) return false;
+                Uri uri = request.getUrl();
+                return !octaveOrigin(uri) && !(octavePanel && "https".equals(uri.getScheme())
+                        && ("discord.com".equals(uri.getHost()) || "api.octavestreaming.com".equals(uri.getHost())));
+            }
+
+            @Override public void onPageFinished(WebView page, String address) {
+                if (octaveOrigin(Uri.parse(address))) {
+                    if (!documentStart) page.evaluateJavascript(script, null);
+                    if ("ok".equals(Uri.parse(address).getQueryParameter("discord"))) notifyListeners("octaveConnected", new JSObject());
+                }
+                if (octaveNavigation != null && address.equals(octaveNavigation.getString("url"))) {
+                    octaveNavigation.resolve();
+                    octaveNavigation = null;
+                }
+            }
+
+            @Override public void onReceivedError(WebView page, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame() && octaveNavigation != null
+                        && request.getUrl().toString().equals(octaveNavigation.getString("url"))) {
+                    octaveNavigation.reject("Impossible de charger Octave.");
+                    octaveNavigation = null;
+                }
+            }
+        });
+        octave = view;
+        attachOctaveInBackground();
+        return view;
+    }
+
+    private void attachOctaveInBackground() {
+        ViewGroup parent = (ViewGroup) octave.getParent();
+        if (parent != null) parent.removeView(octave);
+        octave.setAlpha(0f);
+        octave.setFocusable(false);
+        octave.setImportantForAccessibility(WebView.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        ViewGroup root = getActivity().findViewById(android.R.id.content);
+        float density = root.getResources().getDisplayMetrics().density;
+        root.addView(octave, 0, new FrameLayout.LayoutParams((int) (1280 * density), (int) (780 * density)));
+    }
+
+    @PluginMethod public void octaveNavigate(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!octaveOrigin(Uri.parse(url))) { call.reject("Adresse Octave invalide."); return; }
+        getActivity().runOnUiThread(() -> {
+            WebView view = octaveView();
+            if (octaveNavigation == null && url.equals(view.getUrl())) { call.resolve(); return; }
+            if (octaveNavigation != null) octaveNavigation.reject("Chargement Octave remplacé.");
+            octaveNavigation = call;
+            view.loadUrl(url);
+            tickHandler.postDelayed(() -> {
+                if (octaveNavigation == call) {
+                    octaveNavigation = null;
+                    call.reject("Le chargement Octave a expiré.");
+                }
+            }, 12000);
+        });
+    }
+
+    @PluginMethod public void octaveCall(PluginCall call) {
+        String operation = call.getString("operation", "");
+        JSObject args = call.getObject("args", new JSObject());
+        getActivity().runOnUiThread(() -> {
+            if (octave == null || octave.getUrl() == null || !octaveOrigin(Uri.parse(octave.getUrl()))) {
+                call.resolve(new JSObject().put("value", "null"));
+                return;
+            }
+            octave.evaluateJavascript("window.novaOctave?.(" + JSONObject.quote(operation) + "," + args + ") ?? null",
+                    result -> call.resolve(new JSObject().put("value", result)));
+        });
+    }
+
+    @PluginMethod public void octavePanel(PluginCall call) {
+        boolean visible = Boolean.TRUE.equals(call.getBoolean("visible", false));
+        getActivity().runOnUiThread(() -> {
+            if (!visible && octavePanel) dismissOverlay();
+            if (visible && !octavePanel) {
+                if (overlay != null) dismissOverlay();
+                WebView view = octaveView();
+                ViewGroup parent = (ViewGroup) view.getParent();
+                if (parent != null) parent.removeView(view);
+                view.setAlpha(1f);
+                view.setFocusable(true);
+                view.setImportantForAccessibility(WebView.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
+                octavePanel = true;
+                presentOverlay(view, "Octave", () -> {
+                    octavePanel = false;
+                    attachOctaveInBackground();
+                });
+            }
+            call.resolve();
+        });
     }
 
     @SuppressLint("SetJavaScriptEnabled")

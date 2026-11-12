@@ -130,7 +130,10 @@ struct ArtistView: View {
             let client = self.client
             let id = artist.id
             try await loadCached("artist-\(id)", freshFor: 1800,
-                                 fetch: { try await client.browse(BrowseLink(browseID: id)) }) { page = $0 }
+                                 fetch: {
+                if OctaveCatalog.id(id) != nil { return try await OctaveCatalog.shared.artist(id) }
+                return try await client.browse(BrowseLink(browseID: id))
+            }) { page = $0 }
         } catch {
             if (error as? URLError)?.code == .cancelled || error is CancellationError { return }
             errorText = error.localizedDescription

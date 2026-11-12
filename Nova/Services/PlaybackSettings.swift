@@ -37,6 +37,25 @@ enum PlaybackSettings {
         defaults.object(forKey: "recordHistory") as? Bool ?? true
     }
 
+    static var playlistSource: PlaybackSource {
+        PlaybackSource(rawValue: defaults.string(forKey: "playlistSource") ?? "") ?? .octave
+    }
+
+    static var syncOctaveToYouTube: Bool {
+        defaults.object(forKey: "syncOctaveToYouTube") as? Bool ?? true
+    }
+
+    static var octaveAudio: [String: Any] {
+        [
+            "quality": defaults.string(forKey: "octaveQuality") ?? "lossless",
+            "transition": defaults.string(forKey: "octaveTransition") ?? "automix",
+            "autoplay": defaults.object(forKey: "octaveAutoplay") as? Bool ?? true,
+            "gapless": defaults.object(forKey: "octaveGapless") as? Bool ?? true,
+            "soundCheck": defaults.object(forKey: "octaveSoundCheck") as? Bool ?? true,
+            "smartShuffle": defaults.object(forKey: "octaveSmartShuffle") as? Bool ?? true,
+        ]
+    }
+
     /// Transition entre deux titres, comme AutoMix et le fondu enchaîné d'Apple Music.
     enum Transition: String, CaseIterable, Identifiable {
         case off, crossfade, automix

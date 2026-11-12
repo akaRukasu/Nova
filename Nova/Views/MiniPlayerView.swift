@@ -7,8 +7,40 @@ struct MiniPlayerView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkThumb(track: player.current, size: 34, corner: 7)
-            VStack(alignment: .leading, spacing: 1) {
+            Button(action: onOpen) {
+                HStack(spacing: 9) {
+                    ArtworkThumb(track: player.current, size: 34, corner: 7)
+                    trackLabel
+                }
+            }
+            .disabled(player.current == nil)
+            .accessibilityHint("Ouvre le lecteur plein écran")
+            Spacer(minLength: 6)
+            if player.current != nil { PlaybackSourceMenu() }
+            Button {
+                player.togglePlay()
+            } label: {
+                if player.isLoading { ProgressView() }
+                else { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.title3) }
+            }
+            .frame(minWidth: 36, minHeight: 44)
+            .disabled(player.current == nil || player.isLoading)
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .overlay(alignment: .bottom) {
+            if player.duration > 0 {
+                ProgressView(value: min(max(0, player.currentTime), player.duration), total: player.duration)
+                    .tint(Color.novaAccent)
+                    .padding(.horizontal, 14)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var trackLabel: some View {
+        VStack(alignment: .leading, spacing: 1) {
                 Text(player.current?.title ?? "Rien en lecture")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -23,36 +55,30 @@ struct MiniPlayerView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-            }
-            Spacer(minLength: 8)
-            Group {
-                if player.isLoading {
-                    ProgressView()
-                } else {
-                    Button {
-                        player.togglePlay()
-                    } label: {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title3)
-                            .contentTransition(.symbolEffect(.replace))
-                    }
-                    .disabled(player.current == nil)
+        }
+    }
+}
+
+struct PlaybackSourceMenu: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        Menu {
+            ForEach(PlaybackSource.allCases) { source in
+                Button { player.switchSource(source) } label: {
+                    if source == player.source { Label(source.label, systemImage: "checkmark") }
+                    else { Text(source.label) }
                 }
             }
-            .frame(width: 32)
-            Button {
-                player.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title3)
-            }
-            .disabled(player.current == nil)
+        } label: {
+            Text(player.source.label)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.thinMaterial, in: Capsule())
+                .frame(minHeight: 44)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 14)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if player.current != nil { onOpen() }
-        }
+        .accessibilityLabel("Source de lecture, " + player.source.label)
     }
 }

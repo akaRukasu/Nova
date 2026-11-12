@@ -167,7 +167,7 @@ struct SearchView: View {
             return
         }
         try? await Task.sleep(for: .milliseconds(220))
-        guard !Task.isCancelled, let found = try? await client.suggestions(text) else { return }
+        guard !Task.isCancelled, let found = try? await OctaveCatalog.shared.suggestions(text) else { return }
         guard text == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
         suggestions = found
     }
@@ -179,7 +179,9 @@ struct SearchView: View {
         defer { isSearching = false }
         shelves = []
         do {
-            let found = try await client.search(text, scope: scope)
+            let found: [Shelf]
+            if scope == .videos { found = try await client.search(text, scope: scope) }
+            else { found = try await OctaveCatalog.shared.search(text, scope: scope) }
             guard text == submitted, !Task.isCancelled else { return }
             shelves = found
             errorText = nil

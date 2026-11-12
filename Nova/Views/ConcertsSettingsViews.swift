@@ -332,6 +332,15 @@ struct ActivitySheet: UIViewControllerRepresentable {
 
 struct SettingsView: View {
     @Environment(AccountStore.self) private var account
+    @Environment(PlayerModel.self) private var player
+    @AppStorage("playlistSource") private var playlistSource = PlaybackSource.octave
+    @AppStorage("octaveQuality") private var octaveQuality = "lossless"
+    @AppStorage("octaveTransition") private var octaveTransition = "automix"
+    @AppStorage("octaveAutoplay") private var octaveAutoplay = true
+    @AppStorage("octaveGapless") private var octaveGapless = true
+    @AppStorage("octaveSoundCheck") private var octaveSoundCheck = true
+    @AppStorage("octaveSmartShuffle") private var octaveSmartShuffle = true
+    @AppStorage("syncOctaveToYouTube") private var syncOctaveToYouTube = true
     @AppStorage("audioQualityHigh") private var highQuality = true
     @AppStorage("autoplayRadio") private var autoplayRadio = true
     @AppStorage("transitionStyle") private var transition = PlaybackSettings.Transition.automix.rawValue
@@ -376,6 +385,27 @@ struct SettingsView: View {
                 Button("Importer depuis une autre plateforme") { showImport = true }
             }
 
+            Section("Lecture Octave") {
+                Button("Compte et réglages Octave") { player.openOctaveAccount() }
+                Picker("Source des playlists", selection: $playlistSource) {
+                    ForEach(PlaybackSource.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Qualité Octave", selection: $octaveQuality) {
+                    Text("Économie de données").tag("low")
+                    Text("Haute").tag("high")
+                    Text("Lossless (FLAC)").tag("lossless")
+                }
+                Picker("Transitions Octave", selection: $octaveTransition) {
+                    ForEach(PlaybackSettings.Transition.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                Toggle("Autoplay", isOn: $octaveAutoplay)
+                Toggle("Lecture sans blanc", isOn: $octaveGapless)
+                Toggle("Sound Check", isOn: $octaveSoundCheck)
+                Toggle("Smart Shuffle", isOn: $octaveSmartShuffle)
+                Toggle("Ajouter les écoutes à l’historique YouTube Music", isOn: $syncOctaveToYouTube)
+                    .disabled(!recordHistory || !account.isSignedIn)
+            }
+
             Section {
                 if let computer = PCSync.shared.pairedComputer {
                     LabeledContent("Associé à", value: computer)
@@ -404,7 +434,7 @@ struct SettingsView: View {
                 Toggle("Lecture automatique", isOn: $autoplayRadio)
                 Toggle("Historique d'écoute", isOn: $recordHistory)
             } header: {
-                Text("Lecture")
+                Text("Lecture YouTube Music")
             } footer: {
                 Text("Haute qualité : le meilleur flux AAC que YouTube fournit à Nova (128 kbit/s, qualité « élevée » de YouTube Music). L'égaliseur de volume baisse les titres très forts au niveau des autres. La lecture automatique enchaîne avec des titres similaires à la fin de la file. AirPlay se choisit depuis le lecteur.")
             }

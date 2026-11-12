@@ -1,5 +1,6 @@
 // Pages d'artiste, d'album et de playlist YouTube Music.
 import type { Collection } from '../../shared/types';
+import { octaveCollectionUrl } from '../../shared/octave';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
 import { ShelfView } from '../components/Shelf';
@@ -50,11 +51,18 @@ export function CollectionPage({ collection }: { collection: Collection }) {
   // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
   const shared = isShared(collection.id);
   const { data, error, loading, reload } = useCached(`collection-${collection.id}`, () => api.collection(collection), shared ? 0 : 30 * 60_000);
+  const octave = octaveCollectionUrl(collection);
   if (loading && !data) return <Loading />;
-  if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
+  if (error && !data) return (
+    <div className="page">
+      <ErrorState message={error} retry={() => reload(true)} />
+      {octave && <button className="button" onClick={() => player.openOctave(octave)}>Ouvrir dans Octave</button>}
+    </div>
+  );
   if (!data) return null;
   const header = data.header;
   const isAlbum = collection.kind === 'album';
+  const isPlaylist = collection.kind === 'playlist';
   const tracks = sortOrder(data.tracks, sort.sort, sort.reversed, state.stats).map((i) => data.tracks[i]);
   const saved: Collection = { ...collection, title: header.title || collection.title, artwork: header.artwork ?? collection.artwork, subtitle: header.subtitle ?? collection.subtitle };
   return (
@@ -67,7 +75,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           {header.subtitle && <p className="muted">{header.subtitle}</p>}
           {header.description && <p className="description">{header.description}</p>}
           <div className="row-buttons">
-            <PlayShuffle tracks={tracks} />
+            <PlayShuffle tracks={tracks} playlist={isPlaylist} />
             <SortButton state={sort} manualLabel={isAlbum ? 'Ordre de l’album' : 'Ordre de la playlist'} />
             <button className="button secondary" onClick={() => toggleSaved(saved)}>
               <Icon name={isSaved(collection.id) ? 'check' : 'plus'} size={16} /> {isSaved(collection.id) ? 'Dans la bibliothèque' : 'Ajouter'}
@@ -92,7 +100,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           <button className="button secondary" onClick={() => void reload(true)}>Actualiser</button>
         </div>
       )}
-      <TrackList tracks={tracks} numbered={isAlbum && sort.manual} />
+      <TrackList tracks={tracks} numbered={isAlbum && sort.manual} playlist={isPlaylist} />
       {data.related.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
     </div>
   );

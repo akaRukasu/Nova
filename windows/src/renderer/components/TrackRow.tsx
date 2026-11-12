@@ -1,5 +1,6 @@
 // Ligne de titre : pochette, titre, artiste, album, durée ; double-clic pour lire, clic droit pour le menu.
 import type { Track } from '../../shared/types';
+import { isOctaveId } from '../../shared/octave';
 import { isAndroid } from '../lib/api';
 import { isLiked, toggleLike } from '../lib/library';
 import { playerState } from '../lib/player';
@@ -24,18 +25,22 @@ export function TrackRow({ track, index, onPlay, showArtwork = true, showAlbum =
   useStore(library);
   const current = state.queue[state.index]?.id === track.id;
   const liked = isLiked(track.id);
+  const octave = isOctaveId(track.id);
+  const playLabel = octave ? `Lire ${track.title} dans Octave` : `Lire ${track.title}`;
   return (
-    <div className={`track-row ${current ? 'current' : ''}`} onDoubleClick={isAndroid ? undefined : onPlay}
+    <div className={`track-row ${current ? 'current' : ''}`} onDoubleClick={isAndroid ? undefined : (e) => {
+      if (!octave || !(e.target as HTMLElement).closest('button, .link')) onPlay();
+    }}
       onClick={isAndroid ? (e) => { if (!(e.target as HTMLElement).closest('button, .link')) onPlay(); } : undefined}
       onContextMenu={(e) => showMenu(e, trackMenu(track, extraMenu))}>
       {rank != null && <span className={`rank ${rank < 3 ? 'top' : ''}`}>{rank + 1}</span>}
       {showArtwork ? (
-        <button className="row-artwork" onClick={onPlay} aria-label={`Lire ${track.title}`}>
+        <button className="row-artwork" onClick={onPlay} aria-label={playLabel} title={octave ? playLabel : undefined}>
           <Artwork track={track} size={40} radius={6} />
           <span className="row-play">{current && state.playing ? <span className="bars"><i /><i /><i /></span> : <Icon name="play" size={16} />}</span>
         </button>
       ) : (
-        <button className="row-index" onClick={onPlay}>
+        <button className="row-index" onClick={onPlay} aria-label={playLabel} title={octave ? playLabel : undefined}>
           <span className="number">{current && state.playing ? <span className="bars"><i /><i /><i /></span> : (index ?? 0) + 1}</span>
           <Icon name="play" size={14} className="hover-play" />
         </button>

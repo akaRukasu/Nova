@@ -11,6 +11,10 @@ import { runImport as runImports } from '../main/importRun';
 import { lyrics } from '../main/lyrics';
 import { loadMatches, match, savedMatches } from '../main/matcher';
 import * as yt from '../main/yt';
+import * as octave from '../main/octave';
+import { syncOctaveListen, findYouTubeRecording } from '../main/octaveHistory';
+import { isOctaveId } from '../shared/octave';
+import { AndroidOctavePlayer } from './octavePlayer';
 
 interface NovaPlayer {
   load(options: { deck: number; videoId: string; startAt: number; volume: number }): Promise<void>;
@@ -34,6 +38,10 @@ interface NovaPlayer {
   jamStop(): Promise<void>;
   startTicker(options: { interval: number }): Promise<void>;
   stopTicker(): Promise<void>;
+  octaveNavigate(options: { url: string }): Promise<void>;
+  octaveCall(options: { operation: string; args?: object }): Promise<{ value: string }>;
+  octavePanel(options: { visible: boolean }): Promise<void>;
+  addListener(event: 'octaveConnected', listener: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'tick', listener: () => void): Promise<PluginListenerHandle>;
   addListener(event: 'relay', listener: (data: { channel: string; args: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: 'event', listener: (data: { deck: number; payload: unknown }) => void): Promise<PluginListenerHandle>;
@@ -43,6 +51,13 @@ interface NovaPlayer {
 const native = registerPlugin<NovaPlayer>('NovaPlayer');
 const listeners = new Map<string, Set<(...args: any[]) => void>>();
 const emit = (channel: string, ...args: unknown[]) => listeners.get(channel)?.forEach((listener) => listener(...args));
+const octavePlayer = new AndroidOctavePlayer(native, (status) => emit('octave:status', status), (track) => {
+  emit('octave:played', track, Date.now());
+  void syncOctaveListen(track, async () => {
+    const { settings } = await loadLibrary();
+    return settings.recordHistory && settings.syncOctaveToYouTube !== false && Boolean(localStorage.getItem('youtubeCookie'));
+  }).catch(() => emit('octave:sync-error'));
+});
 
 // MARK: Réseau (requêtes faites par Android : pas de CORS, et les en-têtes Cookie/User-Agent passent)
 
@@ -121,17 +136,17 @@ function pickFiles(accept: string, multiple: boolean): Promise<{ name: string; t
 let lastMedia = '';
 
 const handlers: Record<string, (...args: any[]) => unknown> = {
-  'yt:search': (query, scope) => yt.search(query, scope),
-  'yt:suggestions': (query) => yt.suggestions(query),
-  'yt:home': () => yt.home(),
-  'yt:homeMore': () => yt.homeMore(),
-  'yt:explore': () => yt.explore(),
+  'yt:search': (query, scope) => scope === 'video' ? yt.search(query, scope) : octave.search(query, scope),
+  'yt:suggestions': (query) => octave.suggestions(query),
+  'yt:home': () => octave.charts(true),
+  'yt:homeMore': () => ({ shelves: [] }),
+  'yt:explore': () => octave.charts(),
   'yt:browse': (link) => yt.browse(link),
-  'yt:artist': (id) => yt.artist(id),
-  'yt:artistSongs': (id) => yt.artistAllSongs(id),
-  'yt:collection': (target) => yt.collection(target),
-  'yt:radio': (id) => yt.radio(id),
-  'yt:related': (id) => yt.related(id),
+  'yt:artist': (id) => isOctaveId(id) ? octave.artist(id) : yt.artist(id),
+  'yt:artistSongs': (id) => isOctaveId(id) ? octave.artistSongs(id) : yt.artistAllSongs(id),
+  'yt:collection': (target) => isOctaveId(target.id) ? octave.collection(target) : yt.collection(target),
+  'yt:radio': (id) => isOctaveId(id) ? octave.radio(id) : yt.radio(id),
+  'yt:related': (id) => isOctaveId(id) ? octave.related(id) : yt.related(id),
   'yt:squareArtwork': (id) => yt.squareArtwork(id),
   'art:palette': () => null,
   'lyrics:get': (track, duration) => lyrics(track, duration),
@@ -142,7 +157,10 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
 
   'library:load': () => loadLibrary(),
   'library:save': (state) => writeJSON('library.json', state),
-  'settings:apply': (settings) => yt.configure({ lang: settings.language, location: settings.region }),
+  'settings:apply': (settings) => {
+    octavePlayer.setSettings(settings.octaveAudio);
+    yt.configure({ lang: settings.language, location: settings.region });
+  },
 
   'account:get': async () => {
     const cookie = localStorage.getItem('youtubeCookie');
@@ -207,6 +225,13 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'webplayer:load': (deck, videoId, startAt, volume) => native.load({ deck, videoId, startAt, volume }),
   'webplayer:command': (deck, command) => native.command({ deck, command }),
   'webplayer:show': (deck) => native.showDeck({ deck }),
+  'octave:open': (url) => octavePlayer.open(url),
+  'octave:hide': () => octavePlayer.hide(),
+  'octave:stop': () => octavePlayer.stop(),
+  'octave:play': (track, request, volume, position) => octavePlayer.play(track, request, volume, position),
+  'octave:command': (request, command) => octavePlayer.command(request, command),
+  'octave:queue-next': (request, track) => octavePlayer.queueNext(request, track),
+  'octave:youtube-match': (track) => findYouTubeRecording(track),
 
   // État de lecture publié chaque seconde : notification multimédia et écran verrouillé d'Android.
   'remote:state': (state) => {
@@ -231,6 +256,7 @@ window.nova = {
   },
 };
 (window.nova as any).platform = 'android';
+window.nova.octave = Capacitor.isNativePlatform();
 
 // Minuteries des transitions rythmées par Android (une page invisible voit ses minuteries ralenties).
 const tickers = new Map<number, { ms: number; fn: () => void; last: number }>();
@@ -260,11 +286,12 @@ if (Capacitor.isNativePlatform()) {
   };
 }
 
-// Sur Android, la lecture passe toujours par le lecteur officiel de YouTube Music.
+// YouTube Music utilise son lecteur officiel sur Android.
 localStorage.setItem('engineMode', 'web');
 
 void native.addListener('event', ({ deck, payload }) => emit('webplayer:event', deck, payload)).catch(() => undefined);
 native.addListener('media', ({ action }) => emit('media:key', action === 'play' || action === 'pause' ? 'toggle' : action)).catch(() => undefined);
+native.addListener('octaveConnected', () => emit('octave:connected')).catch(() => undefined);
 // Messages du réseau local (iPhone, Jam) : mêmes canaux que sur PC.
 native.addListener('relay', ({ channel, args }) => {
   try { emit(channel, ...JSON.parse(args)); } catch { /* message illisible */ }
@@ -274,6 +301,8 @@ export async function prepare() {
   if (!Capacitor.isNativePlatform()) return;
   loadMatches(await readJSON('matches.json', {}));
   await configure(localStorage.getItem('youtubeCookie'));
+  octavePlayer.setSettings((await loadLibrary()).settings.octaveAudio);
+  octavePlayer.warmUp();
   const { tv } = await native.isTV().catch(() => ({ tv: false }));
   document.documentElement.classList.add('android');
   if (tv) {

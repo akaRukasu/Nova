@@ -33,6 +33,15 @@ final class PlayerModel {
     /// Transition AutoMix / fondu en cours (badge dans le lecteur).
     private(set) var isTransitioning = false
     var errorMessage: String?
+    private(set) var source: PlaybackSource = .octave
+    var showsOctaveAccount = false
+    @ObservationIgnored private(set) lazy var octave = OctaveWebPlayer()
+    @ObservationIgnored private var preferredSource: PlaybackSource = .octave
+    @ObservationIgnored private var octaveTrack: Track?
+    @ObservationIgnored private var octaveNext: (original: Track, recording: Track)?
+    @ObservationIgnored private var octaveMonitor: Task<Void, Never>?
+    @ObservationIgnored private var octavePreload: Task<Void, Never>?
+    @ObservationIgnored private var octaveSession = 0
 
     enum RepeatMode: Int, Codable {
         case off, all, one
@@ -489,12 +498,13 @@ final class PlayerModel {
     // MARK: Commandes
 
     /// Lance une liste à partir d'un index, puis complète la file avec la radio du titre.
-    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false) {
+    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false, source: PlaybackSource = .octave) {
         guard !tracks.isEmpty else { return }
         if RemoteControl.shared.isActive {
-            Task { await RemoteControl.shared.send(["action": "playTracks", "index": start, "shuffled": shuffled], tracks: tracks) }
+            Task { await RemoteControl.shared.send(["action": "playTracks", "index": start, "shuffled": shuffled, "playbackSource": source.rawValue], tracks: tracks) }
             return
         }
+        preferredSource = source
         if shuffled {
             unshuffledQueue = tracks
             queue = tracks.shuffled()
@@ -507,7 +517,7 @@ final class PlayerModel {
             index = min(max(start, 0), tracks.count - 1)
         }
         load()
-        if queue.count - index <= 1 { extendWithRadio(from: queue[index]) }
+        if self.source == .youtube, queue.count - index <= 1 { extendWithRadio(from: queue[index]) }
     }
 
     func startRadio(from track: Track) {
@@ -520,7 +530,7 @@ final class PlayerModel {
             do {
                 let tracks = try await client.allTracks(of: collection)
                 guard !tracks.isEmpty else { throw NovaError.emptyPage }
-                play(tracks, shuffled: shuffled)
+                play(tracks, shuffled: shuffled, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
             } catch {
                 errorMessage = "« \(collection.title) » : \(error.localizedDescription)"
             }
@@ -648,6 +658,7 @@ final class PlayerModel {
             isShuffled = false
             queue = newQueue
             index = newIndex
+            preferredSource = newQueue[newIndex].id.hasPrefix("octave:") ? .octave : .youtube
             // Pause éventuelle : appliquée au prochain état reçu, une fois le titre chargé.
             load(resumeAt: position)
             return
@@ -667,7 +678,12 @@ final class PlayerModel {
 
     func resume() {
         if RemoteControl.shared.isActive { return RemoteControl.shared.command("play") }
-        guard current != nil else { return }
+        guard current != nil, !isLoading else { return }
+        if source == .octave {
+            if octaveTrack == nil { load(resumeAt: currentTime) }
+            else { Task { await octave.command("play") } }
+            return
+        }
         if player.currentItem == nil { load(resumeAt: currentTime); return }
         try? AVAudioSession.sharedInstance().setActive(true)
         player.play()
@@ -677,6 +693,14 @@ final class PlayerModel {
 
     func pause() {
         if RemoteControl.shared.isActive { return RemoteControl.shared.command("pause") }
+        if source == .octave {
+            if isLoading {
+                loadTask?.cancel()
+                octave.invalidate()
+                isLoading = false
+            }
+            Task { await octave.command("pause") }
+        }
         finishTransition()
         player.pause()
         isPlaying = false
@@ -686,6 +710,16 @@ final class PlayerModel {
 
     func next() {
         if RemoteControl.shared.isActive { return RemoteControl.shared.command("next") }
+        if source == .octave, octaveTrack != nil {
+            if hasNext, octaveNext?.original.id == queue[index + 1].id {
+                Task { await octave.command("next") }
+                return
+            }
+            if !hasNext, repeatMode != .all {
+                Task { await octave.command("next") }
+                return
+            }
+        }
         guard hasNext else {
             if repeatMode == .all, !queue.isEmpty {
                 index = 0
@@ -721,6 +755,11 @@ final class PlayerModel {
             currentTime = seconds
             return RemoteControl.shared.command("seek", value: seconds)
         }
+        if source == .octave {
+            currentTime = max(0, seconds)
+            if octaveTrack != nil { Task { await octave.command("seek", value: max(0, seconds)) } }
+            return
+        }
         // Revenir avant la fin réarme la détection de fin de titre.
         if seconds < (expectedDuration ?? .infinity) - 1 { endHandled = false }
         guard player.currentItem != nil else {
@@ -738,9 +777,18 @@ final class PlayerModel {
     // MARK: Chargement
 
     /// `transition` : le titre précédent continue pendant le chargement, puis s'efface en fondu.
-    private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil) {
+    private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil, paused: Bool = false) {
         guard let track = current else { return }
         loadTask?.cancel()
+        octaveMonitor?.cancel()
+        octavePreload?.cancel()
+        octaveNext = nil
+        let wasOctave = source == .octave && (octaveTrack != nil || isLoading)
+        octaveTrack = nil
+        octaveSession += 1
+        let session = octaveSession
+        let localDownload = !NetworkMonitor.shared.isConnected && downloads.localURL(for: track.id) != nil
+        source = localDownload ? .youtube : preferredSource
         rateTask?.cancel()
         statusObservation = nil
         beginLoadingBackgroundTask()
@@ -751,14 +799,14 @@ final class PlayerModel {
             player.replaceCurrentItem(with: nil)
             isPlaying = false
         }
-        isLoading = true
+        isLoading = !paused
         currentTime = startTime
         duration = track.duration ?? knownDurations[track.id] ?? 0
         expectedDuration = track.duration ?? knownDurations[track.id]
         endHandled = false
         artwork = nil
         updateNowPlaying()
-        if expectedDuration == nil { fetchDuration(for: track) }
+        if expectedDuration == nil, source == .youtube, !track.id.hasPrefix("octave:") { fetchDuration(for: track) }
         currentIsVideoOnly = false
         if !track.hasSquareArtwork { resolveArtwork(for: track) }
         saveSession(force: true)
@@ -766,12 +814,40 @@ final class PlayerModel {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let url = try await self.playableURL(for: track)
+                if wasOctave { await self.octave.stop() }
+                try Task.checkCancellation()
+                if paused {
+                    self.endLoadingBackgroundTask()
+                    return
+                }
+                if self.source == .octave {
+                    try await self.startOctave(track, at: startTime, session: session)
+                    return
+                }
+                let recording: Track
+                if track.id.hasPrefix("octave:") {
+                    guard let found = try await OctaveCatalog.shared.youtubeRecording(track) else {
+                        throw OctaveWebPlayer.Failure.notFound
+                    }
+                    recording = found
+                } else { recording = track }
+                let url = try await self.playableURL(for: recording)
                 try Task.checkCancellation()
                 self.start(url: url, track: track, at: startTime, transition: transition)
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
+                if self.source == .octave || track.id.hasPrefix("octave:") {
+                    self.isLoading = false
+                    self.isPlaying = false
+                    self.endLoadingBackgroundTask()
+                    self.errorMessage = self.source == .youtube ? "Cette version est introuvable sur YouTube Music." : error.localizedDescription
+                    if let failure = error as? OctaveWebPlayer.Failure, failure == .connection || failure == .interaction {
+                        self.octave.showAccount(loadSettings: false)
+                        self.showsOctaveAccount = true
+                    }
+                    return
+                }
                 if transition != nil {
                     // Titre suivant illisible : on arrête l'ancien et on passe à la suite normalement.
                     self.crossfadeStarting = false
@@ -782,6 +858,132 @@ final class PlayerModel {
             }
         }
         loadArtwork(for: track)
+    }
+
+    func switchSource(_ newSource: PlaybackSource) {
+        if RemoteControl.shared.isActive {
+            Task { await RemoteControl.shared.send(["action": "switchSource", "playbackSource": newSource.rawValue]) }
+            return
+        }
+        preferredSource = newSource
+        guard newSource != source || errorMessage != nil, current != nil else { return }
+        let stayPaused = !isPlaying && !isLoading && errorMessage == nil
+        errorMessage = nil
+        load(resumeAt: currentTime, paused: stayPaused)
+    }
+
+    func openOctaveAccount() {
+        pause()
+        octave.showAccount(loadSettings: true)
+        showsOctaveAccount = true
+    }
+
+    private func startOctave(_ track: Track, at position: Double, session: Int) async throws {
+        guard let recording = try await OctaveCatalog.shared.recording(track) else { throw OctaveWebPlayer.Failure.notFound }
+        try Task.checkCancellation()
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let state = try await octave.start(recording, position: position)
+        try Task.checkCancellation()
+        guard octaveSession == session else { throw CancellationError() }
+        octaveTrack = recording
+        isLoading = false
+        isPlaying = state.playing
+        if state.duration > 0 { duration = state.duration }
+        endLoadingBackgroundTask()
+        updateNowPlaying()
+        prepareOctaveNext()
+        observeOctave(session: session)
+    }
+
+    private func prepareOctaveNext() {
+        octavePreload?.cancel()
+        guard source == .octave, let current = octaveTrack, let next = upNext.first, repeatMode != .one else { return }
+        let session = octaveSession
+        octavePreload = Task { [weak self] in
+            guard let self, let selected = try? await OctaveCatalog.shared.recording(next),
+                  selected.id != current.id, !Task.isCancelled, octaveSession == session,
+                  await octave.enqueue(selected), !Task.isCancelled, octaveSession == session else { return }
+            octaveNext = (next, selected)
+        }
+    }
+
+    private func observeOctave(session: Int) {
+        octaveMonitor = Task { [weak self] in
+            var heard = 0.0
+            var recorded = false
+            var endedAt: Date?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, !Task.isCancelled, octaveSession == session, let selected = octaveTrack else { return }
+                guard let sample = await octave.sample(), !Task.isCancelled, octaveSession == session else { continue }
+                if sample.blocked == "sign-in" {
+                    await octave.stop()
+                    isPlaying = false
+                    octaveTrack = nil
+                    octave.showAccount(loadSettings: false)
+                    showsOctaveAccount = true
+                    updateNowPlaying()
+                    return
+                }
+                guard let position = sample.position else { continue }
+                let previous = currentTime
+                var changed = false
+                if sample.playing && !sample.matches(selected) {
+                    if let planned = octaveNext, upNext.first?.id == planned.original.id, sample.matches(planned.recording) {
+                        index += 1
+                        octaveTrack = planned.recording
+                    } else if hasNext || repeatMode != .off {
+                        if repeatMode != .one { index = hasNext ? index + 1 : 0 }
+                        load()
+                        return
+                    } else if let related = sample.track {
+                        queue.append(related)
+                        index = queue.count - 1
+                        octaveTrack = related
+                    } else { continue }
+                    artwork = nil
+                    if let current { loadArtwork(for: current) }
+                    octaveNext = nil
+                    prepareOctaveNext()
+                    heard = 0
+                    recorded = false
+                    changed = true
+                }
+                if sample.playing { endedAt = nil }
+                else if sample.ended || (isPlaying && duration > 0 && duration - previous < 1.5) { endedAt = endedAt ?? Date() }
+                currentTime = position
+                if sample.duration > 0 { duration = sample.duration }
+                isPlaying = sample.playing
+                updateNowPlaying()
+                if let endedAt, Date().timeIntervalSince(endedAt) > 2.5 {
+                    if repeatMode == .one { load() }
+                    else if hasNext || repeatMode == .all {
+                        index = hasNext ? index + 1 : 0
+                        load()
+                    }
+                    return
+                }
+                if !changed, !recorded, sample.audible, position > previous, position - previous < 2 {
+                    heard += position - previous
+                    if heard >= 5, let current {
+                        recorded = true
+                        library.recordPlay(current, addToHistory: PlaybackSettings.recordHistory)
+                        recordOctaveHistory(current)
+                    }
+                }
+                if Date().timeIntervalSince(lastSessionSave) > 15 { saveSession() }
+            }
+        }
+    }
+
+    private func recordOctaveHistory(_ track: Track) {
+        guard PlaybackSettings.recordHistory, PlaybackSettings.syncOctaveToYouTube, account.isSignedIn else { return }
+        Task {
+            if let found = try? await OctaveCatalog.shared.youtubeRecording(track),
+               PlaybackSettings.syncOctaveToYouTube, account.isSignedIn {
+                try? await client.addToWatchHistory(videoID: found.id)
+            }
+        }
     }
 
     private func playableURL(for track: Track) async throws -> URL {
@@ -903,6 +1105,7 @@ final class PlayerModel {
     /// Titre suivant changé (lecture d'un autre titre, file modifiée, aléatoire…) : on le prépare.
     private func upcomingChanged() {
         guard !RemoteControl.shared.isActive else { return }
+        if source == .octave { return }
         let next = queue.indices.contains(index + 1) ? queue[index + 1].id : nil
         if next != prefetchTarget { prefetchNext() }
     }
@@ -910,6 +1113,7 @@ final class PlayerModel {
     /// Le titre suivant est prêt bien avant la fin du titre en cours : lien du flux trouvé (prioritaire sur les
     /// téléchargements), puis fichier mis en cache. Le passage au titre suivant est alors immédiat.
     private func prefetchNext() {
+        guard source == .youtube else { return }
         guard let next = queue.dropFirst(index + 1).first else {
             prefetchTask?.cancel()
             prefetchTarget = nil
@@ -1084,6 +1288,7 @@ final class PlayerModel {
         var time: TimeInterval
         var repeatMode: RepeatMode
         var unshuffledQueue: [Track]?
+        var source: PlaybackSource?
     }
 
     @ObservationIgnored private let sessionURL = FileManager.default
@@ -1095,11 +1300,15 @@ final class PlayerModel {
     // MARK: Télécommande (lecture sur le PC)
 
     /// La lecture passe sur le PC : le lecteur local s'arrête, l'interface reflète désormais le PC.
-    func enterRemote() {
+    func enterRemote() async {
         saveSession(force: true)
         finishTransition()
         loadTask?.cancel()
         player.pause()
+        octaveMonitor?.cancel()
+        octavePreload?.cancel()
+        if source == .octave { await octave.stop() }
+        octaveTrack = nil
         isLoading = false
     }
 
@@ -1118,6 +1327,7 @@ final class PlayerModel {
             loadArtwork(for: track)
         }
         isPlaying = state.playing
+        source = state.source ?? (state.track?.id.hasPrefix("octave:") == true ? .octave : .youtube)
         isLoading = state.loading ?? false
         currentTime = state.time
         duration = state.duration
@@ -1132,7 +1342,8 @@ final class PlayerModel {
             queue = [track] + state.queue
             index = 0
             player.replaceCurrentItem(with: nil)
-            load(resumeAt: state.time)
+            preferredSource = state.source ?? source
+            load(resumeAt: state.time, paused: !state.playing)
         } else {
             player.replaceCurrentItem(with: nil)
             isPlaying = false
@@ -1148,7 +1359,8 @@ final class PlayerModel {
         // fil principal (des milliers de titres réécrits toutes les 15 s ralentissaient l'app, écran verrouillé).
         let start = min(max(0, index - 100), queue.count), end = max(start, min(queue.count, index + 1500))
         let session = Session(queue: Array(queue[start..<end]), index: index - start, time: currentTime,
-                              repeatMode: repeatMode, unshuffledQueue: unshuffledQueue.map { Array($0.prefix(3000)) })
+                              repeatMode: repeatMode, unshuffledQueue: unshuffledQueue.map { Array($0.prefix(3000)) },
+                              source: preferredSource)
         sessionVersion += 1
         let version = sessionVersion, url = sessionURL
         Task.detached(priority: .utility) { await SessionWriter.shared.write(session, version: version, to: url) }
@@ -1175,6 +1387,8 @@ final class PlayerModel {
               session.queue.indices.contains(session.index) else { return }
         queue = session.queue
         index = session.index
+        preferredSource = session.source ?? .octave
+        source = preferredSource
         currentTime = session.time
         duration = session.queue[session.index].duration ?? 0
         repeatMode = session.repeatMode

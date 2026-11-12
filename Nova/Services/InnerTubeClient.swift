@@ -121,6 +121,12 @@ struct InnerTubeClient {
 
     /// Tous les titres d'une collection (pour Lecture, Aléatoire, Télécharger…).
     func allTracks(of collection: MusicCollection) async throws -> [Track] {
+        if OctaveCatalog.id(collection.id) != nil {
+            if collection.kind == .artist {
+                return try await OctaveCatalog.shared.artist(collection.id).shelves.flatMap(\.tracks)
+            }
+            return try await OctaveCatalog.shared.collection(collection).tracks
+        }
         if collection.kind == .artist {
             let page = try await browse(BrowseLink(browseID: collection.id))
             let songs = page.shelves.first { $0.layout == .list && !$0.tracks.isEmpty }
@@ -224,7 +230,35 @@ struct InnerTubeClient {
 
     /// « J'aime » synchronisé avec le compte YouTube.
     func setLiked(_ liked: Bool, videoID: String) async throws {
+        guard !videoID.hasPrefix("octave:") else { return }
         _ = try await post(liked ? "like/like" : "like/removelike", body: ["target": ["videoId": videoID]])
+    }
+
+    func addToWatchHistory(videoID: String) async throws {
+        guard AuthSession.shared.cookieHeader != nil, !videoID.hasPrefix("octave:") else { return }
+        let player = try await send("player", body: ["videoId": videoID], query: [], authenticated: true)
+        guard let tracking = player["playbackTracking"] as? JSONObject,
+              let playback = tracking["videostatsPlaybackUrl"] as? JSONObject,
+              let address = playback["baseUrl"] as? String, let url = URL(string: address),
+              url.scheme == "https", let host = url.host,
+              ["s.youtube.com", "www.youtube.com", "music.youtube.com"].contains(host),
+              url.path == "/api/stats/playback", let cookies = AuthSession.shared.cookieHeader else { return }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.host = "music.youtube.com"
+        components.queryItems = (components.queryItems ?? []) + [
+            .init(name: "c", value: Self.clientName), .init(name: "cver", value: Self.clientVersion),
+            .init(name: "rtn", value: "0"), .init(name: "rt", value: "0"),
+        ]
+        guard let destination = components.url else { return }
+        var request = URLRequest(url: destination, timeoutInterval: 8)
+        request.httpShouldHandleCookies = false
+        request.setValue(cookies, forHTTPHeaderField: "Cookie")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(Self.origin + "/", forHTTPHeaderField: "Referer")
+        let (_, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw NovaError.badResponse(http.statusCode)
+        }
     }
 
     /// Ajoute un titre à une playlist du compte YouTube.

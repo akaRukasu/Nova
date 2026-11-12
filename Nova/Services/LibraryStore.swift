@@ -13,6 +13,11 @@ final class LibraryStore {
     private(set) var searches: [String] = []
     private(set) var smartPlaylists: [SmartPlaylist] = []
     private(set) var stats: [String: TrackStats] = [:]
+    struct ListeningEntry: Codable {
+        var track: Track
+        var plays: Int
+    }
+    private(set) var listeningYears: [String: [String: ListeningEntry]] = [:]
     /// Tous les morceaux de la bibliothèque (likés, playlists, historique), sans doublons.
     private(set) var songs: [Track] = []
     /// Titres ajoutés à la bibliothèque (bouton « + »), du plus récent au plus ancien.
@@ -33,6 +38,7 @@ final class LibraryStore {
         var stats: [String: TrackStats]?
         var addedTracks: [Track]?
         var savedDates: [String: Date]?
+        var listeningYears: [String: [String: ListeningEntry]]?
     }
 
     @ObservationIgnored private let directory: URL = FileManager.default
@@ -52,6 +58,7 @@ final class LibraryStore {
             stats = snapshot.stats ?? [:]
             addedTracks = snapshot.addedTracks ?? []
             savedDates = snapshot.savedDates ?? [:]
+            listeningYears = snapshot.listeningYears ?? [:]
         } else if let data = try? Data(contentsOf: directory.appendingPathComponent("recents.json")),
                   let old = try? JSONDecoder().decode([Track].self, from: data) {
             // Historique de l'étape 1.
@@ -179,11 +186,16 @@ final class LibraryStore {
 
     /// Enregistre une écoute (statistiques et, si activé, historique).
     func recordPlay(_ track: Track, addToHistory: Bool) {
+        let now = Date()
         var info = stats[track.id] ?? TrackStats()
         info.playCount += 1
-        info.lastPlayed = Date()
+        info.lastPlayed = now
         stats[track.id] = info
         if addToHistory {
+            let year = String(Calendar.current.component(.year, from: now))
+            var entry = listeningYears[year]?[track.id] ?? ListeningEntry(track: track, plays: 0)
+            entry.plays += 1
+            listeningYears[year, default: [:]][track.id] = entry
             addRecent(track)
         } else {
             save(rebuildingSongs: false)
@@ -476,7 +488,7 @@ final class LibraryStore {
     func exportData() -> Data? {
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
-                                addedTracks: addedTracks, savedDates: savedDates)
+                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         return try? encoder.encode(ExportEnvelope(library: snapshot, shared: SharedPlaylists.shared.entries))
@@ -486,7 +498,7 @@ final class LibraryStore {
     func exportDataInBackground() async -> Data? {
         let envelope = ExportEnvelope(library: Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved,
                                                         searches: searches, smartPlaylists: smartPlaylists, stats: stats,
-                                                        addedTracks: addedTracks, savedDates: savedDates),
+                                                        addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears),
                                       shared: SharedPlaylists.shared.entries)
         return await Task.detached(priority: .utility) {
             let encoder = JSONEncoder()
@@ -536,7 +548,7 @@ final class LibraryStore {
         pendingWrite = nil
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
-                                addedTracks: addedTracks, savedDates: savedDates)
+                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears)
         let directory = directory, fileURL = fileURL
         Task.detached(priority: .utility) {
             do {

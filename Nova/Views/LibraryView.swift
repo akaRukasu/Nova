@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Rubriques de la bibliothèque, masquables et réordonnables (bouton « Modifier »).
 enum LibrarySection: String, CaseIterable, Identifiable {
-    case playlists, artists, albums, songs, liked, downloads, history, releases, concerts, youtube, importer
+    case playlists, artists, albums, songs, liked, downloads, history, wrapped, releases, concerts, youtube, importer
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "Titres likés"
         case .downloads: return "Téléchargés"
         case .history: return "Historique"
+        case .wrapped: return "Récap annuel"
         case .releases: return "Sorties"
         case .concerts: return "Concerts"
         case .youtube: return "Mon compte YouTube"
@@ -31,6 +32,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "heart"
         case .downloads: return "arrow.down.circle"
         case .history: return "clock"
+        case .wrapped: return "sparkles"
         case .releases: return "sparkles.rectangle.stack"
         case .concerts: return "ticket"
         case .youtube: return "person.crop.circle"
@@ -38,7 +40,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads, .releases, .concerts]
+    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads, .history, .wrapped, .releases, .concerts]
 }
 
 struct LibraryView: View {
@@ -93,6 +95,10 @@ struct LibraryView: View {
             if sectionsVersion < 2 {
                 save(enabled + [.releases, .concerts].filter { !enabled.contains($0) })
                 sectionsVersion = 2
+            }
+            if sectionsVersion < 3 {
+                save(enabled + [.history, .wrapped].filter { !enabled.contains($0) })
+                sectionsVersion = 3
             }
         }
     }
@@ -167,6 +173,7 @@ struct LibraryView: View {
         case .liked: return .liked
         case .downloads: return .downloads
         case .history: return .history
+        case .wrapped: return .wrapped
         case .releases: return .releases
         case .concerts: return .concerts(artist: nil)
         case .youtube:
@@ -186,7 +193,7 @@ struct LibraryView: View {
         case .liked: return library.liked.count
         case .downloads: return downloads.tracks.count
         case .history: return library.recents.count
-        case .youtube, .importer, .releases, .concerts: return nil
+        case .youtube, .importer, .releases, .concerts, .wrapped: return nil
         }
     }
 
@@ -324,6 +331,7 @@ struct LocalTracksList: View {
     /// Liste triable (bouton « Trier »), tri mémorisé sous cette clé.
     var sortKey: String?
     var manualSortLabel = "Ordre de la playlist"
+    var source: PlaybackSource = .octave
 
     var body: some View {
         if let sortKey {
@@ -363,9 +371,9 @@ private struct TracksListBody: View {
             if !shown.isEmpty {
                 Section {
                     PlayShuffleButtons {
-                        player.play(shown)
+                        player.play(shown, source: list.source)
                     } shuffle: {
-                        player.play(shown, shuffled: true)
+                        player.play(shown, shuffled: true, source: list.source)
                     }
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -373,7 +381,7 @@ private struct TracksListBody: View {
                 Section {
                     ForEach(Array(shown.enumerated()), id: \.offset) { position, track in
                         TrackRowButton(track: track, onRemove: list.onDelete == nil ? nil : { list.onDelete?(IndexSet(integer: order[position])) }) {
-                            player.play(shown, startAt: position)
+                            player.play(shown, startAt: position, source: list.source)
                         }
                     }
                     .onDelete(perform: list.onDelete.map { delete in { (positions: IndexSet) in delete(IndexSet(positions.map { order[$0] })) } })
@@ -538,7 +546,8 @@ struct DownloadsView: View {
                             ids.forEach { downloads.remove($0) }
                         },
                         sortKey: "downloads",
-                        manualSortLabel: "Ordre de téléchargement")
+                        manualSortLabel: "Ordre de téléchargement",
+                        source: .youtube)
             .safeAreaInset(edge: .top) {
                 if !downloads.pending.isEmpty {
                     HStack(spacing: 12) {
@@ -577,7 +586,8 @@ struct UserPlaylistView: View {
                         emptyMessage: "Ajoute des titres avec le menu « … » › Ajouter à une playlist.",
                         onDelete: { library.removeTracks(at: $0, from: id) },
                         onMove: { library.moveTracks(from: $0, to: $1, in: id) },
-                        sortKey: "playlist.\(id.uuidString)")
+                        sortKey: "playlist.\(id.uuidString)",
+                        source: PlaybackSettings.playlistSource)
             .navigationTitle(playlist?.name ?? "Playlist")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {

@@ -1,7 +1,7 @@
 // Barre de lecture (en bas), lecteur plein écran (pochette, paroles synchronisées, file d'attente).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Lyrics, Track } from '../../shared/types';
-import { api, isAndroid } from '../lib/api';
+import { api, isAndroid, supportsOctave } from '../lib/api';
 import { jam } from '../lib/jam';
 import { isLiked, library, toggleLike } from '../lib/library';
 import { currentTrack, player, playerState, timeState } from '../lib/player';
@@ -42,6 +42,11 @@ function Volume() {
         onChange={(e) => player.setVolume(Number(e.target.value))} />
     </div>
   );
+}
+
+function MobileProgress() {
+  const { time, duration } = useStore(timeState);
+  return duration > 0 ? <progress className="mobile-progress" max={duration} value={Math.min(time, duration)} aria-label="Progression du morceau" /> : null;
 }
 
 function Controls({ large }: { large?: boolean }) {
@@ -96,7 +101,7 @@ export function PlayerBar() {
       </div>
       <div className="center">
         {state.error ? (
-          <div className="player-error" onClick={() => open({ name: 'settings' })}>
+          <div className="player-error" onClick={() => state.source === 'octave' ? player.resume() : open({ name: 'settings' })}>
             <Icon name="radio" size={16} /> <span>{state.error}</span>
           </div>
         ) : null}
@@ -104,6 +109,14 @@ export function PlayerBar() {
         <Progress compact />
       </div>
       <div className="right">
+        {supportsOctave && state.source && (
+          <button className="badge source-selector" title="Changer la source de lecture" aria-haspopup="menu" onClick={(event) => showMenu(event, [
+            { label: 'Lire avec Octave', icon: state.source === 'octave' ? 'check' : undefined, action: () => player.switchSource('octave') },
+            { label: 'Lire avec YouTube Music', icon: state.source === 'youtube' ? 'check' : undefined, action: () => player.switchSource('youtube') },
+            { label: '', separator: true },
+            { label: 'Compte et réglages Octave', icon: 'settings', action: () => player.openOctave() },
+          ])}>{state.source === 'octave' ? 'Octave' : 'YouTube Music'}</button>
+        )}
         {state.ad && <button className="badge" onClick={() => void window.nova.invoke('webplayer:show', 0)}>Publicité YouTube</button>}
         {state.transitioning && <span className="badge"><Icon name="sparkles" size={14} /> {library.get().settings.transition === 'automix' ? 'AutoMix' : 'Fondu'}</span>}
         <button className={`icon-button ${jamState.role !== 'none' ? 'accent' : ''}`} onClick={() => open({ name: 'jam' })} aria-label="Jam"><Icon name="jam" size={19} /></button>
@@ -113,6 +126,7 @@ export function PlayerBar() {
         {!isAndroid && <button className="icon-button" onClick={() => void window.nova.invoke('mini:open')} aria-label="Mini lecteur" title="Mini lecteur"><Icon name="mini" size={18} /></button>}
         <Volume />
       </div>
+      {isAndroid && <MobileProgress />}
     </footer>
   );
 }

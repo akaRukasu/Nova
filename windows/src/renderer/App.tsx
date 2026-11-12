@@ -5,7 +5,7 @@ import { Icon } from './components/icons';
 import { dismissOverlay, Overlays } from './components/menus';
 import { NowPlaying, PlayerBar, nowPlayingOpen } from './components/Player';
 import { Sidebar } from './components/Sidebar';
-import { isAndroid } from './lib/api';
+import { api, isAndroid, on } from './lib/api';
 import { player } from './lib/player';
 import { back, currentRoute, forward, router, type Route } from './lib/router';
 import { useStore } from './lib/store';
@@ -16,6 +16,7 @@ import {
 } from './pages/Library';
 import { MixPage } from './pages/Mixes';
 import { ConcertsPage, ImportPage, JamPage, SettingsPage } from './pages/Tools';
+import { WrappedPage } from './pages/Wrapped';
 
 function Page({ route }: { route: Route }) {
   switch (route.name) {
@@ -30,6 +31,7 @@ function Page({ route }: { route: Route }) {
     case 'songs': return <SongsPage />;
     case 'liked': return <LikedPage />;
     case 'history': return <HistoryPage />;
+    case 'wrapped': return <WrappedPage />;
     case 'albums': return <AlbumsPage />;
     case 'recent': return <RecentPage />;
     case 'youtubePlaylists': return <YouTubePlaylistsPage />;
@@ -45,6 +47,8 @@ export function App() {
   const nav = useStore(router);
   const route = currentRoute();
   const [drawer, setDrawer] = useState(false);
+  const [octavePanel, setOctavePanel] = useState(false);
+  useEffect(() => isAndroid ? undefined : on('octave:panel', setOctavePanel), []);
   // Barre latérale masquée (bouton en haut à gauche, Ctrl+B) : choix mémorisé.
   const [sidebarHidden, setSidebarHidden] = useState(() => localStorage.getItem('sidebarHidden') === '1');
   const toggleSidebar = () => setSidebarHidden((hidden) => {
@@ -108,9 +112,9 @@ export function App() {
           title={`${sidebarHidden ? 'Afficher' : 'Masquer'} la barre latérale (Ctrl+B)`}><Icon name="sidebar" size={18} /></button>
         <button className="icon-button" disabled={nav.position === 0} onClick={back} aria-label="Retour"><Icon name="back" size={18} /></button>
         <button className="icon-button" disabled={nav.position >= nav.stack.length - 1} onClick={forward} aria-label="Avancer"><Icon name="forward" size={18} /></button>
-        <button className="command-button" onClick={() => commandPalette.set(true)}>
+        {octavePanel ? <button className="button secondary" onClick={() => void api.hideOctave()}>Retour à Nova</button> : <button className="command-button" onClick={() => commandPalette.set(true)}>
           <Icon name="search" size={14} /><span>Aller à, lancer, chercher…</span><kbd>Ctrl K</kbd>
-        </button>
+        </button>}
       </div>
       <Sidebar />
       <div className="drawer-scrim" onClick={() => setDrawer(false)} />
