@@ -187,17 +187,23 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
             try await navigate(url)
             var sentAt: Date?
             var retried = false
+            var resumed = false
             for _ in 0..<45 {
                 try Task.checkCancellation()
                 guard generation == request else { throw CancellationError() }
                 let state = await sample()
                 if state?.blocked == "sign-in" { throw Failure.connection }
                 if state?.blocked == "interaction" { throw Failure.interaction }
-                if let state, state.matches(track), state.playing, let elapsed = state.position {
+                let sameTrack = state?.matches(track) == true
+                if let state, sameTrack, state.playing, let elapsed = state.position {
                     if position > 0 || elapsed > 2 { await command("seek", value: position) }
                     return state
                 }
-                if sentAt == nil || (!retried && state?.matches(track) != true && Date().timeIntervalSince(sentAt!) > 1.8) {
+                let sinceSelection = sentAt.map { Date().timeIntervalSince($0) } ?? 0
+                if sameTrack, state?.playing == false, !resumed, sinceSelection >= 0.9 {
+                    resumed = await command("play")
+                }
+                if sentAt == nil || (!retried && !sameTrack && sinceSelection > 1.8) {
                     if await call("select", args: ["id": id, "retry": sentAt != nil]) as? Bool == true {
                         retried = sentAt != nil
                         sentAt = Date()

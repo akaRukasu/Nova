@@ -117,6 +117,7 @@ export class AndroidOctavePlayer {
       await this.native.octaveNavigate({ url });
       let selectedAt = 0;
       let retried = false;
+      let resumed = false;
       const deadline = Date.now() + 8500;
       while (operation === this.operation && Date.now() < deadline) {
         const sample = await this.call<Sample>('sample');
@@ -125,7 +126,8 @@ export class AndroidOctavePlayer {
           await this.native.octavePanel({ visible: true });
           return sample.blocked;
         }
-        if (sample?.playing && sample.position != null && matches(selected, sample)) {
+        const sameTrack = sample && matches(selected, sample);
+        if (sameTrack && sample.playing && sample.position != null) {
           await this.call('command', { type: 'volume', value: volume });
           if (operation !== this.operation) return 'cancelled';
           if (position > 0 || sample.position > 2) await this.call('command', { type: 'seek', value: position });
@@ -134,7 +136,10 @@ export class AndroidOctavePlayer {
           this.timer = setInterval(() => void this.observe(), 300);
           return 'playing';
         }
-        if (!selectedAt || (!retried && Date.now() - selectedAt > 1800 && (!sample || !matches(selected, sample)))) {
+        if (sameTrack && !sample.playing && !resumed && selectedAt && Date.now() - selectedAt >= 900) {
+          resumed = Boolean(await this.call('command', { type: 'play' }));
+        }
+        if (!selectedAt || (!retried && Date.now() - selectedAt > 1800 && !sameTrack)) {
           if (await this.call<boolean>('select', { id, retry: Boolean(selectedAt) })) {
             retried = Boolean(selectedAt);
             selectedAt = Date.now();
