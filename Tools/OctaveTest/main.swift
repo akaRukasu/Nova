@@ -11,6 +11,18 @@ do {
         try require(!shelves.isEmpty, "Aucun résultat pour \(query)")
         print("Recherche Octave OK — \(query), \(shelves.flatMap(\.tracks).count) titres")
     }
+    let teeAudio = Track(id: "QFp7phPYUvQ", title: "From The D To The A (avec Lil Yachty)",
+                         artist: "Tee Grizzley", duration: 159)
+    let teeTitle = #"Tee Grizzley - "From The D To The A ft. Lil Yachty" [Official Video]"#
+    let teeVideo = Track(id: "-S0aea777jM", title: teeTitle, artist: "Tee Grizzley", duration: 170)
+    let teeComparable = Track(id: "clip", title: teeTitle, artist: "Tee Grizzley", duration: 159)
+    try require(OctaveCatalog.sameRecording(teeComparable, teeAudio), "Le préfixe de l’artiste et les guillemets du clip doivent être reconnus")
+    let unrelated = Track(id: "other", title: teeAudio.title, artist: "City Girls", duration: 159)
+    try require(!OctaveCatalog.sameRecording(teeComparable, unrelated), "Un autre artiste doit rester distinct")
+    let teeSelected = try await catalog.recording(teeVideo)
+    try require(teeSelected?.id == "octave:144393532", "Le clip de Tee Grizzley doit retrouver son édition audio")
+    print("Titre de clip, artiste, invité et durée de la piste audio confirmés")
+
     let requested = Track(id: "EjlpiC2cGd0", title: "Backseat", artist: "Personality Disorder", duration: 126)
     let selected = try await catalog.recording(requested)
     try require(selected?.id == "octave:4312686782", "Backseat doit retrouver la version originale")

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmClipRecording, matchRecording } from '../dist/main/matcher.js';
+import { confirmClipRecording, matchRecording, recordingSearchQueries } from '../dist/main/matcher.js';
 import { sizedArtwork } from '../dist/shared/artwork.js';
 
 const clip = { id: 'Tk9TM7-eTmw', title: 'Joseph', artist: 'Falling In Reverse', duration: 258, square: false };
@@ -68,4 +68,22 @@ test('YouTube artist ordering and a square clip cover do not hide Joseph', () =>
   assert.equal(matchRecording(song, [joseph]), joseph);
   assert.equal(confirmClipRecording(reordered, [joseph], [song]), joseph);
   assert.equal(confirmClipRecording({ ...reordered, artist: 'Luke Holland' }, [joseph], [song]), undefined);
+});
+
+test('a quoted music-video title with the credited artist prefix resolves through its audio release', () => {
+  const clip = { id: '-S0aea777jM',
+    title: 'Tee Grizzley - "From The D To The A ft. Lil Yachty" [Official Video]',
+    artist: 'Tee Grizzley', duration: 170 };
+  const audio = { id: 'QFp7phPYUvQ', title: 'From The D To The A (avec Lil Yachty)',
+    artist: 'Tee Grizzley', duration: 159, square: true };
+  const octave = { id: 'octave:144393532', title: 'From The D To The A (feat. Lil Yachty)',
+    artist: 'Tee Grizzley', album: 'From The D To The A (feat. Lil Yachty)', duration: 158, square: true };
+  assert(recordingSearchQueries(clip).includes('From The D To The A ft. Lil Yachty Tee Grizzley'));
+  assert.equal(matchRecording(clip, [octave]), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], [audio]), octave);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, artist: 'City Girls' }], [audio]), undefined);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, title: octave.title + ' (Live)' }], [audio]), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], [{ ...audio, title: 'From The D To The A (avec Lil Wayne)' }]), undefined);
+  assert.equal(confirmClipRecording({ ...clip, title: clip.title.replace('Tee Grizzley -', 'Other Artist -') }, [octave], [audio]), undefined);
+  assert.equal(matchRecording({ ...clip, duration: 159 }, [octave]), octave);
 });

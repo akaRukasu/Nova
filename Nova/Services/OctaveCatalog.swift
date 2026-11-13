@@ -179,13 +179,27 @@ actor OctaveCatalog {
                                    with: "|", options: .regularExpression)
             .split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
-    private nonisolated static func recordingTitle(_ title: String) -> String {
-        title.replacingOccurrences(of: #"\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$"#,
-                                   with: "", options: [.regularExpression, .caseInsensitive])
+    private nonisolated static func recordingTitle(_ title: String, artist: String) -> String {
+        var cleaned = title.replacingOccurrences(of: #"\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$"#,
+                                                 with: "", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let credited = Set([normalize(artist), normalize(lead(artist))].filter { !$0.isEmpty })
+        if let regex = try? NSRegularExpression(pattern: #"^(.+?)(?:\s+[-–—]\s+|\s*:\s+)(.+)$"#),
+           let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)),
+           let prefix = Range(match.range(at: 1), in: cleaned),
+           let remainder = Range(match.range(at: 2), in: cleaned),
+           credited.contains(normalize(String(cleaned[prefix]))) {
+            cleaned = String(cleaned[remainder]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let wrappers = [("\"","\""), ("“", "”"), ("«", "»"), ("'", "'"), ("‘", "’")]
+        if wrappers.contains(where: { cleaned.hasPrefix($0.0) && cleaned.hasSuffix($0.1) }), cleaned.count >= 2 {
+            cleaned = String(cleaned.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return cleaned
     }
 
     private nonisolated static func credits(_ track: Track) -> (title: String, guests: Set<String>) {
-        let title = recordingTitle(track.title)
+        let title = recordingTitle(track.title, artist: track.artist)
         let pattern = #"\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$"#
         let artistGuests = names(track.artist).dropFirst().map(normalize)
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
@@ -207,7 +221,7 @@ actor OctaveCatalog {
     }
     nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
         guard sameCredits(wanted, candidate) else { return false }
-        if normalize(recordingTitle(wanted.title)) == normalize(recordingTitle(candidate.title)) { return true }
+        if normalize(recordingTitle(wanted.title, artist: wanted.artist)) == normalize(recordingTitle(candidate.title, artist: candidate.artist)) { return true }
         guard let left = wanted.duration, let right = candidate.duration else { return false }
         return abs(left - right) <= 8
     }
@@ -230,7 +244,7 @@ actor OctaveCatalog {
         if Self.trackURL(track) != nil { return track }
         if let known = recordings[track.id] { return known }
         let lead = Self.lead(track.artist)
-        let query = Self.recordingTitle(track.title) + " " + lead
+        let query = Self.recordingTitle(track.title, artist: track.artist) + " " + lead
         let alternate = Self.credits(track).title + " " + lead
         var shelves = try await search(query, scope: .all)
         var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
