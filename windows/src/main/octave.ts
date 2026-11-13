@@ -114,6 +114,7 @@ export async function trackArtwork(track: Track): Promise<string | undefined> {
 }
 
 export async function findRecording(track: Track, excluding?: string): Promise<Track | undefined> {
+  if (track.id.startsWith('local:')) return undefined;
   if (octaveCatalogId(track.id) && track.albumId && !excluding) return track;
   const cached = recordings.get(track.id);
   if (cached && !excluding) return cached;

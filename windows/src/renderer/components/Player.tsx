@@ -89,6 +89,8 @@ function PlaybackOptions({ source }: { source?: PlaybackSource }) {
 }
 
 function SourceSelector({ source }: { source?: PlaybackSource }) {
+  const state = useStore(playerState);
+  if (state.queue[state.index]?.id.startsWith('local:')) return <span className="badge">Fichier local</span>;
   if (!supportsOctave || !source) return null;
   return (
     <button className="badge source-selector" title="Changer la source de lecture" aria-haspopup="menu" onClick={(event) => showMenu(event, [

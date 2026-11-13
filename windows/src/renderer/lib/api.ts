@@ -1,6 +1,6 @@
 // Appels au processus principal (YouTube Music, disque, compte, import, Jam).
 import type {
-  Account, BrowseLink, Collection, CollectionPage, Concert, ImportedPlaylist, ImportedTrack, LibraryState, Lyrics,
+  Account, BrowseLink, Collection, CollectionPage, Concert, ImportedPlaylist, ImportedTrack, ImportJournalEntry, LibraryState, Lyrics,
   NearbyJam, Page, PageHeader, Settings, Shelf, Track,
 } from '../../shared/types';
 import type { OctaveCommand, OctaveStart } from '../../shared/octave';
@@ -60,6 +60,10 @@ export const api = {
 
   importLink: (link: string) => call<ImportedPlaylist[]>('import:link', link),
   importFile: () => call<ImportedPlaylist[]>('import:file'),
+  importAudio: () => call<{ tracks: Track[]; errors: string[] }>('audio:import'),
+  localAudioURL: (id: string) => call<string>('audio:url', id),
+  importJournal: () => call<ImportJournalEntry[]>('import:journal'),
+  resolveImportJournal: (id: string, track: Track) => call<void>('import:resolve', id, track),
   runImport: (playlists: ImportedPlaylist[], toAccount: boolean) =>
     call<{ name: string; tracks: Track[]; youtubeId?: string; missing: number }[]>('import:run', playlists, toAccount),
   matchTrack: (wanted: ImportedTrack) => call<Track | undefined>('import:match', wanted),

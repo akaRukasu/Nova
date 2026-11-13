@@ -72,12 +72,14 @@ function recordingCredits(track: Track) {
 export function recordingSearchQueries(track: Track): string[] {
   const identity = recordingCredits(track);
   const lead = mainArtist(track.artist);
+  const abbreviated = recordingTitle(track.title, track.artist).match(/^(.*\s)\p{L}\**$/u);
   return [...new Set([
     `${recordingTitle(track.title, track.artist)} ${track.artist}`,
     `${track.title} ${track.artist}`,
     `${track.title} ${lead}`,
     `${identity.title} ${lead}`,
     ...artistNames(track.artist).slice(1).map(artist => `${track.title} ${artist}`),
+    ...(abbreviated ? [abbreviated[1].trim() + ' ' + lead] : []),
   ])];
 }
 
@@ -122,11 +124,21 @@ export function sameClipRecordingCredits(clip: Track, candidate: Track): boolean
   if (sameRecordingCredits(clip, candidate)) return true;
   const title = recordingTitle(candidate.title, candidate.artist);
   const release = title.match(/\s+\(([^()]+) EP\)$/i);
-  if (!release || !candidate.album || !clip.duration || !candidate.duration
-    || Math.abs(clip.duration - candidate.duration) > 8
-    || !normalize(candidate.album).startsWith(normalize(release[1]))
-    || /\b(live|demo|remix|cover|instrumental|acoustic|edit)\b/i.test(release[1])) return false;
-  return sameRecordingCredits(clip, { ...candidate, title: title.slice(0, release.index) });
+  if (!clip.duration || !candidate.duration) return false;
+  if (release && candidate.album && Math.abs(clip.duration - candidate.duration) <= 8
+    && normalize(candidate.album).startsWith(normalize(release[1]))
+    && !/\b(live|demo|remix|cover|instrumental|acoustic|edit)\b/i.test(release[1])) {
+    return sameRecordingCredits(clip, { ...candidate, title: title.slice(0, release.index) });
+  }
+  // La piste audio officielle doit confirmer le nom entier d’un dernier mot abrégé.
+  const abbreviated = recordingTitle(clip.title, clip.artist).match(/^(.*\s)(\p{L})\**$/u);
+  if (!abbreviated || Math.abs(clip.duration - candidate.duration) > 3
+    || normalize(clip.artist) !== normalize(candidate.artist)) return false;
+  const words = recordingCredits(candidate).title.split(' ');
+  const prefix = normalize(abbreviated[1]).split(' ');
+  const last = words.at(-1) ?? '';
+  return words.length === prefix.length + 1 && prefix.every((word, index) => words[index] === word)
+    && last.length >= 3 && last.startsWith(normalize(abbreviated[2]));
 }
 
 export function confirmClipRecording(clip: Track, candidates: Track[], songs: Track[]): Track | undefined {

@@ -28,6 +28,10 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.annotation.ActivityCallback;
+import java.util.ArrayList;
+import java.util.List;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.webkit.WebViewCompat;
@@ -56,6 +60,38 @@ import java.util.Collections;
  */
 @CapacitorPlugin(name = "NovaPlayer")
 public class NovaPlayerPlugin extends Plugin {
+    @PluginMethod
+    public void importAudio(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"audio/*", "application/ogg", "application/octet-stream"});
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        getActivity().runOnUiThread(() -> startActivityForResult(call, intent, "audioSelected"));
+    }
+
+    @ActivityCallback
+    private void audioSelected(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        List<Uri> files = new ArrayList<>();
+        Intent data = result.getData();
+        if (result.getResultCode() == android.app.Activity.RESULT_OK && data != null) {
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) files.add(data.getClipData().getItemAt(i).getUri());
+            } else if (data.getData() != null) files.add(data.getData());
+        }
+        getBridge().execute(() -> call.resolve(new LocalAudioFiles(getContext()).importFiles(files)));
+    }
+
+    @PluginMethod
+    public void localAudioURL(PluginCall call) {
+        try {
+            JSObject result = new JSObject();
+            result.put("url", new LocalAudioFiles(getContext()).url(call.getString("id")));
+            call.resolve(result);
+        } catch (Exception error) { call.reject(error.getMessage()); }
+    }
+
     @PluginMethod
     public void copyJamInvitation(PluginCall call) {
         String url = call.getString("url");

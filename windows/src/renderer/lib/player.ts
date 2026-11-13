@@ -202,7 +202,7 @@ class Engine {
 
   switchSource(source: PlaybackSource) {
     const state = playerState.get();
-    if (!supportsOctave || !currentTrack()) return;
+    if (!supportsOctave || !currentTrack() || currentTrack()?.id.startsWith('local:')) return;
     this.preferredSource = source;
     if (state.source === source && !state.error) return;
     this.load(timeState.get().time, !state.playing && !state.loading && !state.error);
@@ -431,7 +431,7 @@ class Engine {
     }
     // AutoMix : même au passage manuel, les deux titres se fondent brièvement.
     const transition = library.get().settings.transition;
-    if (manual && transition !== 'off' && playerState.get().playing && !this.followingJam && !this.usingOctave
+    if (manual && !(isAndroid && (queue[index]?.id.startsWith('local:') || queue[index + 1]?.id.startsWith('local:'))) && transition !== 'off' && playerState.get().playing && !this.followingJam && !this.usingOctave
       && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id)) {
       return this.beginTransition(3);
     }
@@ -549,13 +549,29 @@ class Engine {
     this.stalledSince = 0;
     clearTimeout(this.prefetchTimer);
     const source = this.preferredSource ?? (isOctaveId(track.id) ? 'octave' : 'youtube');
-    if (supportsOctave && source === 'octave') return this.playOctave(track, startAt, paused);
+    if (supportsOctave && source === 'octave' && !track.id.startsWith('local:')) return this.playOctave(track, startAt, paused);
     if (this.usingOctave) {
       this.octaveLoaded = false;
       this.octaveRequest++;
       void api.stopOctave().catch(() => undefined);
       void api.hideOctave().catch(() => undefined);
     }
+    if (track.id.startsWith('local:')) {
+      if (!(this.deck instanceof HTMLAudioElement)) {
+        this.createDecks('direct');
+        this.active = 0;
+        set({ mode: 'direct' });
+      }
+      set({ source: 'youtube', loading: !paused, playing: false, error: undefined });
+      setTime({ time: startAt, duration: track.duration ?? 0 });
+      void api.localAudioURL(track.id).then(url => {
+        if (request === this.loadRequest) this.loadYouTube(track, track, startAt, paused, request, url);
+      }).catch(error => {
+        if (request === this.loadRequest) set({ loading: false, playing: false, error: String(error) });
+      });
+      return;
+    }
+    if (isAndroid && playerState.get().mode === 'direct') this.setMode('web', false);
     const known = track.duration ?? durations.get(track.id);
     set({ source: 'youtube', loading: !paused, playing: false, error: undefined });
     setTime({ time: startAt, duration: known ?? 0 });
@@ -578,11 +594,11 @@ class Engine {
     this.loadYouTube(track, track, startAt, paused, request);
   }
 
-  private loadYouTube(track: Track, recording: Track, startAt: number, paused: boolean, request: number) {
+  private loadYouTube(track: Track, recording: Track, startAt: number, paused: boolean, request: number, localURL?: string) {
     this.youtubeTrack = recording.id === track.id ? undefined : recording;
     const known = track.duration ?? durations.get(track.id);
-    if (!known && track.id === recording.id) void this.fetchDuration(track);
-    if (!track.square && track.id === recording.id) void this.resolveArtwork(track);
+    if (!known && !localURL && track.id === recording.id) void this.fetchDuration(track);
+    if (!track.square && !localURL && track.id === recording.id) void this.resolveArtwork(track);
     // Titre préchargé dans l'autre lecteur (YouTube Music) : il prend le relais tout de suite.
     const ready = this.preloaded?.id === recording.id && this.preloaded.ready && startAt < 1 && this.decks.includes(this.preloaded.deck) ? this.preloaded : null;
     this.preloaded = null;
@@ -597,7 +613,7 @@ class Engine {
     this.gain = gainFor(savedAnalysis(recording.id), normalize());
     deck.playbackRate = 1;
     deck.volume = playerState.get().volume * this.gain;
-    if (!ready) deck.src = `nova-stream://audio/${encodeURIComponent(recording.id)}`;
+    if (!ready) deck.src = localURL ?? `nova-stream://audio/${encodeURIComponent(recording.id)}`;
     if (startAt > 1 && deck instanceof HTMLAudioElement && !deck.readyState) {
       deck.addEventListener('loadedmetadata', () => {
         if (request === this.loadRequest) deck.currentTime = startAt;
@@ -655,7 +671,7 @@ class Engine {
 
   private async extendWithRadio(thenAdvance = false) {
     const current = currentTrack();
-    if (!current || this.followingJam || this.usingOctave) return;
+    if (!current || current.id.startsWith('local:') || this.followingJam || this.usingOctave) return;
     if (thenAdvance && !library.get().settings.autoplayRadio) {
       this.pause();
       this.seek(0);
@@ -682,7 +698,7 @@ class Engine {
     if (expected > 0 && Math.abs(timeState.get().duration - expected) > 0.5) setTime({ duration: expected });
     const settings = library.get().settings;
     const { queue, index, repeat, playing } = playerState.get();
-    const canMix = playing && !this.fadeTimer && !this.pending && !this.startingFade && repeat !== 'one' && index + 1 < queue.length
+    const canMix = !(isAndroid && (queue[index]?.id.startsWith('local:') || queue[index + 1]?.id.startsWith('local:'))) && playing && !this.fadeTimer && !this.pending && !this.startingFade && repeat !== 'one' && index + 1 < queue.length
       && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id) && !this.followingJam
       && !(this.deck as WebDeck).ad && expected > 30;
     // AutoMix : transition préparée d'après l'analyse des deux titres (tempo, temps, fin), calée sur un temps.
@@ -1076,6 +1092,10 @@ class Engine {
   private recover(reason: string) {
     const track = currentTrack();
     if (!track || this.endHandled) return;
+    if (track.id.startsWith('local:')) {
+      set({ loading: false, playing: false, error: 'Ce fichier audio est absent ou son codec ne peut pas être lu sur cet appareil.' });
+      return;
+    }
     // Lecture directe refusée par YouTube (contrôle anti-robot) : bascule sur le lecteur officiel.
     if (playerState.get().mode === 'direct' && library.get().settings.engine !== 'direct' && !this.checkingRefusal) {
       this.checkingRefusal = true;

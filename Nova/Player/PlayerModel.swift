@@ -366,6 +366,7 @@ final class PlayerModel {
     }
 
     private func localFile(for track: Track) async -> URL? {
+        if let file = LocalAudioLibrary.url(for: track) { return file }
         if let file = downloads.localURL(for: track.id) { return file }
         return await AudioCache.shared.localURL(for: track.id)
     }
@@ -465,7 +466,7 @@ final class PlayerModel {
         endHandled = false
         artwork = nil
         currentIsVideoOnly = false
-        if !track.hasSquareArtwork { resolveArtwork(for: track) }
+        if !track.id.hasPrefix("local:"), !track.hasSquareArtwork { resolveArtwork(for: track) }
         observeStatus(of: item, track: track)
         attachTimeObserver()
         isPlaying = true
@@ -828,7 +829,7 @@ final class PlayerModel {
         octaveSession += 1
         let session = octaveSession
         let localDownload = !NetworkMonitor.shared.isConnected && downloads.localURL(for: track.id) != nil
-        source = localDownload ? .youtube : preferredSource
+        source = localDownload || track.id.hasPrefix("local:") ? .youtube : preferredSource
         rateTask?.cancel()
         statusObservation = nil
         beginLoadingBackgroundTask()
@@ -846,9 +847,9 @@ final class PlayerModel {
         endHandled = false
         artwork = nil
         updateNowPlaying()
-        if expectedDuration == nil, source == .youtube, !track.id.hasPrefix("octave:") { fetchDuration(for: track) }
+        if expectedDuration == nil, source == .youtube, !track.id.hasPrefix("octave:"), !track.id.hasPrefix("local:") { fetchDuration(for: track) }
         currentIsVideoOnly = false
-        if !track.hasSquareArtwork { resolveArtwork(for: track) }
+        if !track.id.hasPrefix("local:"), !track.hasSquareArtwork { resolveArtwork(for: track) }
         saveSession(force: true)
 
         loadTask = Task { [weak self] in
@@ -877,11 +878,11 @@ final class PlayerModel {
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
-                if self.source == .octave || track.id.hasPrefix("octave:") {
+                if self.source == .octave || track.id.hasPrefix("octave:") || track.id.hasPrefix("local:") {
                     self.isLoading = false
                     self.isPlaying = false
                     self.endLoadingBackgroundTask()
-                    self.errorMessage = self.source == .youtube ? "Cette version est introuvable sur YouTube Music." : error.localizedDescription
+                    self.errorMessage = track.id.hasPrefix("local:") ? error.localizedDescription : self.source == .youtube ? "Cette version est introuvable sur YouTube Music." : error.localizedDescription
                     if let failure = error as? OctaveWebPlayer.Failure, failure == .connection || failure == .interaction {
                         self.octave.showAccount(loadSettings: false)
                         self.showsOctaveAccount = true
@@ -1071,6 +1072,12 @@ final class PlayerModel {
     }
 
     private func playableURL(for track: Track) async throws -> URL {
+        if track.id.hasPrefix("local:") {
+            guard let file = LocalAudioLibrary.url(for: track) else {
+                throw NSError(domain: "LocalAudio", code: 3, userInfo: [NSLocalizedDescriptionKey: "Ce fichier audio est absent de cet appareil."])
+            }
+            return file
+        }
         if let file = downloads.localURL(for: track.id) { return file }
         if let local = await AudioCache.shared.localURL(for: track.id) { return local }
         let stream = try await StreamResolver.audioStream(for: track.id)
@@ -1222,7 +1229,7 @@ final class PlayerModel {
         if prefetchTarget == next.id, prefetchTask != nil { return }
         prefetchTask?.cancel()
         prefetchTarget = next.id
-        guard downloads.localURL(for: next.id) == nil else { return }
+        guard !next.id.hasPrefix("local:"), downloads.localURL(for: next.id) == nil else { return }
         prefetchTask = Task.detached(priority: .utility) { [weak self] in
             // Quelques secondes pour laisser démarrer le titre en cours.
             try? await Task.sleep(for: .seconds(4))
@@ -1242,6 +1249,7 @@ final class PlayerModel {
     }
 
     private func extendWithRadio(from seed: Track, thenAdvance: Bool = false) {
+        guard !seed.id.hasPrefix("local:") else { return }
         Task { [weak self] in
             guard let self, let radio = try? await self.client.radio(for: seed.id) else { return }
             let known = Set(self.queue.map(\.id))

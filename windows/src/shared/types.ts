@@ -3,6 +3,7 @@
 export interface Track {
   id: string;
   youtubeId?: string;
+  localFileName?: string;
   title: string;
   artist: string;
   album?: string;
@@ -215,6 +216,19 @@ export interface ImportedPlaylist {
   existingYoutubeId?: string;
 }
 
+export interface ImportJournalEntry {
+  id: string;
+  playlist: string;
+  source: string;
+  track: ImportedTrack;
+  firstAttempt: number;
+  lastAttempt: number;
+  attempts: number;
+  status: 'unresolved' | 'youtube' | 'resolved';
+  reason: string;
+  recording?: Track;
+}
+
 export interface ImportProgress {
   name: string;
   total: number;
@@ -224,6 +238,7 @@ export interface ImportProgress {
   done: boolean;
   /** Seconde recherche des titres pas encore trouvés. */
   verifying?: boolean;
+  journalError?: string;
   playlistId?: string;
 }
 

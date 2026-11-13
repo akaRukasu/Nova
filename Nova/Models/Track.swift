@@ -1,7 +1,7 @@
 import Foundation
 
 /// Un titre YouTube Music. `id` est l'identifiant vidéo YouTube.
-struct Track: Identifiable, Codable, Hashable {
+struct Track: Identifiable, Codable, Hashable, Sendable {
     let id: String
     var title: String
     var artist: String
@@ -14,6 +14,7 @@ struct Track: Identifiable, Codable, Hashable {
     /// Identifiant de la page album (MPREb…), si YouTube Music le fournit.
     var albumID: String?
     var youtubeID: String?
+    var localFileName: String?
 
     var subtitle: String {
         [artist, album ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
@@ -46,6 +47,7 @@ struct Track: Identifiable, Codable, Hashable {
     /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées). Sans pochette carrée,
     /// la vraie pochette HD est d'abord cherchée sur YouTube Music (voir `ArtworkResolver`).
     var squareArtworkURLs: [URL] {
+        if id.hasPrefix("local:") { return artworkURL.map { [$0] } ?? [] }
         if id.hasPrefix("octave:") { return artworkURL.map { [$0] } ?? [] }
         var urls: [URL] = []
         if hasSquareArtwork, let artworkURL { urls.append(artworkURL) }

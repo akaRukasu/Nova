@@ -230,6 +230,7 @@ final class LibraryStore {
     }
 
     static func dedupeKey(_ track: Track) -> String {
+        if track.id.hasPrefix("local:") { return track.id }
         func clean(_ value: String) -> String {
             value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
                 .replacingOccurrences(of: #"\s*[\(\[].*?[\)\]]"#, with: "", options: .regularExpression)

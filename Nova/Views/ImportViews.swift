@@ -4,6 +4,7 @@ import WebKit
 
 /// Point d'entrée de l'import : comptes, lien, fichier.
 struct ImportView: View {
+    @Environment(LibraryStore.self) private var library
     @Environment(ImportManager.self) private var importer
     @Environment(\.dismiss) private var dismiss
     @State private var link = ""
@@ -12,6 +13,8 @@ struct ImportView: View {
     @State private var found: [ImportedPlaylist] = []
     @State private var showSelection = false
     @State private var showFilePicker = false
+    @State private var showAudioPicker = false
+    @State private var audioResult: String?
     @State private var loginService: StreamingService?
 
     var body: some View {
@@ -30,7 +33,7 @@ struct ImportView: View {
                 } header: {
                     Text("Depuis un compte")
                 } footer: {
-                    Text("Nova lit tes playlists et tes titres likés, puis retrouve chaque titre sur YouTube Music.")
+                    Text("Nova recherche tes titres sur Octave, puis sur YouTube Music. Le journal conserve les correspondances à corriger.")
                 }
 
                 Section {
@@ -63,6 +66,13 @@ struct ImportView: View {
                     Text("Pour Tidal, Amazon Music, SoundCloud, Qobuz ou toute autre plateforme : exporte tes playlists en CSV avec TuneMyMusic ou Soundiiz, puis choisis le fichier ici. L'export de données Spotify (YourLibrary.json, Playlist1.json) et les listes « Artiste - Titre » fonctionnent aussi.")
                 }
 
+                Section("Mes fichiers audio") {
+                    Button("Ajouter des fichiers audio", systemImage: "music.note.badge.plus") { showAudioPicker = true }
+                    Text("MP3, WAV, FLAC, M4A, AAC et autres fichiers lisibles sur cet appareil.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let audioResult { Text(audioResult).font(.caption) }
+                }
+
                 if !importer.jobs.isEmpty {
                     ImportJobsSection()
                 }
@@ -93,6 +103,20 @@ struct ImportView: View {
                           allowedContentTypes: [.commaSeparatedText, .plainText, .json, .text, .data],
                           allowsMultipleSelection: true) { result in
                 importFiles(result)
+            }
+            .fileImporter(isPresented: $showAudioPicker, allowedContentTypes: [.audio, .data],
+                          allowsMultipleSelection: true) { result in
+                Task {
+                    isLoading = true
+                    defer { isLoading = false }
+                    do {
+                        let files = try result.get()
+                        let imported = await LocalAudioLibrary.shared.importFiles(files)
+                        let outcome = library.importIntoPlaylist(name: "Fichiers locaux", tracks: imported.tracks)
+                        audioResult = "\(outcome.added) fichiers ajoutés" + (outcome.alreadyPresent > 0 ? " · \(outcome.alreadyPresent) déjà présents" : "")
+                        if !imported.errors.isEmpty { errorText = imported.errors.joined(separator: "\n") }
+                    } catch { errorText = error.localizedDescription }
+                }
             }
             .sheet(item: $loginService) { service in
                 ServiceLoginView(service: service) { playlists in
@@ -308,7 +332,7 @@ struct ImportJobsSection: View {
             }
         } header: {
             HStack {
-                Text("Imports")
+                Text("Journal des imports")
                 Spacer()
                 if importer.jobs.contains(where: \.isFinished) {
                     Button("Effacer") { importer.clearFinished() }
@@ -330,7 +354,7 @@ struct ImportJobsSection: View {
         if job.added > 0 { parts.append("\(job.added) ajoutés") }
         if job.alreadyPresent > 0 { parts.append("\(job.alreadyPresent) déjà présents") }
         if job.duplicates > 0 { parts.append("\(job.duplicates) doublons ignorés") }
-        if !job.missing.isEmpty { parts.append("\(job.missing.count) introuvables") }
+        if !job.reviewTracks.isEmpty { parts.append("\(job.reviewTracks.count) correspondances à vérifier") }
         return parts.joined(separator: " · ")
     }
 
@@ -358,19 +382,20 @@ struct MissingTracksView: View {
                         if job.alreadyPresent > 0 { LabeledContent("Déjà présents (non doublés)", value: "\(job.alreadyPresent)") }
                         if job.duplicates > 0 { LabeledContent("Doublons de la liste d'origine", value: "\(job.duplicates)") }
                     }
-                    LabeledContent("Introuvables", value: "\(job.missing.count)")
+                    LabeledContent("À vérifier sur Octave", value: "\(job.reviewTracks.count)")
+                    LabeledContent("Dernière recherche", value: job.startedAt.formatted(date: .abbreviated, time: .shortened))
                     if !job.isFinished {
                         ProgressView(value: job.progress)
                         Button("Annuler l'import", role: .destructive) { importer.cancel(jobID) }
-                    } else if !job.missing.isEmpty {
+                    } else if !job.reviewTracks.isEmpty {
                         Button("Relancer la recherche des introuvables", systemImage: "arrow.clockwise") {
                             importer.retryMissing(jobID, library: library)
                         }
                     }
                 }
-                if !job.missing.isEmpty {
+                if !job.reviewTracks.isEmpty {
                     Section {
-                        ForEach(Array(job.missing.enumerated()), id: \.offset) { _, track in
+                        ForEach(Array(job.reviewTracks.enumerated()), id: \.offset) { _, track in
                             Button {
                                 fixing = track
                             } label: {
@@ -381,6 +406,10 @@ struct MissingTracksView: View {
                                         Text(track.artist)
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
+                                        Text(job.diagnostics[track.id] ?? "Correspondance à vérifier")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Text("\(job.attempts[track.id] ?? 0) tentatives")
+                                            .font(.caption2).foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Text("Choisir")
@@ -393,7 +422,7 @@ struct MissingTracksView: View {
                     } header: {
                         Text("Introuvables")
                     } footer: {
-                        Text("Touche un titre pour choisir toi-même le bon morceau sur YouTube Music.")
+                        Text("Les titres sont conservés après la fermeture de Nova. Relance la recherche approfondie ou touche un titre pour choisir sa version sur Octave.")
                     }
                 }
             }

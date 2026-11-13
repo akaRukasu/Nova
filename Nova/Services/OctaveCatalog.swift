@@ -227,20 +227,33 @@ actor OctaveCatalog {
     }
     private nonisolated static func sameClipCredits(_ clip: Track, _ candidate: Track) -> Bool {
         if sameCredits(clip, candidate) { return true }
+        guard let left = clip.duration, let right = candidate.duration else { return false }
         let title = recordingTitle(candidate.title, artist: candidate.artist)
-        guard let regex = try? NSRegularExpression(pattern: #"\s+\(([^()]+) EP\)$"#, options: [.caseInsensitive]),
-              let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
-              let range = Range(match.range, in: title),
-              let releaseRange = Range(match.range(at: 1), in: title),
-              let album = candidate.album, let left = clip.duration, let right = candidate.duration,
-              abs(left - right) <= 8 else { return false }
-        let release = String(title[releaseRange])
-        guard normalize(album).hasPrefix(normalize(release)),
-              release.range(of: #"\b(live|demo|remix|cover|instrumental|acoustic|edit)\b"#,
-                            options: [.regularExpression, .caseInsensitive]) == nil else { return false }
-        var comparable = candidate
-        comparable.title = String(title[..<range.lowerBound])
-        return sameCredits(clip, comparable)
+        if let regex = try? NSRegularExpression(pattern: #"\s+\(([^()]+) EP\)$"#, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
+           let range = Range(match.range, in: title),
+           let releaseRange = Range(match.range(at: 1), in: title),
+           let album = candidate.album, abs(left - right) <= 8 {
+            let release = String(title[releaseRange])
+            if normalize(album).hasPrefix(normalize(release)),
+               release.range(of: #"\b(live|demo|remix|cover|instrumental|acoustic|edit)\b"#,
+                             options: [.regularExpression, .caseInsensitive]) == nil {
+                var comparable = candidate
+                comparable.title = String(title[..<range.lowerBound])
+                return sameCredits(clip, comparable)
+            }
+        }
+        let clipTitle = recordingTitle(clip.title, artist: clip.artist)
+        guard abs(left - right) <= 3, normalize(clip.artist) == normalize(candidate.artist),
+              let regex = try? NSRegularExpression(pattern: #"^(.*\s)(\p{L})\**$"#),
+              let match = regex.firstMatch(in: clipTitle, range: NSRange(clipTitle.startIndex..., in: clipTitle)),
+              let prefixRange = Range(match.range(at: 1), in: clipTitle),
+              let letterRange = Range(match.range(at: 2), in: clipTitle) else { return false }
+        let prefix = normalize(String(clipTitle[prefixRange])).split(separator: " ")
+        let words = credits(candidate).title.split(separator: " ")
+        guard words.count == prefix.count + 1, let last = words.last else { return false }
+        return Array(words.dropLast()) == prefix && last.count >= 3
+            && last.hasPrefix(normalize(String(clipTitle[letterRange])))
     }
 
     nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
@@ -274,6 +287,7 @@ actor OctaveCatalog {
         return nil
     }
     func recording(_ track: Track) async throws -> Track? {
+        if track.id.hasPrefix("local:") { return nil }
         if Self.trackURL(track) != nil { return track }
         if let known = recordings[track.id] { return known }
         let lead = Self.lead(track.artist)
@@ -282,6 +296,10 @@ actor OctaveCatalog {
         var shelves = try await search(query, scope: .all)
         var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
         var queries = [alternate] + Self.names(track.artist).dropFirst().map { track.title + " " + $0 }
+        let cleanTitle = Self.recordingTitle(track.title, artist: track.artist)
+        if let range = cleanTitle.range(of: #"\s+\p{L}\**$"#, options: .regularExpression) {
+            queries.append(String(cleanTitle[..<range.lowerBound]) + " " + lead)
+        }
         if let album = track.album { queries.append(album + " " + lead) }
         var searched = Set([query])
         for other in queries where suitable(track, tracks) == nil && searched.insert(other).inserted {

@@ -1,3 +1,4 @@
+import { ImportJournal } from '../shared/importJournal';
 // Nova pour Android : ce que fait le processus principal sur PC (YouTube Music, disque, compte,
 // import, lecteur), dans l'app Android. L'interface appelle les mêmes canaux que sur Windows.
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
@@ -17,6 +18,8 @@ import { isOctaveId } from '../shared/octave';
 import { AndroidOctavePlayer } from './octavePlayer';
 
 interface NovaPlayer {
+  importAudio(): Promise<{ tracks: Track[]; errors: string[] }>;
+  localAudioURL(options: { id: string }): Promise<{ url: string }>;
   load(options: { deck: number; videoId: string; startAt: number; volume: number }): Promise<void>;
   command(options: { deck: number; command: { type: string; value?: number } }): Promise<void>;
   setMediaInfo(options: { title: string; artist: string; artwork?: string; playing: boolean }): Promise<void>;
@@ -117,13 +120,18 @@ async function configure(cookie?: string | null) {
 
 // MARK: Import
 
+const importJournal = new ImportJournal(
+  () => readJSON('import-journal.json', []),
+  entries => writeJSON('import-journal.json', entries),
+);
+
 let importCancelled = false;
 
 function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
   importCancelled = false;
   return runImports(playlists, toAccount, {
     emit: (progress) => emit('import:progress', progress), cancelled: () => importCancelled,
-    saveMatches: (entries) => writeJSON('matches.json', entries), width: 3,
+    saveMatches: (entries) => writeJSON('matches.json', entries), saveJournal: entries => importJournal.record(entries), width: 3,
   });
 }
 
@@ -211,6 +219,14 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'import:link': (link) => importer.fromLink(link),
   'import:file': async () => (await pickFiles('.csv,.tsv,.txt,.json,text/*,application/json', true))
     .flatMap((file) => importer.fromFile(file.text, file.name)),
+  'audio:import': async () => {
+    const result = await native.importAudio();
+    return { ...result, tracks: result.tracks.map(track => ({ ...track,
+      artwork: track.artwork?.startsWith('file:') ? Capacitor.convertFileSrc(track.artwork) : track.artwork })) };
+  },
+  'audio:url': async (id) => Capacitor.convertFileSrc((await native.localAudioURL({ id })).url),
+  'import:journal': () => importJournal.load(),
+  'import:resolve': (id, track) => importJournal.resolve(id, track),
   'import:run': (playlists, toAccount) => runImport(playlists, toAccount),
   'import:match': (wanted) => match(wanted),
   'octave:match': (track) => octave.findRecording(track),

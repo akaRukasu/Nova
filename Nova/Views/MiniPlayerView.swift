@@ -71,7 +71,7 @@ struct PlaybackSourceMenu: View {
                 }
             }
         } label: {
-            Text(player.source.label)
+            Text(player.current?.id.hasPrefix("local:") == true ? "Fichier local" : player.source.label)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .padding(.horizontal, 8)
@@ -79,6 +79,7 @@ struct PlaybackSourceMenu: View {
                 .background(.thinMaterial, in: Capsule())
                 .frame(minHeight: 44)
         }
-        .accessibilityLabel("Source de lecture, " + player.source.label)
+        .accessibilityLabel("Source de lecture, " + (player.current?.id.hasPrefix("local:") == true ? "Fichier local" : player.source.label))
+        .disabled(player.current?.id.hasPrefix("local:") == true)
     }
 }

@@ -10,6 +10,7 @@ import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync
 import { player } from '../lib/player';
 import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
 import QRCode from 'qrcode';
+import { ImportJournal } from '../components/ImportJournal';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
 import { ask } from '../components/menus';
@@ -28,6 +29,7 @@ export function ImportPage() {
   const [error, setError] = useState<string>();
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({});
   const [running, setRunning] = useState(false);
+  const [audioErrors, setAudioErrors] = useState<string[]>([]);
   const [toAccount, setToAccount] = useState(true);
   const [outcomes, setOutcomes] = useState<Record<string, { added: number; alreadyPresent: number; duplicates: number }>>({});
 
@@ -73,6 +75,23 @@ export function ImportPage() {
     <div className="page narrow">
       <PageTitle>Importer</PageTitle>
       <PhoneTransfer />
+      <ImportJournal disabled={running} onBusy={setRunning} />
+      <h3 className="section-title">Mes fichiers audio</h3>
+      <p className="muted small">Ajoute tes MP3, WAV, FLAC, M4A, AAC et autres fichiers audio à Nova pour les écouter sur cet appareil.</p>
+      <button className="button secondary" disabled={busy || running} onClick={async () => {
+        setBusy(true);
+        try {
+          const result = await api.importAudio();
+          if (result.tracks.length) {
+            const outcome = importIntoPlaylist('Fichiers locaux', result.tracks);
+            notify(outcome.added + ' fichiers ajoutés' + (outcome.alreadyPresent ? ', ' + outcome.alreadyPresent + ' déjà présents' : ''));
+          }
+          setAudioErrors(result.errors);
+        } catch (e) { setError(errorText(e)); }
+        finally { setBusy(false); }
+      }}><Icon name="import" size={16} /> Ajouter des fichiers audio</button>
+      {audioErrors.map((message, index) => <p className="error small" key={index}>{message}</p>)}
+
       <h3 className="section-title">Depuis une autre plateforme</h3>
       <p className="muted">Copie le lien d’une playlist ou d’un album <b>Spotify</b>, <b>Deezer</b> (ou ton profil Deezer), <b>Apple Music</b> ou <b>YouTube</b>,
         ou ouvre un export CSV, TXT ou JSON. Nova cherche d’abord sur Octave, puis sur YouTube Music. Un nouvel import complète la playlist du même nom et corrige les correspondances, sans doublons.</p>
@@ -105,6 +124,7 @@ export function ImportPage() {
                         {outcomes[playlist.name]?.alreadyPresent ? ` · ${outcomes[playlist.name].alreadyPresent} déjà présents (non doublés)` : ''}
                         {outcomes[playlist.name]?.duplicates ? ` · ${outcomes[playlist.name].duplicates} doublons ignorés` : ''}
                       </span>
+                      {state.journalError && <p className="error">{state.journalError}</p>}
                       {state.done && state.missing.length > 0 && <MissingTracks missing={state.missing} playlistName={playlist.name} />}
                     </div>
                   )}

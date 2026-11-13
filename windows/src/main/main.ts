@@ -1,3 +1,5 @@
+import { LocalAudioLibrary } from './localAudio.js';
+import { ImportJournal } from '../shared/importJournal.js';
 // Nova pour Windows : processus principal.
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
@@ -182,6 +184,12 @@ async function logout() {
 
 // MARK: - Import
 
+const localAudio = new LocalAudioLibrary(() => file('LocalAudio'));
+const importJournal = new ImportJournal(
+  () => readJSON('import-journal.json', []),
+  entries => writeJSON('import-journal.json', entries),
+);
+
 let importCancelled = false;
 
 function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
@@ -189,7 +197,7 @@ function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
   // Quatre recherches en parallèle : rapide, sans saturer YouTube Music.
   return runImports(playlists, toAccount, {
     emit: (progress) => sendToUI('import:progress', progress), cancelled: () => importCancelled,
-    saveMatches: (entries) => writeJSON('matches.json', entries), width: 4,
+    saveMatches: (entries) => writeJSON('matches.json', entries), saveJournal: entries => importJournal.record(entries), width: 4,
   });
 }
 
@@ -417,7 +425,7 @@ async function askAboutBlankWindow(target: BrowserWindow) {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.akarukasu.nova');
-  handleStreams();
+  handleStreams((id, range, cover) => localAudio.response(id, range, cover));
   if (app.isPackaged) app.setAsDefaultProtocolClient('nova');
   handle('jam:initialInvitation', () => {
     const link = pendingJamInvitation;
@@ -492,6 +500,16 @@ app.whenReady().then(async () => {
     }
     return playlists;
   });
+  handle('audio:import', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [
+      { name: 'Fichiers audio', extensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'aiff', 'aif', 'ogg', 'opus', 'wma', 'ape', 'alac'] },
+      { name: 'Tous les fichiers', extensions: ['*'] },
+    ] });
+    return result.canceled ? { tracks: [], errors: [] } : localAudio.import(result.filePaths);
+  });
+  handle('audio:url', (id: string) => 'nova-stream://audio/' + encodeURIComponent(id));
+  handle('import:journal', () => importJournal.load());
+  handle('import:resolve', (id: string, track: Track) => importJournal.resolve(id, track));
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
   handle('octave:match', (track: Track) => octave.findRecording(track));

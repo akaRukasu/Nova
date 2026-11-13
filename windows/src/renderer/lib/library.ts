@@ -253,7 +253,7 @@ export function importIntoPlaylist(name: string, tracks: Track[], youtubeId?: st
 export async function verifyPlaylistOnOctave(id: string, progress: (processed: number, total: number) => void) {
   const playlist = library.get().playlists.find(playlist => playlist.id === id);
   if (!playlist) return 0;
-  const candidates = playlist.tracks.filter(track => !isOctaveId(track.id) || !track.albumId);
+  const candidates = playlist.tracks.filter(track => !track.id.startsWith('local:') && (!isOctaveId(track.id) || !track.albumId));
   const replacements = new Map<string, Track>();
   let next = 0;
   let processed = 0;
@@ -377,7 +377,7 @@ export function removeShared(id: string) {
 }
 
 export async function addToShared(entry: SharedPlaylist, tracks: Track[]) {
-  const ids = tracks.filter((track) => !isOctaveId(track.id)).map((track) => track.id);
+  const ids = tracks.filter((track) => !isOctaveId(track.id) && !track.id.startsWith('local:')).map((track) => track.id);
   if (!ids.length) return;
   try {
     await api.addToAccountPlaylist(entry.id, ids);
@@ -544,6 +544,7 @@ on('phone:library', (raw: unknown, phone?: string) => {
 // MARK: Morceaux (sans doublons)
 
 export function dedupeKey(track: Track) {
+  if (track.id.startsWith('local:')) return track.id;
   const clean = (v: string) => v.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
   return `${clean(track.title)}|${clean(track.artist.split(/,|&| et /)[0] ?? '')}`;

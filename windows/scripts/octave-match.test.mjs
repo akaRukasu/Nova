@@ -119,3 +119,15 @@ test('a nine-second clip intro accepts one studio recording with the same title 
   assert.equal(matchRecording(clip, [audio, { ...audio, id: 'octave:2' }]), undefined);
   assert.equal(matchRecording({ ...clip, artist: 'Other Artist' }, [audio]), undefined);
 });
+
+test('an abbreviated final word needs the same artist, close duration and a confirmed full audio title', () => {
+  const clip = { id: 'TmQ5erMKsQU', title: 'DA Uzi - Vrai N (Clip officiel)', artist: 'DA Uzi', duration: 120 };
+  const octave = { id: 'octave:4359983131', title: 'Vrai négro', artist: 'DA Uzi', duration: 121, square: true };
+  const audio = { ...octave, id: 'QOdQvWjOT-4', duration: 122 };
+  assert.equal(matchRecording(clip, [octave]), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], []), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], [audio]), octave);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, duration: 180 }], [audio]), undefined);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, artist: 'Other Artist' }], [audio]), undefined);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, title: 'Vrai négro (Remix)' }], [{ ...audio, title: 'Vrai négro (Remix)' }]), undefined);
+});
