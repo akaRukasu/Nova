@@ -87,3 +87,35 @@ test('a quoted music-video title with the credited artist prefix resolves throug
   assert.equal(confirmClipRecording({ ...clip, title: clip.title.replace('Tee Grizzley -', 'Other Artist -') }, [octave], [audio]), undefined);
   assert.equal(matchRecording({ ...clip, duration: 159 }, [octave]), octave);
 });
+
+test('video labels and the credited artist at either end retain the recording and its edition', () => {
+  const song = { id: 'octave:1', title: 'Example', artist: 'Known Artist', duration: 190, square: true };
+  for (const title of ['Known Artist - Example (Audio)', 'Example - Known Artist [Lyrics]',
+    'Known Artist | “Example” [Official Visualizer]', 'Example (Official Explicit Audio)']) {
+    assert.equal(matchRecording({ ...song, id: 'youtube', title }, [song]), song);
+    assert.equal(matchRecording({ ...song, id: 'youtube', title: title.replace('Example', 'Example (Live)') }, [song]), undefined);
+  }
+  const guest = { ...song, title: 'Example (feat. Guest)' };
+  assert.equal(matchRecording({ ...song, title: 'Known Artist - Example (Audio) ft. Guest' }, [guest]), guest);
+  assert.equal(matchRecording({ ...song, title: 'Example - Unknown Artist [Lyrics]' }, [song]), undefined);
+});
+
+test('an EP title annotation requires confirmation from the official audio listing', () => {
+  const clip = { id: 'RUG55VN7SAI', title: 'Step Up - Linkin Park', artist: 'Linkin Park', duration: 237, square: false };
+  const octave = { id: 'octave:1100610192', title: 'Step Up (Hybrid Theory EP)', artist: 'Linkin Park',
+    album: 'Hybrid Theory (20th Anniversary Edition)', duration: 234, square: true };
+  const audio = { ...octave, id: 'J8CUHhg1DhU', duration: 235 };
+  assert.equal(matchRecording(clip, [octave]), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], []), undefined);
+  assert.equal(confirmClipRecording(clip, [octave], [audio]), octave);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, title: 'Step Up (Live EP)' }], [{ ...audio, title: 'Step Up (Live EP)' }]), undefined);
+  assert.equal(confirmClipRecording(clip, [{ ...octave, album: 'Another release' }], [audio]), undefined);
+});
+
+test('a nine-second clip intro accepts one studio recording with the same title and artist', () => {
+  const clip = { id: 'pJbysSbUg74', title: 'LVZ - Brisé (CLIP OFFICIEL)', artist: 'LVZ', duration: 189, square: false };
+  const audio = { id: 'octave:1231490422', title: 'Brisé', artist: 'LVZ', duration: 180, square: true };
+  assert.equal(matchRecording(clip, [audio]), audio);
+  assert.equal(matchRecording(clip, [audio, { ...audio, id: 'octave:2' }]), undefined);
+  assert.equal(matchRecording({ ...clip, artist: 'Other Artist' }, [audio]), undefined);
+});

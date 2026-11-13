@@ -40,10 +40,14 @@ export function artistNames(value: string): string[] {
 }
 
 function recordingTitle(title: string, artist: string): string {
-  let cleaned = title.replace(/\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$/i, '').trim();
+  let cleaned = title
+    .replace(/\s*[\[(]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*\/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*[\])]\s*/gi, ' ')
+    .replace(/\s+[-–—]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*\/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*$/i, '')
+    .trim();
   const credited = [normalize(artist), normalize(mainArtist(artist))].filter(Boolean);
-  const prefix = cleaned.match(/^(.+?)(?:\s+[-–—]\s+|\s*:\s+)(.+)$/);
-  if (prefix && credited.includes(normalize(prefix[1]))) cleaned = prefix[2].trim();
+  const labeled = cleaned.match(/^(.+?)(?:\s+[-–—|]\s+|\s*:\s+)(.+)$/);
+  if (labeled && credited.includes(normalize(labeled[1]))) cleaned = labeled[2].trim();
+  else if (labeled && credited.includes(normalize(labeled[2]))) cleaned = labeled[1].trim();
   // Some video publishers put the entire title and its guest credit in quotation marks.
   const wrappers = [['"', '"'], ['“', '”'], ['«', '»'], ["'", "'"], ['‘', '’']];
   const wrapper = wrappers.find(([open, close]) => cleaned.startsWith(open) && cleaned.endsWith(close));
@@ -109,15 +113,27 @@ export function matchRecording(wanted: Track, candidates: Track[]): Track | unde
   // Un clip officiel peut ajouter une courte intro ou un générique au même enregistrement.
   const audio = matchingCredits.filter((candidate) => candidate.square && candidate.duration
     && normalize(candidate.artist) === artist && wanted.duration! > candidate.duration
-    && wanted.duration! - candidate.duration <= Math.min(15, wanted.duration! * 0.04));
+    && wanted.duration! - candidate.duration <= Math.min(15, Math.max(10, wanted.duration! * 0.04)));
   return audio.length === 1 ? audio[0] : undefined;
+}
+
+/** Certains catalogues ajoutent le nom de l’EP au titre de sa réédition. */
+export function sameClipRecordingCredits(clip: Track, candidate: Track): boolean {
+  if (sameRecordingCredits(clip, candidate)) return true;
+  const title = recordingTitle(candidate.title, candidate.artist);
+  const release = title.match(/\s+\(([^()]+) EP\)$/i);
+  if (!release || !candidate.album || !clip.duration || !candidate.duration
+    || Math.abs(clip.duration - candidate.duration) > 8
+    || !normalize(candidate.album).startsWith(normalize(release[1]))
+    || /\b(live|demo|remix|cover|instrumental|acoustic|edit)\b/i.test(release[1])) return false;
+  return sameRecordingCredits(clip, { ...candidate, title: title.slice(0, release.index) });
 }
 
 export function confirmClipRecording(clip: Track, candidates: Track[], songs: Track[]): Track | undefined {
   if (clip.square !== false && clip.album) return undefined;
-  const audio = songs.filter(song => song.id !== clip.id && song.square && song.duration && sameRecordingCredits(clip, song));
+  const audio = songs.filter(song => song.id !== clip.id && song.square && song.duration && sameClipRecordingCredits(clip, song));
   const confirmed = candidates.filter(candidate => candidate.square && candidate.duration
-    && sameRecordingCredits(clip, candidate)
+    && sameClipRecordingCredits(clip, candidate)
     && audio.some(song => sameRecordingCredits(song, candidate) && Math.abs(song.duration! - candidate.duration!) <= 3));
   return confirmed.length === 1 ? confirmed[0] : undefined;
 }

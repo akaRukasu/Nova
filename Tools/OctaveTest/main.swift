@@ -23,6 +23,17 @@ do {
     try require(teeSelected?.id == "octave:144393532", "Le clip de Tee Grizzley doit retrouver son édition audio")
     print("Titre de clip, artiste, invité et durée de la piste audio confirmés")
 
+    let additional = [
+        (Track(id: "RUG55VN7SAI", title: "Step Up - Linkin Park", artist: "Linkin Park", duration: 237), "octave:1100610192"),
+        (Track(id: "pJbysSbUg74", title: "LVZ - Brisé (CLIP OFFICIEL)", artist: "LVZ", duration: 189), "octave:1231490422"),
+        (Track(id: "dGYxT1QReQs", title: "Toosie Slide (Official Explicit Audio)", artist: "Drake", duration: 249), "octave:919708552")
+    ]
+    for (track, expectedID) in additional {
+        let recording = try await catalog.recording(track)
+        try require(recording?.id == expectedID, "Échec de correspondance pour " + track.title)
+    }
+    print("Clips avec annotation vidéo, nom d’artiste et réédition d’EP confirmés")
+
     let requested = Track(id: "EjlpiC2cGd0", title: "Backseat", artist: "Personality Disorder", duration: 126)
     let selected = try await catalog.recording(requested)
     try require(selected?.id == "octave:4312686782", "Backseat doit retrouver la version originale")

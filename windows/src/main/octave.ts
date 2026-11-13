@@ -1,7 +1,7 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
 import { artistNameKey } from '../shared/artistNames.js';
-import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries, sameRecordingCredits } from './matcher.js';
+import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries, sameClipRecordingCredits } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
 const base = 'https://api.octavestreaming.com/api';
@@ -147,7 +147,7 @@ export async function findRecording(track: Track, excluding?: string): Promise<T
     fallback ??= found;
     if (track.square === false || !track.album) {
       for (const candidate of candidates) {
-        if (candidate.square && sameRecordingCredits(track, candidate)) possibleAudio.set(candidate.id, candidate);
+        if (candidate.square && sameClipRecordingCredits(track, candidate)) possibleAudio.set(candidate.id, candidate);
       }
     }
   }

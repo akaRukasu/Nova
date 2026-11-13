@@ -180,16 +180,22 @@ actor OctaveCatalog {
             .split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
     private nonisolated static func recordingTitle(_ title: String, artist: String) -> String {
-        var cleaned = title.replacingOccurrences(of: #"\s*(?:\(|\[|[-–—]\s*)(?:official (?:music )?(?:audio|video)|(?:official )?lyrics? video|audio officiel|clip officiel|vid[ée]o officielle)[)\]]?\s*$"#,
-                                                 with: "", options: [.regularExpression, .caseInsensitive])
+        var cleaned = title
+            .replacingOccurrences(of: #"\s*[\[(]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*[\])]\s*"#,
+                                  with: " ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\s+[-–—]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*$"#,
+                                  with: "", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let credited = Set([normalize(artist), normalize(lead(artist))].filter { !$0.isEmpty })
-        if let regex = try? NSRegularExpression(pattern: #"^(.+?)(?:\s+[-–—]\s+|\s*:\s+)(.+)$"#),
+        if let regex = try? NSRegularExpression(pattern: #"^(.+?)(?:\s+[-–—|]\s+|\s*:\s+)(.+)$"#),
            let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)),
            let prefix = Range(match.range(at: 1), in: cleaned),
-           let remainder = Range(match.range(at: 2), in: cleaned),
-           credited.contains(normalize(String(cleaned[prefix]))) {
-            cleaned = String(cleaned[remainder]).trimmingCharacters(in: .whitespacesAndNewlines)
+           let remainder = Range(match.range(at: 2), in: cleaned) {
+            if credited.contains(normalize(String(cleaned[prefix]))) {
+                cleaned = String(cleaned[remainder]).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if credited.contains(normalize(String(cleaned[remainder]))) {
+                cleaned = String(cleaned[prefix]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
         let wrappers = [("\"","\""), ("“", "”"), ("«", "»"), ("'", "'"), ("‘", "’")]
         if wrappers.contains(where: { cleaned.hasPrefix($0.0) && cleaned.hasSuffix($0.1) }), cleaned.count >= 2 {
@@ -219,6 +225,24 @@ actor OctaveCatalog {
         let right = Set(names(candidate.artist).map(normalize)).union(b.guests)
         return !left.isEmpty && !right.isEmpty && (left.isSubset(of: right) || right.isSubset(of: left))
     }
+    private nonisolated static func sameClipCredits(_ clip: Track, _ candidate: Track) -> Bool {
+        if sameCredits(clip, candidate) { return true }
+        let title = recordingTitle(candidate.title, artist: candidate.artist)
+        guard let regex = try? NSRegularExpression(pattern: #"\s+\(([^()]+) EP\)$"#, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
+              let range = Range(match.range, in: title),
+              let releaseRange = Range(match.range(at: 1), in: title),
+              let album = candidate.album, let left = clip.duration, let right = candidate.duration,
+              abs(left - right) <= 8 else { return false }
+        let release = String(title[releaseRange])
+        guard normalize(album).hasPrefix(normalize(release)),
+              release.range(of: #"\b(live|demo|remix|cover|instrumental|acoustic|edit)\b"#,
+                            options: [.regularExpression, .caseInsensitive]) == nil else { return false }
+        var comparable = candidate
+        comparable.title = String(title[..<range.lowerBound])
+        return sameCredits(clip, comparable)
+    }
+
     nonisolated static func sameRecording(_ wanted: Track, _ candidate: Track) -> Bool {
         guard sameCredits(wanted, candidate) else { return false }
         if normalize(recordingTitle(wanted.title, artist: wanted.artist)) == normalize(recordingTitle(candidate.title, artist: candidate.artist)) { return true }
@@ -238,7 +262,16 @@ actor OctaveCatalog {
                    && Self.normalize($0.title) == Self.normalize(wanted.title)
                    && Self.normalize($0.artist) == Self.normalize(wanted.artist)
            }) { return match }
-        return exact.first
+        if let first = exact.first { return first }
+        if !wanted.hasSquareArtwork, let duration = wanted.duration {
+            let audio = tracks.filter { candidate in
+                guard candidate.hasSquareArtwork, let length = candidate.duration,
+                      Self.sameCredits(wanted, candidate), Self.normalize(candidate.artist) == Self.normalize(wanted.artist) else { return false }
+                return duration > length && duration - length <= min(15, max(10, duration * 0.04))
+            }
+            if audio.count == 1 { return audio[0] }
+        }
+        return nil
     }
     func recording(_ track: Track) async throws -> Track? {
         if Self.trackURL(track) != nil { return track }
@@ -265,12 +298,12 @@ actor OctaveCatalog {
             result = exact
         }
         if result == nil, !track.hasSquareArtwork || track.album == nil {
-            let possible = tracks.filter { Self.sameCredits(track, $0) && $0.duration != nil }
+            let possible = tracks.filter { Self.sameClipCredits(track, $0) && $0.duration != nil }
             for audioQuery in [query] + queries where result == nil && !possible.isEmpty {
                 guard let songs = try? await InnerTubeClient().search(audioQuery, scope: .songs) else { continue }
-                let canonical = songs.flatMap(\.tracks).filter { $0.id != track.id && $0.hasSquareArtwork && Self.sameCredits(track, $0) }
+                let canonical = songs.flatMap(\.tracks).filter { $0.id != track.id && $0.hasSquareArtwork && Self.sameClipCredits(track, $0) }
                 let confirmed = possible.filter { candidate in canonical.contains { song in
-                    guard let a = song.duration, let b = candidate.duration else { return false }
+                    guard Self.sameCredits(song, candidate), let a = song.duration, let b = candidate.duration else { return false }
                     return abs(a - b) <= 3
                 }}
                 if confirmed.count == 1 { result = confirmed[0] }
