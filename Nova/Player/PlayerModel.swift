@@ -1129,7 +1129,7 @@ final class PlayerModel {
             player.volume = Float(currentGain)
             player.replaceCurrentItem(with: item)
             if startTime > 1 {
-                player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600))
+                player.seek(to: CMTime(seconds: startTime, preferredTimescale: 600)) { _ in }
             }
             // Démarre dès les premières secondes reçues, sans attendre un gros tampon.
             player.playImmediately(atRate: 1)
