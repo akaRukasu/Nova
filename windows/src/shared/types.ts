@@ -242,6 +242,7 @@ export interface JamState {
   queue: Track[];
   index: number;
   playing: boolean;
+  transitioning?: boolean;
   position: number;
   sentAt: number;
   participants: string[];

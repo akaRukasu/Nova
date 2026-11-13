@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BaseWindow, session, shell, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 import {
-  octaveAudioDefaults, octaveCatalogId, octaveId, octaveOrigin, octaveQueueQueries, octaveTrackUrl,
+  octaveAudioDefaults, octaveCatalogId, octaveHandoff, octaveId, octaveOrigin, octaveQueueQueries, octaveTrackUrl,
   type OctaveCommand, type OctavePlayback, type OctaveStart,
 } from '../shared/octave.js';
 import type { OctaveAudioSettings, Track } from '../shared/types.js';
@@ -22,12 +22,16 @@ type Sample = {
   mixing?: boolean;
   fading?: boolean;
   outgoingPosition?: number;
+  audioId?: number;
+  buffering?: boolean;
 };
-type OctaveMedia = { read(): { position: number; duration: number; ended: boolean; playing: boolean; fading: boolean; outgoingPosition?: number } | undefined; seek(seconds: number): boolean };
+type OctaveMedia = { read(): Pick<Sample, 'position' | 'duration' | 'ended' | 'playing' | 'fading' | 'outgoingPosition' | 'audioId' | 'buffering'> | undefined; seek(seconds: number): boolean };
 type Playback = {
   request: number; track: Track; source: Track; position: number; duration: number; heard: number; recorded: boolean; playing: boolean;
   stoppedAt?: number;
-  metadataChangedAt?: number;
+  audioId?: number;
+  handoffAt?: number;
+  seekUntil?: number;
   queueVersion?: number;
   next?: { track: Track; source: Track };
 };
@@ -71,6 +75,8 @@ function readPlayback(targetId?: string): Sample {
     mixing: media?.fading ?? false,
     fading: media?.fading,
     outgoingPosition: media?.outgoingPosition,
+    audioId: media?.audioId,
+    buffering: media?.buffering,
   };
 }
 
@@ -444,7 +450,7 @@ export class OctavePlayer {
     if (operation !== this.operation || contents.isDestroyed()) return 'cancelled';
     this.playback = {
       request, track, source: selected, position: sample.position, duration: sample.duration || selected.duration || 0,
-      heard: 0, recorded: false, playing: true,
+      heard: 0, recorded: false, playing: true, audioId: sample.audioId,
     };
     contents.setAudioMuted(false);
     return 'playing';
@@ -478,7 +484,14 @@ export class OctavePlayer {
   async command(request: number, command: OctaveCommand): Promise<boolean> {
     const contents = this.view?.webContents;
     if (this.playback?.request !== request || !contents || contents.isDestroyed()) return false;
-    if (command.type === 'pause' || command.type === 'seek') this.playback.stoppedAt = undefined;
+    if (command.type === 'pause' || command.type === 'seek') {
+      this.playback.stoppedAt = undefined;
+      this.playback.handoffAt = undefined;
+      if (command.type === 'seek') {
+        this.playback.position = command.value;
+        this.playback.seekUntil = Date.now() + 1000;
+      }
+    }
     return this.runControl(contents, command);
   }
 
@@ -577,29 +590,38 @@ export class OctavePlayer {
       }
       const delta = sample.position - playback.position;
       let next: Track | undefined;
-      if (sample.title && !this.matches(playback.source, sample) && sample.playing) {
-        playback.metadataChangedAt ??= Date.now();
-        if (Date.now() - playback.metadataChangedAt < 1200 && Math.abs(sample.duration - playback.duration) < 1.1
-          && playback.position > 3 && Math.abs(sample.position - playback.position) < 2) return;
-        const planned = playback.next;
+      let queuedTrackId: string | undefined;
+      const planned = playback.next;
+      const currentMatches = this.matches(playback.source, sample);
+      const plannedMatches = !!planned && this.matches(planned.source, sample);
+      const now = Date.now();
+      if (sample.playing && now >= (playback.seekUntil ?? 0) && octaveHandoff(playback, { ...sample, position: sample.position })) {
+        playback.handoffAt = now;
+      }
+      if (playback.handoffAt != null && now - playback.handoffAt > 3500) playback.handoffAt = undefined;
+      const switched = playback.handoffAt != null;
+      if (sample.playing && switched && (plannedMatches || (sample.title && !currentMatches))) {
         playback.next = undefined;
+        playback.handoffAt = undefined;
+        playback.queueVersion = (playback.queueVersion ?? 0) + 1;
         const key = JSON.stringify([sample.title, sample.artist, sample.album]);
-        next = planned && this.matches(planned.source, sample) ? planned.source : {
+        next = planned && plannedMatches ? planned.source : {
           id: octaveId(sample.id) ?? `octave:played-${createHash('sha256').update(key).digest('hex').slice(0, 24)}`,
           title: sample.title, artist: sample.artist, album: sample.album, artwork: sample.artwork,
           duration: sample.duration || undefined, square: true,
         };
         playback.track = next === planned?.source ? planned.track : next;
+        if (next === planned?.source) queuedTrackId = planned.track.id;
         playback.source = next;
         playback.heard = 0;
         playback.recorded = false;
       }
-      playback.metadataChangedAt = undefined;
+      playback.audioId = sample.audioId ?? playback.audioId;
       if (!sample.playing && !playback.stoppedAt
         && (sample.ended || (playback.playing && playback.duration > 0 && playback.duration - playback.position < 1.5))) {
         playback.stoppedAt = Date.now();
       }
-      if (sample.playing) playback.stoppedAt = undefined;
+      if (sample.playing || sample.buffering) playback.stoppedAt = undefined;
       if (playback.stoppedAt && Date.now() - playback.stoppedAt >= 10_000) {
         this.stop();
         this.status({ request: playback.request, time: playback.position, duration: playback.duration, playing: false, ended: true });
@@ -608,9 +630,9 @@ export class OctavePlayer {
       playback.playing = sample.playing;
       playback.position = sample.position;
       playback.duration = sample.duration || playback.duration;
-      this.status({ request: playback.request, time: sample.position, duration: playback.duration, playing: sample.playing, track: next,
+      this.status({ request: playback.request, time: sample.position, duration: playback.duration, playing: sample.playing, track: next, queuedTrackId,
         upcoming: sample.upcoming, mixing: sample.mixing });
-      if (!next && !playback.recorded && sample.playing && contents.isCurrentlyAudible() && delta > 0 && delta < 2) {
+      if (!next && playback.handoffAt == null && !playback.recorded && sample.playing && contents.isCurrentlyAudible() && delta > 0 && delta < 2) {
         playback.heard += delta;
         if (playback.heard >= 5) {
           playback.recorded = true;

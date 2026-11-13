@@ -30,6 +30,8 @@ if (process.isMainFrame && location.origin === 'https://music.octavestreaming.co
         clearTimeout(frame.timer);
       };
       const players: WeakRef<HTMLAudioElement>[] = [];
+      const audioIds = new WeakMap<HTMLAudioElement, number>();
+      let nextAudioId = 0;
       const session = navigator.mediaSession;
       const positionState = session.setPositionState;
       const setActionHandler = session.setActionHandler;
@@ -75,15 +77,19 @@ if (process.isMainFrame && location.origin === 'https://music.octavestreaming.co
             const playing = players.filter((audio) => !audio.paused && !audio.ended);
             const anchored = active?.deref();
             const outgoing = stable?.deref();
-            const engine = (window as Window & { __octaveEngine?: { isFading?: boolean } }).__octaveEngine;
-            const fading = Boolean(engine?.isFading && outgoing && !outgoing.paused && !outgoing.ended
-              && outgoing.duration - outgoing.currentTime > 0.08 && outgoing.duration - outgoing.currentTime <= 28);
-            const audio = playing.length === 1 ? playing[0]
+            const engine = (window as Window & { __octaveEngine?: { isFading?: boolean; active?: HTMLAudioElement } }).__octaveEngine;
+            const overlap = playing.length > 1 && outgoing && outgoing.volume !== 0 && playing.includes(outgoing);
+            const fading = Boolean(outgoing && !outgoing.paused && !outgoing.ended
+              && (overlap || (engine?.isFading && outgoing.duration - outgoing.currentTime > 0.08 && outgoing.duration - outgoing.currentTime <= 28)));
+            const engineAudio = engine?.active;
+            const audio = engineAudio && playing.includes(engineAudio) ? engineAudio : playing.length === 1 ? playing[0]
               : anchored && players.includes(anchored) ? anchored
                 : players.length === 1 ? players[0] : undefined;
             if (audio && !fading && playing.includes(audio)) stable = new WeakRef(audio);
+            if (audio && !audioIds.has(audio)) audioIds.set(audio, ++nextAudioId);
             return audio ? { position: audio.currentTime, duration: audio.duration, ended: audio.ended,
-              playing: playing.length > 0, fading, outgoingPosition: fading ? outgoing?.currentTime : undefined } : undefined;
+              playing: playing.length > 0, fading, outgoingPosition: fading ? outgoing?.currentTime : undefined,
+              audioId: audioIds.get(audio), buffering: !audio.paused && audio.readyState < 3 } : undefined;
           },
           seek(seconds: number) {
             if (!seekHandler || !Number.isFinite(seconds) || seconds < 0) return false;

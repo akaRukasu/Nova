@@ -8,6 +8,7 @@ struct JamState: Codable, Equatable {
     var queue: [Track]
     var index: Int
     var isPlaying: Bool
+    var transitioning: Bool? = nil
     var position: TimeInterval
     var sentAt: Date
     var participants: [String]
@@ -152,14 +153,14 @@ final class JamSession: NSObject {
     /// Envoie l'état dès que la file, le titre ou la lecture changent, et toutes les 3 s.
     private func hostTick() {
         guard role == .host else { return }
-        let signature = "\(player.queue.map(\.id).joined(separator: ","))|\(player.index)|\(player.isPlaying)"
+        let signature = "\(player.queue.map(\.id).joined(separator: ","))|\(player.index)|\(player.isPlaying)|\(player.isTransitioning)"
         if signature != lastSignature || Date().timeIntervalSince(lastSent) > 3 { broadcastState() }
     }
 
     private func currentHostState() -> JamState {
         let queue = player.queue.dropFirst(max(0, player.index)).prefix(200)
         return JamState(hostName: publicName, queue: Array(queue), index: 0,
-                 isPlaying: player.isPlaying, position: player.currentTime, sentAt: Date(),
+                 isPlaying: player.isPlaying, transitioning: player.isTransitioning, position: player.currentTime, sentAt: Date(),
                  participants: isRemote ? remoteParticipants : (session?.connectedPeers ?? []).map { names[$0] ?? $0.displayName },
                  guestsCanControl: guestsCanControl, addedBy: addedBy)
     }
@@ -168,7 +169,7 @@ final class JamSession: NSObject {
         guard role == .host else { return }
         let current = currentHostState()
         state = current
-        lastSignature = "\(player.queue.map(\.id).joined(separator: ","))|\(player.index)|\(player.isPlaying)"
+        lastSignature = "\(player.queue.map(\.id).joined(separator: ","))|\(player.index)|\(player.isPlaying)|\(player.isTransitioning)"
         lastSent = Date()
         send(.state(current))
     }
@@ -421,7 +422,7 @@ final class JamSession: NSObject {
     private func follow(_ state: JamState) {
         let elapsed = state.isPlaying ? max(0, min(Date().timeIntervalSince(state.sentAt), 5)) : 0
         player.followJam(queue: state.queue, index: state.index, position: state.position + elapsed,
-                         playing: state.isPlaying)
+                         playing: state.isPlaying, hostTransitioning: state.transitioning ?? false)
     }
 
     // MARK: Fin

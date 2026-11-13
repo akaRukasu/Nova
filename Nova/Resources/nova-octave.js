@@ -30,6 +30,8 @@
   };
   const session = navigator.mediaSession;
   const players = [];
+  const audioIds = new WeakMap();
+  let nextAudioId = 0;
   let anchored;
   let lastStableAudio;
   let seek;
@@ -71,10 +73,11 @@
     const audible = available.filter(audio => !audio.paused && !audio.ended);
     const active = engine?.active;
     const outgoing = lastStableAudio;
-    const fading = Boolean(engine?.isFading && outgoing && !outgoing.paused && !outgoing.ended
-      && outgoing.duration - outgoing.currentTime > 0.08 && outgoing.duration - outgoing.currentTime <= 28);
-    const audio = audible.length === 1 ? audible[0]
-      : Number.isFinite(active?.duration) && active.duration > 0 ? active
+    const overlap = audible.length > 1 && outgoing && outgoing.volume !== 0 && audible.includes(outgoing);
+    const fading = Boolean(outgoing && !outgoing.paused && !outgoing.ended
+      && (overlap || (engine?.isFading && outgoing.duration - outgoing.currentTime > 0.08 && outgoing.duration - outgoing.currentTime <= 28)));
+    const audio = Number.isFinite(active?.duration) && active.duration > 0 && !active.paused && !active.ended ? active
+      : audible.length === 1 ? audible[0]
         : available.includes(anchored) ? anchored : available.length === 1 ? available[0] : undefined;
     if (audio && !fading && !audio.paused && !audio.ended) lastStableAudio = anchored = audio;
     const playing = audio ? (!audio.paused && !audio.ended) || (fading && audible.length > 0)
@@ -84,6 +87,7 @@
     const metadata = session?.metadata;
     // Android WebView peut lire l'audio sans exposer navigator.mediaSession.
     const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
+    if (audio && !audioIds.has(audio)) audioIds.set(audio, ++nextAudioId);
     return {
       id: document.querySelector('[data-track-id][data-active="true"]')?.getAttribute('data-track-id'),
       title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
@@ -91,6 +95,8 @@
       artwork: nowPlaying?.querySelector('img')?.src ?? metadata?.artwork.find(item => item.src.startsWith('https:'))?.src,
       position: audio?.currentTime ?? (Number.isFinite(reportedTime) && (reportedTime > 0 || !playing) ? reportedTime : null),
       outgoingPosition: fading ? outgoing.currentTime : undefined,
+      audioId: audio ? audioIds.get(audio) : undefined,
+      buffering: Boolean(audio && !audio.paused && audio.readyState < 3),
       duration: audio?.duration ?? Number(position?.max ?? 0),
       playing,
       audible: Boolean(audio && !audio.paused && !audio.muted && audio.readyState >= 2),

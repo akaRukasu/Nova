@@ -115,6 +115,7 @@ struct JamWireState: Codable {
     var queue: [LibraryStore.HistorySnapshot.WireTrack]
     var index: Int
     var playing: Bool
+    var transitioning: Bool?
     var position: Double
     var sentAt: Double
     var participants: [String]
@@ -126,6 +127,7 @@ struct JamWireState: Codable {
         queue = state.queue.map(LibraryStore.HistorySnapshot.WireTrack.init)
         index = state.index
         playing = state.isPlaying
+        transitioning = state.transitioning
         position = state.position
         sentAt = state.sentAt.timeIntervalSince1970 * 1000
         participants = state.participants
@@ -134,7 +136,7 @@ struct JamWireState: Codable {
     }
 
     var native: JamState {
-        JamState(hostName: hostName, queue: queue.map(\.track), index: index, isPlaying: playing,
+        JamState(hostName: hostName, queue: queue.map(\.track), index: index, isPlaying: playing, transitioning: transitioning,
                  position: position, sentAt: Date(timeIntervalSince1970: sentAt / 1000),
                  participants: participants, guestsCanControl: guestsCanControl, addedBy: addedBy)
     }

@@ -25,6 +25,16 @@ export interface OctavePlayback {
   track?: Track;
   upcoming?: Track[];
   mixing?: boolean;
+  queuedTrackId?: string;
+}
+
+/** Une métadonnée seule peut arriver avant le changement de piste ou être transitoire. */
+export function octaveHandoff(previous: { audioId?: number; position: number; duration: number },
+  sample: { audioId?: number; position: number; duration: number }) {
+  const switchedDeck = previous.audioId != null && sample.audioId != null && previous.audioId !== sample.audioId;
+  const restartedClock = previous.position > 4 && sample.position + 3 < previous.position;
+  const differentDuration = previous.duration > 0 && sample.duration > 0 && Math.abs(previous.duration - sample.duration) > 1.5;
+  return switchedDeck || restartedClock || differentDuration;
 }
 
 export const isOctaveId = (id: string) => id.startsWith(prefix);

@@ -69,21 +69,6 @@ enum PlaybackSettings {
             case .automix: "AutoMix (DJ)"
             }
         }
-
-        /// Volumes (titre suivant, titre qui se termine) à l'instant `t` de la transition (0 → 1).
-        func volumes(at t: Double) -> (incoming: Double, outgoing: Double) {
-            func smooth(_ x: Double) -> Double { let x = min(max(x, 0), 1); return x * x * (3 - 2 * x) }
-            switch self {
-            case .off:
-                return (1, 0)
-            case .crossfade:
-                // Puissance constante : pas de creux de volume au milieu.
-                return (sin(t * .pi / 2), cos(t * .pi / 2))
-            case .automix:
-                // Façon DJ : le titre suivant monte pendant que l'autre tient, puis celui-ci s'efface.
-                return (smooth(t / 0.55), 1 - smooth((t - 0.35) / 0.65))
-            }
-        }
     }
 
     static var transition: Transition {

@@ -44,6 +44,7 @@ final class PlayerModel {
     @ObservationIgnored private var octaveMonitor: Task<Void, Never>?
     @ObservationIgnored private var octavePreload: Task<Void, Never>?
     @ObservationIgnored private var octaveSession = 0
+    @ObservationIgnored private var octaveSeekAt = Date.distantPast
 
     enum RepeatMode: Int, Codable {
         case off, all, one
@@ -303,19 +304,20 @@ final class PlayerModel {
         attachTimeObserver()
         crossfadeStarting = false
         fadingOut = outgoing
-        let style = PlaybackSettings.transition
         let outgoingGain = currentGain
         let incomingGain = MixPlan.gain(for: current.flatMap { knownAnalyses[$0.id] })
         currentGain = incomingGain
         fadeTask = Task { [weak self] in
-            let steps = max(1, Int(duration / 0.05))
-            for step in 0...steps {
-                if Task.isCancelled { return }
-                let volumes = style.volumes(at: Double(step) / Double(steps))
+            let started = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                let fraction = (ProcessInfo.processInfo.systemUptime - started) / duration
+                let volumes = MixPlan.volumes(at: fraction)
                 incoming.volume = Float(volumes.incoming * incomingGain)
                 outgoing.volume = Float(volumes.outgoing * outgoingGain)
-                try? await Task.sleep(for: .milliseconds(50))
+                if fraction >= 1 { break }
+                try? await Task.sleep(for: .milliseconds(25))
             }
+            guard !Task.isCancelled else { return }
             self?.finishTransition()
         }
     }
@@ -401,10 +403,15 @@ final class PlayerModel {
                 if !Task.isCancelled { self.mixPlan = nil; self.cancelPendingMix() }
                 return
             }
-            _ = await incoming.seek(to: CMTime(seconds: plan.incomingOffset, preferredTimescale: 44_100),
-                                    toleranceBefore: .zero, toleranceAfter: .zero)
-            _ = await incoming.preroll(atRate: Float(plan.incomingRate))
+            let positioned = await incoming.seek(to: CMTime(seconds: plan.incomingOffset, preferredTimescale: 44_100),
+                                                 toleranceBefore: .zero, toleranceAfter: .zero)
+            let readyForPlayback = positioned ? await incoming.preroll(atRate: Float(plan.incomingRate)) : false
             guard !Task.isCancelled, self.pendingMix?.plan == plan, self.player === outgoing else { return }
+            guard readyForPlayback else {
+                self.mixPlan = nil
+                self.cancelPendingMix()
+                return
+            }
             // Instant où le titre en cours atteint le début du mélange (horloge de l'appareil).
             var delay = plan.start - outgoing.currentTime().seconds
             var offset = plan.incomingOffset
@@ -416,8 +423,18 @@ final class PlayerModel {
             let hostTime = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), CMTime(seconds: delay, preferredTimescale: 1_000_000_000))
             incoming.setRate(Float(plan.incomingRate), time: CMTime(seconds: offset, preferredTimescale: 44_100), atHostTime: hostTime)
             try? await Task.sleep(for: .seconds(delay))
+            for _ in 0..<15 {
+                guard !Task.isCancelled else { return }
+                if incoming.timeControlStatus == .playing, incoming.currentTime().seconds > offset { break }
+                try? await Task.sleep(for: .milliseconds(40))
+            }
             guard !Task.isCancelled else { return }
-            self.commitMix(plan, incoming: incoming, item: item, offset: offset)
+            guard incoming.timeControlStatus == .playing, incoming.currentTime().seconds > offset else {
+                self.mixPlan = nil
+                self.cancelPendingMix()
+                return
+            }
+            self.commitMix(plan, incoming: incoming, item: item, offset: incoming.currentTime().seconds)
         }
         pendingMix = (incoming, plan, task)
     }
@@ -462,14 +479,16 @@ final class PlayerModel {
         prefetchNext()
 
         fadeTask = Task { [weak self] in
-            let steps = max(1, Int(plan.duration / 0.05))
-            for step in 0...steps {
-                if Task.isCancelled { return }
-                let volumes = MixPlan.volumes(at: Double(step) / Double(steps))
+            let started = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                let fraction = (ProcessInfo.processInfo.systemUptime - started) / plan.duration
+                let volumes = MixPlan.volumes(at: fraction)
                 incoming.volume = Float(volumes.incoming * plan.incomingGain)
                 outgoing.volume = Float(volumes.outgoing * plan.outgoingGain)
-                try? await Task.sleep(for: .milliseconds(50))
+                if fraction >= 1 { break }
+                try? await Task.sleep(for: .milliseconds(25))
             }
+            guard !Task.isCancelled else { return }
             guard let self else { return }
             self.finishTransition()
             if plan.incomingRate != 1 { self.restoreTempo(of: incoming, from: plan.incomingRate) }
@@ -665,22 +684,22 @@ final class PlayerModel {
     }
 
     /// Jam, invité qui écoute aussi : même file, même titre, même position que l'hôte.
-    func followJam(queue newQueue: [Track], index newIndex: Int, position: TimeInterval, playing: Bool) {
+    func followJam(queue newQueue: [Track], index newIndex: Int, position: TimeInterval, playing: Bool, hostTransitioning: Bool = false) {
         guard newQueue.indices.contains(newIndex) else { return }
+        if playing, isPlaying, isTransitioning || hostTransitioning { return }
         if current?.id != newQueue[newIndex].id {
             unshuffledQueue = nil
             isShuffled = false
             queue = newQueue
             index = newIndex
             preferredSource = newQueue[newIndex].id.hasPrefix("octave:") ? .octave : .youtube
-            // Pause éventuelle : appliquée au prochain état reçu, une fois le titre chargé.
-            load(resumeAt: position)
+            load(resumeAt: position, paused: !playing)
             return
         }
         queue = newQueue
         index = newIndex
         guard !isLoading else { return }
-        if abs(currentTime - position) > 1.5 { seek(to: position) }
+        if abs(currentTime - position) > (playing ? 3 : 1.5) { seek(to: position) }
         if playing, !isPlaying { resume() }
         if !playing, isPlaying { pause() }
     }
@@ -707,6 +726,12 @@ final class PlayerModel {
 
     func pause() {
         if RemoteControl.shared.isActive { return RemoteControl.shared.command("pause") }
+        if crossfadeStarting {
+            loadTask?.cancel()
+            crossfadeStarting = false
+            isLoading = false
+            player.replaceCurrentItem(with: nil)
+        }
         if source == .octave {
             if isLoading {
                 loadTask?.cancel()
@@ -770,6 +795,7 @@ final class PlayerModel {
             return RemoteControl.shared.command("seek", value: seconds)
         }
         if source == .octave {
+            octaveSeekAt = Date()
             currentTime = max(0, seconds)
             if octaveTrack != nil { Task { await octave.command("seek", value: max(0, seconds)) } }
             return
@@ -847,7 +873,7 @@ final class PlayerModel {
                 } else { recording = track }
                 let url = try await self.playableURL(for: recording)
                 try Task.checkCancellation()
-                self.start(url: url, track: track, at: startTime, transition: transition)
+                try await self.start(url: url, track: track, at: startTime, transition: transition)
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
@@ -900,6 +926,7 @@ final class PlayerModel {
         try Task.checkCancellation()
         guard octaveSession == session else { throw CancellationError() }
         octaveTrack = recording
+        octaveSeekAt = position > 0 ? Date() : .distantPast
         autoplayQueue = []
         isLoading = false
         isPlaying = state.playing
@@ -908,7 +935,7 @@ final class PlayerModel {
         endLoadingBackgroundTask()
         updateNowPlaying()
         prepareOctaveNext()
-        observeOctave(session: session)
+        observeOctave(session: session, audioID: state.audioId)
     }
 
     private func queueEdited(_ previous: Track?, force: Bool = false) {
@@ -934,12 +961,13 @@ final class PlayerModel {
         }
     }
 
-    private func observeOctave(session: Int) {
+    private func observeOctave(session: Int, audioID: Int?) {
         octaveMonitor = Task { [weak self] in
             var heard = 0.0
             var recorded = false
             var endedAt: Date?
-            var changedAt: Date?
+            var handoffAt: Date?
+            var previousAudioID = audioID
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, !Task.isCancelled, octaveSession == session, let selected = octaveTrack else { return }
@@ -969,14 +997,20 @@ final class PlayerModel {
                 guard let position = sample.position else { continue }
                 let previous = currentTime
                 var changed = false
-                if sample.playing && !sample.title.isEmpty && !sample.matches(selected) {
-                    let now = Date()
-                    changedAt = changedAt ?? now
-                    if let changedAt, now.timeIntervalSince(changedAt) < 1.2,
-                       previous > 3, abs(sample.duration - duration) < 1.1, abs(position - previous) < 2 { continue }
-                    let next = upNext.first
-                    let nextRecording = octaveNext.flatMap { $0.original.id == next?.id ? $0.recording : nil } ?? next
-                    if repeatMode != .one, let recording = nextRecording, sample.matches(recording) {
+                let now = Date()
+                if now.timeIntervalSince(octaveSeekAt) < 1 {
+                    handoffAt = nil
+                } else if sample.playing && sample.switchedAudio(previousID: previousAudioID, position: previous, duration: duration) {
+                    handoffAt = now
+                }
+                if let handoffAtValue = handoffAt, now.timeIntervalSince(handoffAtValue) > 3.5 { handoffAt = nil }
+                previousAudioID = sample.audioId ?? previousAudioID
+                let next = upNext.first
+                let nextRecording = octaveNext.flatMap { $0.original.id == next?.id ? $0.recording : nil } ?? next
+                let plannedMatches = nextRecording.map { sample.matches($0) } ?? false
+                if sample.playing, handoffAt != nil, plannedMatches || (!sample.title.isEmpty && !sample.matches(selected)) {
+                    handoffAt = nil
+                    if repeatMode != .one, let recording = nextRecording, plannedMatches {
                         index += 1
                         octaveTrack = recording
                     } else if hasNext || repeatMode != .off {
@@ -996,8 +1030,7 @@ final class PlayerModel {
                     recorded = false
                     changed = true
                 }
-                changedAt = nil
-                if sample.playing { endedAt = nil }
+                if sample.playing || sample.buffering == true { endedAt = nil }
                 else if sample.ended || (isPlaying && duration > 0 && duration - previous < 1.5) { endedAt = endedAt ?? Date() }
                 currentTime = position
                 if sample.duration > 0 { duration = sample.duration }
@@ -1011,7 +1044,7 @@ final class PlayerModel {
                     }
                     return
                 }
-                if !changed, !recorded, sample.audible, position > previous, position - previous < 2 {
+                if !changed, handoffAt == nil, !recorded, sample.audible, position > previous, position - previous < 2 {
                     heard += position - previous
                     if heard >= 5, let current {
                         recorded = true
@@ -1052,7 +1085,7 @@ final class PlayerModel {
         return stream.url
     }
 
-    private func start(url: URL, track: Track, at startTime: TimeInterval, transition: TimeInterval? = nil) {
+    private func start(url: URL, track: Track, at startTime: TimeInterval, transition: TimeInterval? = nil) async throws {
         // Le flux de YouTube indique la durée exacte dans son adresse (« dur=… »).
         if let dur = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(TimeInterval.init), dur > 0 {
@@ -1065,7 +1098,6 @@ final class PlayerModel {
         }
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 30
-        observeStatus(of: item, track: track)
         try? AVAudioSession.sharedInstance().setActive(true)
         if let transition, player.currentItem != nil {
             // Transition : le titre suivant démarre en silence sur un second lecteur, puis monte.
@@ -1073,7 +1105,22 @@ final class PlayerModel {
             Self.configure(incoming)
             incoming.volume = 0
             incoming.replaceCurrentItem(with: item)
-            incoming.playImmediately(atRate: 1)
+            incoming.play()
+            do {
+                for _ in 0..<100 {
+                    try Task.checkCancellation()
+                    if item.status == .failed { throw item.error ?? OctaveWebPlayer.Failure.unavailable }
+                    if incoming.timeControlStatus == .playing && incoming.currentTime().seconds > 0 { break }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                try Task.checkCancellation()
+                guard incoming.timeControlStatus == .playing, incoming.currentTime().seconds > 0,
+                      current?.id == track.id else { throw OctaveWebPlayer.Failure.unavailable }
+            } catch {
+                incoming.pause()
+                incoming.replaceCurrentItem(with: nil)
+                throw error
+            }
             runTransition(to: incoming, duration: transition)
         } else {
             crossfadeStarting = false
@@ -1087,6 +1134,7 @@ final class PlayerModel {
             // Démarre dès les premières secondes reçues, sans attendre un gros tampon.
             player.playImmediately(atRate: 1)
         }
+        observeStatus(of: item, track: track)
         isPlaying = true
         isLoading = false
         failureCount = 0

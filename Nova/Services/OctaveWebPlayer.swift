@@ -29,6 +29,8 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var artwork: URL?
         var position: Double?
         var outgoingPosition: Double?
+        var audioId: Int?
+        var buffering: Bool?
         var duration: Double
         var playing: Bool
         var audible: Bool
@@ -41,6 +43,12 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         func matches(_ track: Track) -> Bool {
             if title.isEmpty { return id != nil && id == OctaveCatalog.id(track.id) }
             return OctaveCatalog.sameRecording(track, Track(id: "sample", title: title, artist: artist, duration: duration))
+        }
+
+        func switchedAudio(previousID: Int?, position previousPosition: Double, duration previousDuration: Double) -> Bool {
+            if let previousID, let audioId, previousID != audioId { return true }
+            if let position, previousPosition > 4, position + 3 < previousPosition { return true }
+            return previousDuration > 0 && duration > 0 && abs(previousDuration - duration) > 1.5
         }
         var track: Track? {
             guard !title.isEmpty else { return nil }

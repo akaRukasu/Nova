@@ -39,9 +39,10 @@ let pollTimer: ReturnType<typeof setInterval> | undefined;
 const name = () => library.get().settings.jamName.trim() || 'Ami Nova';
 
 function hostState(): JamState {
-  const { queue, index, playing } = playerState.get();
+  const { queue, index, playing, transitioning } = playerState.get();
   return {
-    hostName: name(), queue: queue.slice(Math.max(index, 0), Math.max(index, 0) + 200), index: 0, playing, position: timeState.get().time, sentAt: Date.now(),
+    hostName: name(), queue: queue.slice(Math.max(index, 0), Math.max(index, 0) + 200), index: 0, playing, transitioning,
+    position: timeState.get().time, sentAt: Date.now(),
     participants, addedBy: { ...addedBy },
   };
 }
@@ -49,7 +50,7 @@ function hostState(): JamState {
 function broadcast() {
   const state = hostState();
   set({ state });
-  lastSignature = `${state.queue.map((t) => t.id).join(',')}|${state.index}|${state.playing}`;
+  lastSignature = `${state.queue.map((t) => t.id).join(',')}|${state.index}|${state.playing}|${state.transitioning}`;
   if (remote?.host) {
     remote.pending = state;
     void publishRemote(remote);
@@ -154,8 +155,8 @@ export async function startJam(mode: 'local' | 'remote' | 'circle' = 'local') {
   }
   broadcast();
   heartbeat = setInterval(() => {
-    const { queue, index, playing } = playerState.get();
-    const signature = queue.slice(Math.max(index, 0), Math.max(index, 0) + 200).map(t => t.id).join(',') + '|0|' + playing;
+    const { queue, index, playing, transitioning } = playerState.get();
+    const signature = queue.slice(Math.max(index, 0), Math.max(index, 0) + 200).map(t => t.id).join(',') + '|0|' + playing + '|' + transitioning;
     if (signature !== lastSignature || Date.now() - (jam.get().state?.sentAt ?? 0) > 3000) broadcast();
   }, 1000);
 }
@@ -212,7 +213,7 @@ export function setListenAlong(value: boolean) {
 
 function follow(state: JamState) {
   const elapsed = state.playing ? Math.min(Math.max((Date.now() - state.sentAt) / 1000, 0), 5) : 0;
-  player.followJam(state.queue, state.index, state.position + elapsed, state.playing);
+  player.followJam(state.queue, state.index, state.position + elapsed, state.playing, state.transitioning);
 }
 
 function insertJamTrack(track: Track, guest: string, next: boolean) {

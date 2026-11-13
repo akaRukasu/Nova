@@ -265,11 +265,11 @@ export function gainFor(a: TrackAnalysis | undefined, normalize: boolean) {
   return Math.min(1, 10 ** ((LOUDNESS_TARGET - a.loudness) / 20));
 }
 
-/** Volumes (entrant, sortant) à l'instant t (0 → 1) : puissance constante, courbe douce. */
+/** Courbe douce avec une somme de gains plafonnée pendant le recouvrement. */
 export function mixVolumes(t: number) {
   const x = Math.min(Math.max(t, 0), 1);
   const u = x * x * (3 - 2 * x);
-  return [Math.sin((Math.PI / 2) * u), Math.cos((Math.PI / 2) * u)] as const;
+  return [u, 1 - u] as const;
 }
 
 /** Échange des basses (façon DJ) : basses de l'entrant coupées au début, celles du sortant coupées à la fin (dB). */

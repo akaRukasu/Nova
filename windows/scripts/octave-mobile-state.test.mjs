@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { octaveHandoff } from '../src/shared/octave.ts';
+import { mixVolumes } from '../src/renderer/lib/analysis.ts';
 
 const source = fs.readFileSync(new URL('../../Nova/Resources/nova-octave.js', import.meta.url), 'utf8');
 
@@ -27,6 +29,7 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.artist, 'Mark Morton & Chester Bennington');
   assert.equal(state.artwork, cover.src);
   assert.equal(state.position, 12);
+  const firstDeck = state.audioId;
   assert.equal(state.playing, true);
   assert.equal(state.audible, true);
   assert.equal(queueOpened, true);
@@ -46,11 +49,13 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   const incoming = new window.Audio();
   Object.assign(incoming, { duration: 178, currentTime: 1.2, paused: false, ended: false, readyState: 4 });
   window.__octaveEngine.active = incoming;
-  window.__octaveEngine.isFading = true;
   audio.currentTime = 249;
   state = window.novaOctave('sample');
+  assert.equal(state.mixing, true); // Le second lecteur a démarré avant le drapeau Octave.
   assert.equal(state.outgoingPosition, 249);
+  assert.notEqual(state.audioId, firstDeck);
   assert.equal(state.position, 1.2);
+  window.__octaveEngine.isFading = true;
   audio.paused = true;
   title.textContent = 'Titre suivant';
   incoming.currentTime = 4;
@@ -60,4 +65,26 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.title, 'Titre suivant');
   assert.equal(state.duration, 178);
   assert.equal(state.position, 4);
+  incoming.readyState = 2;
+  assert.equal(window.novaOctave('sample').buffering, true);
+});
+
+test('a metadata change on the same deck and clock does not commit a handoff', () => {
+  const previous = { audioId: 1, position: 174, duration: 175 };
+  const earlyMetadata = { ...previous, position: 174.5, title: 'Upcoming track' };
+  assert.equal(octaveHandoff(previous, earlyMetadata), false);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, audioId: 2 }), true);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, position: 1 }), true);
+});
+
+test('the overlap keeps full gain at each endpoint and bounds the sum of both gains', () => {
+  assert.deepEqual(mixVolumes(0), [0, 1]);
+  assert.deepEqual(mixVolumes(1), [1, 0]);
+  let previous = 0;
+  for (let step = 1; step <= 100; step++) {
+    const [incoming, outgoing] = mixVolumes(step / 100);
+    assert(incoming >= previous && outgoing >= 0);
+    assert(incoming + outgoing <= 1);
+    previous = incoming;
+  }
 });
