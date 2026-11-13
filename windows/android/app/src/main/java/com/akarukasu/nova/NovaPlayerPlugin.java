@@ -369,7 +369,7 @@ public class NovaPlayerPlugin extends Plugin {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             view.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
         }
-        String script = readAsset("nova-octave.js");
+        String script = readAsset("nova-octave-transition.js") + "\n" + readAsset("nova-octave.js");
         boolean documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
         if (documentStart) WebViewCompat.addDocumentStartJavaScript(view, script, Collections.singleton(OCTAVE));
         view.setWebViewClient(new WebViewClient() {

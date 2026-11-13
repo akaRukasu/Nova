@@ -971,7 +971,8 @@ final class PlayerModel {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, !Task.isCancelled, octaveSession == session, let selected = octaveTrack else { return }
-                guard let sample = await octave.sample(), !Task.isCancelled, octaveSession == session else { continue }
+                guard let sample = await octave.sample(track: selected, next: upNext.first),
+                      !Task.isCancelled, octaveSession == session else { continue }
                 if let upcoming = sample.upcoming {
                     let tracks = upcoming.map(\.track)
                     if autoplayQueue != tracks { autoplayQueue = tracks }

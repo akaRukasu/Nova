@@ -209,7 +209,8 @@ export class AndroidOctavePlayer {
     if (!active || this.observing) return;
     this.observing = true;
     try {
-      const sample = await this.call<Sample>('sample');
+      const track = this.settings.transition === 'automix' ? octaveCatalogId(active.source.id) : undefined;
+      const sample = await this.call<Sample>('sample', { track, pair: active.queueVersion ?? 0 });
       if (!sample || this.active !== active) return;
       if (sample.blocked === 'sign-in') {
         await this.stop();

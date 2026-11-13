@@ -205,7 +205,14 @@
   }
 
   const calls = {
-    sample, settings, command,
+    sample({track, pair} = {}) {
+      const state = sample();
+      if (track && state.playing && !state.fading && !state.blocked) {
+        window.novaOctaveTransition?.(track, state.position, pair);
+      }
+      return state;
+    },
+    settings, command,
     settingsLive(options) {
       pendingSettings = options;
       if (!updatingSettings) void applyLiveSettings();

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { BaseWindow, session, shell, WebContentsView, type BrowserWindow, type WebContents } from 'electron';
 import {
@@ -11,6 +12,7 @@ import { sameRecordingCredits } from './matcher.js';
 
 const navigationOrigins = new Set([octaveOrigin, 'https://api.octavestreaming.com', 'https://discord.com']);
 const interval = 250;
+const transitionScript = readFileSync(new URL('./nova-octave-transition.js', import.meta.url), 'utf8');
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Sample = {
@@ -37,11 +39,15 @@ type Playback = {
 };
 
 // Ces fonctions s'exécutent dans le lecteur Octave, sans accès aux API de Nova.
-function readPlayback(targetId?: string): Sample {
+function readPlayback(targetId?: string, mix?: { track: string; pair: number }): Sample {
   const player = navigator.mediaSession;
   const metadata = player?.metadata;
   const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
   const media = (window as Window & { __novaOctaveMedia?: OctaveMedia }).__novaOctaveMedia?.read();
+  if (mix && media?.playing && !media.fading && media.position != null) {
+    (window as Window & { novaOctaveTransition?: (track: string, position: number, pair: number) => void })
+      .novaOctaveTransition?.(mix.track, media.position, mix.pair);
+  }
   const position = [...document.querySelectorAll<HTMLInputElement>('input[aria-label="Seek"]')]
     .find((slider) => slider.getClientRects().length && Number(slider.max) > 0);
   const gate = document.querySelector('[aria-label="Link Discord to unlock Octave"]');
@@ -555,9 +561,11 @@ export class OctavePlayer {
     return contents.executeJavaScript(`(${controlPlayer.toString()})(${JSON.stringify(command)})`, true).catch(() => false);
   }
 
-  private read(contents: WebContents, targetId?: string): Promise<Sample | undefined> {
+  private read(contents: WebContents, targetId?: string, mix?: { track: string; pair: number }): Promise<Sample | undefined> {
     if (contents.isDestroyed() || !contents.getURL().startsWith(`${octaveOrigin}/`)) return Promise.resolve(undefined);
-    return contents.executeJavaScript(`(${readPlayback.toString()})(${JSON.stringify(targetId)})`).catch(() => undefined);
+    const install = mix ? `if (!window.novaOctaveTransition) { ${transitionScript} }` : '';
+    return contents.executeJavaScript(`${install}\n(${readPlayback.toString()})(${JSON.stringify(targetId)}, ${JSON.stringify(mix)})`)
+      .catch(() => undefined);
   }
 
   private matches(track: Track, sample: Sample): boolean {
@@ -571,7 +579,8 @@ export class OctavePlayer {
     if (!playback || this.observing) return;
     this.observing = true;
     try {
-      const sample = await this.read(contents);
+      const track = !this.panelVisible && this.audioSettings.transition === 'automix' ? octaveCatalogId(playback.source.id) : undefined;
+      const sample = await this.read(contents, undefined, track ? { track, pair: playback.queueVersion ?? 0 } : undefined);
       if (this.playback !== playback || contents.isDestroyed() || !sample) return;
       if (sample.blocked === 'sign-in') {
         this.stop();

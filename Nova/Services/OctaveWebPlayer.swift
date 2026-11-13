@@ -69,9 +69,11 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsAirPlayForMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        if let url = Bundle.main.url(forResource: "nova-octave", withExtension: "js"),
-           let script = try? String(contentsOf: url, encoding: .utf8) {
-            configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        for resource in ["nova-octave-transition", "nova-octave"] {
+            if let url = Bundle.main.url(forResource: resource, withExtension: "js"),
+               let script = try? String(contentsOf: url, encoding: .utf8) {
+                configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
         }
         view = WKWebView(frame: CGRect(x: 0, y: 0, width: 1280, height: 780), configuration: configuration)
         super.init()
@@ -123,8 +125,11 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
             arguments: ["operation": operation, "args": args], in: nil, contentWorld: .page)
     }
 
-    func sample() async -> Sample? {
-        guard let raw = await call("sample"), JSONSerialization.isValidJSONObject(raw),
+    func sample(track: Track? = nil, next: Track? = nil) async -> Sample? {
+        let trackID = !panel && (PlaybackSettings.octaveAudio["transition"] as? String) == "automix"
+            ? track.flatMap { OctaveCatalog.id($0.id) } : nil
+        let args = trackID.map { ["track": $0, "pair": next?.id ?? ""] } ?? [:]
+        guard let raw = await call("sample", args: args), JSONSerialization.isValidJSONObject(raw),
               let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
         return try? JSONDecoder().decode(Sample.self, from: data)
     }

@@ -17,8 +17,10 @@ targets:
     platform: iOS
     sources:
       - path: Nova
-        excludes: [Resources/nova-octave.js]
+        excludes: [Resources/nova-octave.js, Resources/nova-octave-transition.js]
       - path: Nova/Resources/nova-octave.js
+        buildPhase: resources
+      - path: Nova/Resources/nova-octave-transition.js
         buildPhase: resources
     dependencies:
       - package: YouTubeKit
@@ -31,8 +33,8 @@ targets:
         CFBundleDevelopmentRegion: fr
         CFBundleLocalizations: [fr]
         CFBundleAllowMixedLocalizations: true
-        CFBundleShortVersionString: "0.4.9"
-        CFBundleVersion: "16"
+        CFBundleShortVersionString: "0.4.10"
+        CFBundleVersion: "17"
         LSApplicationCategoryType: public.app-category.music
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
