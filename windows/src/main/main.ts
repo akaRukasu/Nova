@@ -1,11 +1,16 @@
+import { LocalAudioLibrary } from './localAudio.js';
+import { ImportJournal } from '../shared/importJournal.js';
 // Nova pour Windows : processus principal.
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
+import type { HistorySnapshot } from '../shared/historySync.js';
 import { defaultSettings } from '../shared/types.js';
+import { isOctaveId, type OctaveCommand } from '../shared/octave.js';
 import { searchConcerts } from './concerts.js';
 import { allowEverywhere, networkStatus } from './firewall.js';
 import { palette } from './palette.js';
@@ -15,6 +20,9 @@ import * as jam from './jam.js';
 import { lyrics } from './lyrics.js';
 import { currentPairing, getRemoteState, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
+import * as octave from './octave.js';
+import { findYouTubeRecording, syncOctaveListen } from './octaveHistory.js';
+import { OctavePlayer } from './octavePlayer.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import './evalNode.js';
 import * as yt from './yt.js';
@@ -37,7 +45,42 @@ if (safeDisplay) app.disableHardwareAcceleration();
 
 let window: BrowserWindow | null = null;
 const sendToUI = (channel: string, ...args: unknown[]) => window?.webContents.send(channel, ...args);
+const pendingHistory = new Map<string, (value: HistorySnapshot) => void>();
+function exchangeHistory(incoming: HistorySnapshot): Promise<HistorySnapshot> {
+  if (!uiReady || !window || window.isDestroyed()) return Promise.reject(new Error('Bibliothèque Nova indisponible.'));
+  return new Promise((resolve, reject) => {
+    const id = randomUUID();
+    const timer = setTimeout(() => {
+      pendingHistory.delete(id);
+      reject(new Error('La bibliothèque Nova ne répond pas.'));
+    }, 8000);
+    pendingHistory.set(id, (snapshot) => {
+      clearTimeout(timer);
+      pendingHistory.delete(id);
+      resolve(snapshot);
+    });
+    sendToUI('phone:history', id, incoming);
+  });
+}
 jam.setSender(sendToUI);
+const octavePlayer = new OctavePlayer(
+  () => window,
+  (track, playedAt) => {
+    sendToUI('octave:played', track, playedAt);
+    void syncOctaveListen(track, youtubeHistoryEnabled).catch(() => sendToUI('octave:sync-error'));
+  },
+  (status) => sendToUI('octave:status', status),
+  (visible) => sendToUI('octave:panel', visible),
+  () => sendToUI('octave:connected'),
+);
+
+const mediaShortcuts = [['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'previous']] as const;
+
+function claimMediaShortcuts() {
+  for (const [key, action] of mediaShortcuts) {
+    if (!globalShortcut.isRegistered(key)) globalShortcut.register(key, () => sendToUI('media:key', action));
+  }
+}
 
 // MARK: - Disque
 
@@ -75,6 +118,12 @@ async function loadCookie(): Promise<string | undefined> {
   }
 }
 
+async function youtubeHistoryEnabled(): Promise<boolean> {
+  if (!await loadCookie()) return false;
+  const { settings } = await loadLibrary();
+  return settings.recordHistory && settings.syncOctaveToYouTube !== false;
+}
+
 async function saveCookie(cookie: string | undefined) {
   if (!cookie) {
     await fs.rm(file('account.bin'), { force: true });
@@ -86,6 +135,7 @@ async function saveCookie(cookie: string | undefined) {
 
 async function configureYouTube(cookie?: string) {
   const library = await loadLibrary();
+  octavePlayer.setAudioSettings(library.settings.octaveAudio);
   yt.configure({
     lang: library.settings.language,
     location: library.settings.region,
@@ -134,6 +184,12 @@ async function logout() {
 
 // MARK: - Import
 
+const localAudio = new LocalAudioLibrary(() => file('LocalAudio'));
+const importJournal = new ImportJournal(
+  () => readJSON('import-journal.json', []),
+  entries => writeJSON('import-journal.json', entries),
+);
+
 let importCancelled = false;
 
 function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
@@ -141,7 +197,7 @@ function runImport(playlists: ImportedPlaylist[], toAccount: boolean) {
   // Quatre recherches en parallèle : rapide, sans saturer YouTube Music.
   return runImports(playlists, toAccount, {
     emit: (progress) => sendToUI('import:progress', progress), cancelled: () => importCancelled,
-    saveMatches: (entries) => writeJSON('matches.json', entries), width: 4,
+    saveMatches: (entries) => writeJSON('matches.json', entries), saveJournal: entries => importJournal.record(entries), width: 4,
   });
 }
 
@@ -193,9 +249,11 @@ function openMini() {
   if (!window || window.isDestroyed()) return;
   if (mini && !mini.isDestroyed()) return mini.show();
   const dark = nativeTheme.shouldUseDarkColors;
+  const width = 428;
+  const height = 142;
   mini = new BrowserWindow({
-    width: 380,
-    height: 104,
+    width,
+    height,
     frame: false,
     resizable: false,
     maximizable: false,
@@ -209,7 +267,7 @@ function openMini() {
   mini.setAlwaysOnTop(true, 'floating');
   // En bas à droite de l'écran où se trouvait Nova.
   const area = screen.getDisplayMatching(window.getBounds()).workArea;
-  mini.setPosition(area.x + area.width - 400, area.y + area.height - 124);
+  mini.setPosition(area.x + area.width - width - 20, area.y + area.height - height - 20);
   const current = mini;
   current.webContents.on('did-finish-load', async () => {
     current.webContents.send('mini:state', getRemoteState());
@@ -320,7 +378,20 @@ function handle(channel: string, listener: (...args: any[]) => unknown) {
   ipcMain.handle(channel, (_event, ...args) => listener(...args));
 }
 
-app.on('second-instance', () => {
+function invitationArgument(args: string[]) {
+  for (const value of args) {
+    if (!value.startsWith('nova://jam/invite?')) continue;
+    try { return new URL(value).searchParams.get('link') ?? undefined; } catch { return; }
+  }
+}
+
+let pendingJamInvitation = invitationArgument(process.argv);
+app.on('second-instance', (_event, args) => {
+  const link = invitationArgument(args);
+  if (link) {
+    if (uiReady) sendToUI('jam:invitation', link);
+    else pendingJamInvitation = link;
+  }
   // Nova relancé : si la fenêtre existante est vide ou plantée, elle est rechargée (ou recréée).
   if (!window || window.isDestroyed()) return void createWindow();
   log(`Nova relancé alors qu'il est ouvert (interface prête : ${uiReady})`);
@@ -329,7 +400,7 @@ app.on('second-instance', () => {
   window.show();
   window.focus();
   // Relancé peu après l'ouverture : souvent parce que la fenêtre reste vide. On demande (fenêtre de Windows, toujours visible).
-  if (Date.now() - windowCreatedAt < 10 * 60_000) void askAboutBlankWindow(window);
+  if (!link && Date.now() - windowCreatedAt < 10 * 60_000) void askAboutBlankWindow(window);
 });
 
 async function askAboutBlankWindow(target: BrowserWindow) {
@@ -354,24 +425,31 @@ async function askAboutBlankWindow(target: BrowserWindow) {
 
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.akarukasu.nova');
-  handleStreams();
+  handleStreams((id, range, cover) => localAudio.response(id, range, cover));
+  if (app.isPackaged) app.setAsDefaultProtocolClient('nova');
+  handle('jam:initialInvitation', () => {
+    const link = pendingJamInvitation;
+    pendingJamInvitation = undefined;
+    return link;
+  });
   loadMatches(await readJSON('matches.json', {}));
   const cookie = await loadCookie();
   await configureYouTube(cookie);
 
-  // YouTube Music
-  handle('yt:search', (query: string, scope: yt.SearchScope) => yt.search(query, scope));
-  handle('yt:suggestions', (query: string) => yt.suggestions(query));
-  handle('yt:home', () => yt.home());
-  handle('yt:homeMore', () => yt.homeMore());
-  handle('yt:explore', () => yt.explore());
+  // Octave alimente le catalogue Windows. Les identifiants enregistrés avant ce changement restent lisibles.
+  handle('yt:search', octave.search);
+  handle('yt:suggestions', octave.suggestions);
+  handle('yt:home', () => octave.charts(true));
+  handle('yt:homeMore', () => ({ shelves: [] }));
+  handle('yt:explore', () => octave.charts());
   handle('yt:browse', (link) => yt.browse(link));
-  handle('yt:artist', (id: string) => yt.artist(id));
-  handle('yt:artistSongs', (id: string) => yt.artistAllSongs(id));
-  handle('yt:collection', (target) => yt.collection(target));
-  handle('yt:radio', (id: string) => yt.radio(id));
-  handle('yt:related', (id: string) => yt.related(id));
+  handle('yt:artist', (id: string) => isOctaveId(id) ? octave.artist(id) : yt.artist(id));
+  handle('yt:artistSongs', (id: string) => isOctaveId(id) ? octave.artistSongs(id) : yt.artistAllSongs(id));
+  handle('yt:collection', (target) => isOctaveId(target.id) ? octave.collection(target) : yt.collection(target));
+  handle('yt:radio', (id: string) => isOctaveId(id) ? octave.radio(id) : yt.radio(id));
+  handle('yt:related', (id: string) => isOctaveId(id) ? octave.related(id) : yt.related(id));
   handle('yt:squareArtwork', (id: string) => yt.squareArtwork(id));
+  handle('art:track', (track: Track) => isOctaveId(track.id) ? octave.trackArtwork(track) : yt.squareArtwork(track.id));
   handle('art:palette', (url: string) => palette(url));
   handle('lyrics:get', (track: Track, duration?: number) => lyrics(track, duration));
   handle('stream:prefetch', (id: string) => prefetch(id));
@@ -382,6 +460,7 @@ app.whenReady().then(async () => {
   handle('library:load', () => loadLibrary());
   handle('library:save', (state: LibraryState) => writeJSON('library.json', state));
   handle('settings:apply', async (settings: LibraryState['settings']) => {
+    octavePlayer.setAudioSettings(settings.octaveAudio);
     yt.configure({ lang: settings.language, location: settings.region });
     setQuality(settings.highQuality);
   });
@@ -421,11 +500,26 @@ app.whenReady().then(async () => {
     }
     return playlists;
   });
+  handle('audio:import', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [
+      { name: 'Fichiers audio', extensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'aiff', 'aif', 'ogg', 'opus', 'wma', 'ape', 'alac'] },
+      { name: 'Tous les fichiers', extensions: ['*'] },
+    ] });
+    return result.canceled ? { tracks: [], errors: [] } : localAudio.import(result.filePaths);
+  });
+  handle('audio:url', (id: string) => 'nova-stream://audio/' + encodeURIComponent(id));
+  handle('import:journal', () => importJournal.load());
+  handle('import:resolve', (id: string, track: Track) => importJournal.resolve(id, track));
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
+  handle('octave:match', (track: Track) => octave.findRecording(track));
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;
+    if (pendingJamInvitation) {
+      sendToUI('jam:invitation', pendingJamInvitation);
+      pendingJamInvitation = undefined;
+    }
     log(`Interface prête en ${Date.now() - windowCreatedAt} ms`);
     setTimeout(() => void checkDisplay(), 2500);
   });
@@ -436,7 +530,10 @@ app.whenReady().then(async () => {
     const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
     const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
     return { playlists, tracks };
-  }).catch(() => undefined);
+  }, exchangeHistory).catch(() => undefined);
+  ipcMain.handle('phone:history-result', (event, id: string, history: HistorySnapshot) => {
+    if (event.sender === window?.webContents) pendingHistory.get(id)?.(history);
+  });
   handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
   handle('phone:unpair', () => unpair());
   handle('phone:network', () => networkStatus());
@@ -473,8 +570,19 @@ app.whenReady().then(async () => {
   handle('jam:join', (address: string, port: number, name: string) => jam.join(address, port, name));
   handle('jam:toHost', (message: unknown) => jam.toHost(message));
   handle('jam:stop', () => jam.stop());
+  handle('jam:copyInvitation', (url: string) => clipboard.writeText(url));
 
   handle('shell:open', (url: string) => shell.openExternal(url));
+  handle('octave:open', async (url?: string) => {
+    await octavePlayer.open(url);
+  });
+  handle('octave:hide', () => octavePlayer.hide());
+  handle('octave:stop', () => octavePlayer.stop());
+  handle('octave:youtube-match', (track: Track) => findYouTubeRecording(track));
+  handle('octave:play', (track: Track, request: number, volume: number, position: number) => octavePlayer.play(track, request, volume, position));
+  handle('octave:queue-next', (request: number, track?: Track, reset?: boolean) => octavePlayer.queueNext(request, track, reset));
+  handle('octave:command', (request: number, command: OctaveCommand) => octavePlayer.command(request, command));
+  handle('media:claim', claimMediaShortcuts);
 
   // Lecteur officiel de YouTube Music (fenêtre invisible), quand la lecture directe est refusée.
   setupWebPlayer(sendToUI, path.join(here, '../preload/ytmPreload.cjs'));
@@ -482,15 +590,14 @@ app.whenReady().then(async () => {
   handle('webplayer:command', (deck: number, command: { type: string; value?: number }) => webCommand(deck, command));
   handle('webplayer:show', (deck: number) => showWebPlayer(deck));
 
-  // Touches multimédias du clavier : Nova garde la main (même quand le lecteur officiel joue).
-  for (const [key, action] of [['MediaPlayPause', 'toggle'], ['MediaNextTrack', 'next'], ['MediaPreviousTrack', 'previous']] as const) {
-    try { globalShortcut.register(key, () => sendToUI('media:key', action)); } catch { /* touche déjà prise */ }
-  }
-
   await createWindow();
+  octavePlayer.warmUp();
 });
 
-app.on('before-quit', () => destroyWebPlayers());
+app.on('before-quit', () => {
+  octavePlayer.destroy();
+  destroyWebPlayers();
+});
 
 app.on('window-all-closed', () => {
   jam.stop();

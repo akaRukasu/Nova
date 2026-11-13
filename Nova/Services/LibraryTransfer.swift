@@ -47,6 +47,33 @@ enum LibraryTransfer {
     }
 
     @MainActor
+    static func exchangeHistory(_ request: Request, history: LibraryStore.HistorySnapshot) async throws -> LibraryStore.HistorySnapshot? {
+        guard isLocal(request.url), var url = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else { throw TransferError.notLocal }
+        url.path = "/history"
+        url.query = nil
+        guard let endpoint = url.url else { throw TransferError.notLocal }
+        var transfer = URLRequest(url: endpoint, timeoutInterval: 15)
+        transfer.httpMethod = "POST"
+        transfer.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        transfer.setValue(request.token, forHTTPHeaderField: "X-Nova-Token")
+        transfer.setValue(UIDevice.current.name, forHTTPHeaderField: "X-Nova-Device")
+        let body = try JSONEncoder().encode(history)
+        let (data, response) = try await URLSession.shared.upload(for: transfer, from: body, delegate: LocalTransferDelegate())
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 || (status == 200 && response.mimeType != "application/json") { return nil }
+        guard status == 200 else { throw TransferError.refused(status) }
+        let decoded = try JSONDecoder().decode(LibraryStore.HistorySnapshot.self, from: data)
+        return decoded.version == 1 ? decoded : nil
+    }
+
+    private final class LocalTransferDelegate: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    @MainActor
     static func send(_ request: Request, library: LibraryStore) async throws -> String {
         guard isLocal(request.url) else { throw TransferError.notLocal }
         guard let body = await library.exportDataInBackground() else { throw TransferError.refused(0) }
@@ -116,7 +143,10 @@ final class PCSync {
         pairedComputer = nil
         lastSync = nil
         UserDefaults.standard.removeObject(forKey: "pcSync")
+        pending?.cancel()
+        pending = nil
         heartbeat?.cancel()
+        heartbeat = nil
     }
 
     /// Bibliothèque modifiée : envoi groupé 20 s plus tard (plusieurs ajouts d'affilée = un seul envoi).
@@ -126,7 +156,7 @@ final class PCSync {
         pending = Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
             guard !Task.isCancelled else { return }
-            _ = try? await self?.sync(library: library)
+            _ = try? await self?.sync(library: library, includeHistory: true)
         }
     }
 
@@ -136,7 +166,7 @@ final class PCSync {
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 _ = try? await self?.sync(library: library, includeHistory: true)
-                try? await Task.sleep(for: .seconds(600))
+                try? await Task.sleep(for: .seconds(60))
             }
         }
     }
@@ -146,7 +176,7 @@ final class PCSync {
         guard var current = state, !isSyncing else { return nil }
         let contentChanged = library.revision != current.lastRevision
         let historyChanged = includeHistory && library.historyRevision != current.lastHistoryRevision
-        guard force || contentChanged || historyChanged else { return nil }
+        guard force || contentChanged || includeHistory else { return nil }
         isSyncing = true
         defer { isSyncing = false }
         guard let url = await locate(current.request) else {
@@ -156,9 +186,18 @@ final class PCSync {
         remember(url)
         current.request.url = url
         current.knownURLs = state?.knownURLs
-        let message = try await LibraryTransfer.send(current.request, library: library)
-        current.lastRevision = library.revision
-        current.lastHistoryRevision = library.historyRevision
+        let contentRevision = library.revision
+        let historyRevision = library.historyRevision
+        let remote = try await LibraryTransfer.exchangeHistory(current.request, history: library.listeningHistory())
+        guard state?.request.token == current.request.token else { return nil }
+        if let remote { library.mergeHistory(remote) }
+        var message = "Historique synchronisé avec \(current.request.computer)."
+        if force || contentChanged || (remote == nil && historyChanged) {
+            message = try await LibraryTransfer.send(current.request, library: library)
+            current.lastRevision = contentRevision
+        } else if remote == nil { return nil }
+        guard state?.request.token == current.request.token else { return nil }
+        current.lastHistoryRevision = historyRevision
         current.lastSync = Date()
         state = current
         lastSync = current.lastSync

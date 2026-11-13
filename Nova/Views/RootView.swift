@@ -19,9 +19,9 @@ struct RootView: View {
                     HomeView().withRoutes()
                 }
             }
-            Tab("Nouveautés", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
+            Tab("Classements", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
                 NavigationStack(path: $router.explorePath) {
-                    BrowseView(title: "Nouveautés", link: BrowseLink(browseID: "FEmusic_explore"),
+                    BrowseView(title: "Classements Octave", link: BrowseLink(browseID: "octave:charts"),
                                largeTitle: true, showsReleasesCard: true)
                         .withRoutes()
                 }
@@ -43,6 +43,12 @@ struct RootView: View {
         }
         .sheet(isPresented: $router.showPlayer) {
             NowPlayingView()
+        }
+        .sheet(isPresented: Binding(
+            get: { player.showsOctaveAccount && !router.showPlayer },
+            set: { if !$0 { player.showsOctaveAccount = false } }
+        ), onDismiss: { player.octave.hideAccount() }) {
+            OctaveAccountSheet()
         }
         .newPlaylistAlert(isActive: !router.showPlayer)
         .alert("Oups", isPresented: Binding(
@@ -110,12 +116,15 @@ struct RootView: View {
         }
         // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .onChange(of: player.library.historyRevision) { _, _ in PCSync.shared.libraryChanged(player.library) }
         .task {
+            player.octave.warmUp()
             PCSync.shared.startHeartbeat(library: player.library)
             RemoteControl.shared.watchComputer(player: player)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                player.octave.attach()
                 Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) }
                 RemoteControl.shared.releaseIfIdle(player: player)
             }

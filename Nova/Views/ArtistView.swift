@@ -1,5 +1,41 @@
 import SwiftUI
 
+struct ArtistHeader<Actions: View>: View {
+    let name: String
+    let artwork: [URL]
+    var details: String? = nil
+    @ViewBuilder let actions: () -> Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            RemoteImage(urls: artwork, maxPixels: 420)
+                .frame(width: 118, height: 118)
+                .clipShape(Circle())
+                .overlay { Circle().strokeBorder(.white.opacity(0.22)) }
+                .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(name)
+                    .font(.largeTitle.weight(.heavy))
+                    .accessibilityAddTraits(.isHeader)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let details {
+                    Text(details).font(.subheadline).foregroundStyle(.white.opacity(0.83))
+                }
+            }
+            actions()
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background {
+            RoundedRectangle(cornerRadius: 22).fill(RadialGradient(
+                colors: [Color(red: 0.38, green: 0.25, blue: 0.43), Color(red: 0.13, green: 0.11, blue: 0.18)],
+                center: .topLeading, startRadius: 0, endRadius: 350
+            ))
+        }
+    }
+}
+
 /// Page d'un artiste : bannière, titres populaires, albums, singles, artistes similaires.
 struct ArtistView: View {
     @Environment(PlayerModel.self) private var player
@@ -23,10 +59,12 @@ struct ArtistView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                banner
+                ArtistHeader(name: name, artwork: page?.header.artworkURL.map { [$0] } ?? artist.artworkURLs) {
+                    if page != nil { actions }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
                 if let page {
-                    actions
-                        .padding(.horizontal, 16)
                     if let description = page.header.description {
                         Text(description)
                             .font(.footnote)
@@ -42,7 +80,6 @@ struct ArtistView: View {
             }
             .padding(.bottom, 24)
         }
-        .ignoresSafeArea(edges: .top)
         .overlay {
             if page == nil {
                 if let errorText {
@@ -72,23 +109,6 @@ struct ArtistView: View {
             }
         }
         .task { if page == nil { await load() } }
-    }
-
-    private var banner: some View {
-        ZStack(alignment: .bottomLeading) {
-            RemoteImage(urls: page?.header.artworkURL.map { [$0] } ?? artist.artworkURLs, maxPixels: 1100)
-                .frame(height: 360)
-                .frame(maxWidth: .infinity)
-                .clipped()
-            LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
-            Text(name)
-                .font(.system(size: 38, weight: .heavy))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.6)
-                .padding(16)
-        }
-        .frame(height: 360)
     }
 
     private var actions: some View {
@@ -130,7 +150,10 @@ struct ArtistView: View {
             let client = self.client
             let id = artist.id
             try await loadCached("artist-\(id)", freshFor: 1800,
-                                 fetch: { try await client.browse(BrowseLink(browseID: id)) }) { page = $0 }
+                                 fetch: {
+                if OctaveCatalog.id(id) != nil { return try await OctaveCatalog.shared.artist(id) }
+                return try await client.browse(BrowseLink(browseID: id))
+            }) { page = $0 }
         } catch {
             if (error as? URLError)?.code == .cancelled || error is CancellationError { return }
             errorText = error.localizedDescription

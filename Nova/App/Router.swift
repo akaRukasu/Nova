@@ -13,10 +13,12 @@ enum Route: Hashable {
     case liked
     case downloads
     case history
+    case wrapped
     case account(title: String, browseID: String)
     case libraryPlaylists
     case libraryArtists
     case libraryAlbums
+    case libraryGroup(CollectionKind, String)
     case songs
     case smartPlaylist(UUID)
     case discover
@@ -89,6 +91,8 @@ struct RouteView: View {
             DownloadsView()
         case .history:
             HistoryView()
+        case .wrapped:
+            WrappedView()
         case .account(let title, let browseID):
             BrowseView(title: title, link: BrowseLink(browseID: browseID))
         case .libraryPlaylists:
@@ -97,6 +101,8 @@ struct RouteView: View {
             LibraryCollectionsView(kind: .artist)
         case .libraryAlbums:
             LibraryCollectionsView(kind: .album)
+        case .libraryGroup(let kind, let id):
+            LibraryGroupView(kind: kind, id: id)
         case .songs:
             SongsView()
         case .smartPlaylist(let id):

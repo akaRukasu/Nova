@@ -1,7 +1,8 @@
 // Télécommande : l'iPhone associé pilote la lecture de ce PC (comme Spotify Connect).
 import type { Track } from '../../shared/types';
+import { isOctaveId } from '../../shared/octave';
 import { api, on } from './api';
-import { library, notify } from './library';
+import { isLiked, library, notify, playbackOptions, toggleLike, togglePlaybackOption } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
 
 /** Titre au format de l'iPhone (artworkURL, artistID…). */
@@ -14,7 +15,8 @@ const fromPhone = (raw: any): Track | undefined => {
   if (!raw?.id || !raw.title) return undefined;
   const artwork = raw.artworkURL ?? raw.artwork;
   return { id: raw.id, title: raw.title, artist: raw.artist ?? '', album: raw.album ?? undefined, duration: raw.duration ?? undefined,
-    artwork, artistId: raw.artistID ?? raw.artistId, albumId: raw.albumID ?? raw.albumId, square: /googleusercontent|ggpht/.test(artwork ?? '') };
+    artwork, artistId: raw.artistID ?? raw.artistId, albumId: raw.albumID ?? raw.albumId,
+    square: isOctaveId(raw.id) || /googleusercontent|ggpht/.test(artwork ?? '') };
 };
 
 function publish() {
@@ -26,6 +28,10 @@ function publish() {
     queue: state.queue.slice(state.index + 1, state.index + 51).map(forPhone),
     playing: state.playing,
     loading: state.loading,
+    source: state.source,
+    ...playbackOptions(library.get().settings, state.source),
+    liked: track ? isLiked(track.id) : false,
+    playbackSourceControl: true,
     time: timeState.get().time,
     duration: timeState.get().duration,
     volume: state.volume,
@@ -45,6 +51,7 @@ on('remote:command', (command: any) => {
     lastRemote = Date.now();
   }
   const tracks = (command.tracks ?? []).map(fromPhone).filter(Boolean) as Track[];
+  const source = command.playbackSource === 'octave' || command.playbackSource === 'youtube' ? command.playbackSource : undefined;
   switch (command.action) {
     case 'play': player.resume(); break;
     case 'pause': player.pause(); break;
@@ -55,8 +62,19 @@ on('remote:command', (command: any) => {
     case 'volume': player.setVolume(Math.min(1, Math.max(0, Number(command.value) || 0))); break;
     case 'shuffle': player.toggleShuffle(); break;
     case 'repeat': player.cycleRepeat(); break;
-    case 'playTracks': if (tracks.length) player.play(tracks, Number(command.index) || 0, !!command.shuffled); break;
-    case 'enqueue': player.enqueue(tracks); break;
+    case 'autoplay':
+    case 'automix':
+      if (command.source === 'mini') togglePlaybackOption(command.action, playerState.get().source);
+      break;
+    case 'like': {
+      const track = currentTrack();
+      if (command.source === 'mini' && track) toggleLike(track);
+      break;
+    }
+    case 'playTracks': if (tracks.length) player.play(tracks, Number(command.index) || 0, !!command.shuffled, source,
+      Math.max(0, Number(command.position) || 0), command.paused === true); break;
+    case 'switchSource': if (source) player.switchSource(source); break;
+    case 'enqueue': player.enqueue(tracks, typeof command.index === 'number' && Number.isSafeInteger(command.index) ? command.index : undefined); break;
     case 'playNext': if (tracks[0]) player.playNext(tracks[0]); break;
     case 'jump': {
       const position = playerState.get().index + 1 + (Number(command.value) || 0);

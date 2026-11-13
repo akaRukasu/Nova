@@ -8,6 +8,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { localAddresses } from './jam.js';
+import type { HistorySnapshot } from '../shared/historySync.js';
 
 export interface Pairing {
   pcId: string;
@@ -63,7 +64,8 @@ export function currentPairing(): Pairing {
   return pairing;
 }
 
-export async function startSyncServer(dataDir: string, handler: typeof onLibrary) {
+export async function startSyncServer(dataDir: string, handler: typeof onLibrary,
+  exchangeHistory?: (incoming: HistorySnapshot) => Promise<HistorySnapshot>) {
   onLibrary = handler;
   pairingFile = path.join(dataDir, 'pairing.json');
   try {
@@ -77,6 +79,27 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
     if (request.method === 'GET' && request.url?.startsWith('/status')) {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ app: 'nova-windows', pcId: pairing.pcId, name: os.hostname() }));
+      return;
+    }
+    if (request.method === 'POST' && request.url === '/history' && exchangeHistory) {
+      if (request.headers['x-nova-token'] !== pairing.token) {
+        response.writeHead(403).end();
+        return;
+      }
+      void readBody(request, 4_000_000).then(async (body) => {
+        const incoming: HistorySnapshot = JSON.parse(body);
+        if (incoming?.version !== 1 || !Array.isArray(incoming.entries)) {
+          response.writeHead(400).end();
+          return;
+        }
+        const data = JSON.stringify(await exchangeHistory(incoming));
+        const phone = String(request.headers['x-nova-device'] ?? 'Mobile');
+        if (!pairing.paired || pairing.phoneName !== phone || Date.now() - (pairing.lastSync ?? 0) >= 60_000) {
+          pairing = { ...pairing, paired: true, phoneName: phone, lastSync: Date.now() };
+          await savePairing().catch(() => undefined);
+        }
+        response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) }).end(data);
+      }).catch(() => response.writeHead(503).end());
       return;
     }
     if (request.url?.startsWith('/remote/')) {
@@ -143,7 +166,7 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
   port = (server.address() as { port: number }).port;
   try {
     bonjour = new Bonjour();
-    service = bonjour.publish({ name: `Nova ${os.hostname()}`.slice(0, 60), type: 'nova-sync', port, txt: { id: pairing.pcId } });
+    service = bonjour.publish({ name: `Nova ${os.hostname().slice(0, 42)} ${pairing.pcId.slice(0, 8)}`, type: 'nova-sync', port, txt: { id: pairing.pcId } });
   } catch {
     // Bonjour indisponible : l'adresse mémorisée par l'iPhone sert de secours.
   }

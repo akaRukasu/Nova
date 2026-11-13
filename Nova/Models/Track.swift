@@ -1,7 +1,7 @@
 import Foundation
 
 /// Un titre YouTube Music. `id` est l'identifiant vidéo YouTube.
-struct Track: Identifiable, Codable, Hashable {
+struct Track: Identifiable, Codable, Hashable, Sendable {
     let id: String
     var title: String
     var artist: String
@@ -13,22 +13,26 @@ struct Track: Identifiable, Codable, Hashable {
     var artistID: String?
     /// Identifiant de la page album (MPREb…), si YouTube Music le fournit.
     var albumID: String?
+    var youtubeID: String?
+    var localFileName: String?
 
     var subtitle: String {
         [artist, album ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     var shareURL: URL {
-        URL(string: "https://music.youtube.com/watch?v=\(id)")!
+        if id.hasPrefix("octave:") { return OctaveCatalog.trackURL(self) ?? OctaveCatalog.searchURL(self) }
+        return URL(string: "https://music.youtube.com/watch?v=\(id)")!
     }
 
     /// Vrai titre musical avec pochette carrée (les clips n'ont qu'une miniature 16:9).
     var hasSquareArtwork: Bool {
-        artworkURL?.host?.contains("googleusercontent") == true
+        artworkURL?.host?.contains("googleusercontent") == true || id.hasPrefix("octave:")
     }
 
     /// Miniatures 16:9 de la vidéo, de la meilleure à la plus petite, puis la pochette.
     var videoThumbnailURLs: [URL] {
+        if id.hasPrefix("octave:") { return artworkURL.map { [$0] } ?? [] }
         let names = ["maxresdefault.jpg", "hq720.jpg", "sddefault.jpg"]
         var urls = names.compactMap { URL(string: "https://i.ytimg.com/vi/\(id)/\($0)") }
         if let artworkURL { urls.append(artworkURL) }
@@ -43,6 +47,8 @@ struct Track: Identifiable, Codable, Hashable {
     /// Pochette d'abord, miniature vidéo ensuite (pour les vignettes carrées). Sans pochette carrée,
     /// la vraie pochette HD est d'abord cherchée sur YouTube Music (voir `ArtworkResolver`).
     var squareArtworkURLs: [URL] {
+        if id.hasPrefix("local:") { return artworkURL.map { [$0] } ?? [] }
+        if id.hasPrefix("octave:") { return artworkURL.map { [$0] } ?? [] }
         var urls: [URL] = []
         if hasSquareArtwork, let artworkURL { urls.append(artworkURL) }
         if !hasSquareArtwork, let placeholder = ArtworkResolver.placeholderURL(for: id) { urls.append(placeholder) }
@@ -112,7 +118,13 @@ extension URL {
             components?.queryItems = [URLQueryItem(name: "px", value: String(pixels))]
             return components?.url ?? self
         }
-        guard let host, host.contains("googleusercontent") || host.contains("ggpht") else { return self }
+        guard let host else { return self }
+        if host == "dzcdn.net" || host.hasSuffix(".dzcdn.net") {
+            let size = pixels <= 56 ? 56 : pixels <= 250 ? 250 : pixels <= 500 ? 500 : 1000
+            return URL(string: absoluteString.replacingOccurrences(of: #"/\d+x\d+(?=-)"#,
+                with: "/\(size)x\(size)", options: .regularExpression)) ?? self
+        }
+        guard host.contains("googleusercontent") || host.contains("ggpht") else { return self }
         let size = Swift.max(60, Swift.min(pixels, 1600))
         let text = absoluteString
         let resized: String

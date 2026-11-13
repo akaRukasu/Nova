@@ -1,12 +1,12 @@
 {
   "name": "nova-windows",
   "productName": "Nova",
-  "version": "0.4.0",
-  "description": "Nova pour Windows : le catalogue de YouTube Music, façon Apple Music.",
+  "version": "0.4.20",
+  "description": "Nova pour Windows : lecture Octave intégrée et historique YouTube Music.",
   "main": "dist/main/main.js",
   "private": true,
   "scripts": {
-    "build:main": "tsc -p tsconfig.main.json",
+    "build:main": "tsc -p tsconfig.main.json && node -e \"require('node:fs').copyFileSync('../Nova/Resources/nova-octave-transition.js', 'dist/main/nova-octave-transition.js')\"",
     "build:renderer": "vite build",
     "build": "npm run build:main && npm run build:renderer",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
@@ -21,6 +21,7 @@
     "@capacitor/core": "^8.6.0",
     "@capacitor/filesystem": "^8.1.5",
     "bonjour-service": "^1.4.4",
+    "music-metadata": "12.5.0",
     "qrcode": "^1.5.4",
     "youtubei.js": "^18.3.0"
   },
@@ -78,7 +79,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "artifactName": "Nova-Windows-Setup.${ext}",
+      "artifactName": "Nova-Octave-${version}-Windows-Setup.${ext}",
       "shortcutName": "Nova",
       "createDesktopShortcut": true
     },

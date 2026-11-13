@@ -36,7 +36,7 @@ export function resolveStream(id: string, force = false): Promise<Stream> {
 
 /** Prépare le titre suivant en arrière-plan (jamais deux à la fois). */
 export function prefetch(id: string) {
-  if (cache.has(id) || pending.has(id)) return;
+  if (id.startsWith('local:') || cache.has(id) || pending.has(id)) return;
   backgroundChain = backgroundChain.then(() => resolveStream(id).catch(() => undefined));
 }
 
@@ -57,9 +57,12 @@ export function registerScheme() {
 
 const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
-export function handleStreams() {
+export function handleStreams(local?: (id: string, range: string | null, cover: boolean) => Promise<Response>) {
   protocol.handle('nova-stream', async (request) => {
     const id = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''));
+    if (local && (id.startsWith('local:') || new URL(request.url).hostname === 'cover')) {
+      return local(id, request.headers.get('range'), new URL(request.url).hostname === 'cover');
+    }
     // NOVA_TEST_AUDIO_DIR : fichiers locaux (vérification automatique de la lecture directe).
     if (process.env.NOVA_TEST_AUDIO_DIR) {
       const { readFile } = await import('node:fs/promises');

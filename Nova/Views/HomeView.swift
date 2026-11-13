@@ -11,6 +11,7 @@ struct HomeView: View {
     @State private var errorText: String?
     @State private var loadedRevision: Int?
     @State private var personalShelves: [Shelf] = []
+    @State private var octaveShelves: [Shelf] = []
     @State private var refreshID = 0
     private let client = InnerTubeClient()
 
@@ -18,7 +19,8 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 30) {
                 resumeCard
-                MixesRow()
+                MixesRow(compactGrid: true)
+                ForEach(octaveShelves.prefix(1)) { shelf in ShelfView(shelf: shelf) }
                 if !library.recents.isEmpty {
                     // 20 derniers titres ; le titre de la rangée ouvre l'historique complet.
                     ShelfView(shelf: Shelf(id: "recents", title: "Écoutés récemment",
@@ -70,7 +72,9 @@ struct HomeView: View {
         .refreshable {
             refreshID += 1
             await reload(force: true)
+            await loadOctaveCharts()
         }
+        .task { await loadOctaveCharts() }
         .task(id: account.revision) {
             if loadedRevision != account.revision { await reload() }
         }
@@ -79,7 +83,7 @@ struct HomeView: View {
         }
     }
 
-    /// Grande carte 16:9 pour reprendre l'écoute.
+    /// Carte compacte pour reprendre le dernier titre.
     @ViewBuilder private var resumeCard: some View {
         if let last = player.current ?? library.recents.first {
             Button {
@@ -87,23 +91,24 @@ struct HomeView: View {
                     if !player.isPlaying { player.resume() }
                     router.showPlayer = true
                 } else {
-                    player.startRadio(from: last)
+                    player.play([last])
                 }
             } label: {
-                ZStack(alignment: .bottomLeading) {
-                    RemoteImage(urls: last.videoThumbnailURLs, maxPixels: 1000)
-                        .aspectRatio(16 / 9, contentMode: .fit)
-                    LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
-                    HStack(alignment: .bottom) {
+                ZStack {
+                    RemoteImage(urls: last.squareArtworkURLs, maxPixels: 280)
+                        .blur(radius: 35)
+                        .overlay(.black.opacity(0.65))
+                    HStack(spacing: 14) {
+                        ArtworkThumb(track: last, size: 68, corner: 9)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(player.current?.id == last.id ? "Reprendre l'écoute" : "Reprendre avec la radio")
+                            Text("Reprendre l’écoute")
                                 .font(.caption.weight(.semibold))
                                 .textCase(.uppercase)
                                 .foregroundStyle(.white.opacity(0.8))
                             Text(last.title)
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(.white)
-                                .lineLimit(1)
+                                .lineLimit(2)
                             Text(last.artist)
                                 .font(.subheadline)
                                 .foregroundStyle(.white.opacity(0.8))
@@ -113,16 +118,21 @@ struct HomeView: View {
                         Image(systemName: "play.fill")
                             .font(.title2)
                             .foregroundStyle(.white)
-                            .frame(width: 52, height: 52)
+                            .frame(width: 44, height: 44)
                             .glassEffect(in: Circle())
                     }
                     .padding(16)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .fixedSize(horizontal: false, vertical: true)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
         }
+    }
+
+    private func loadOctaveCharts() async {
+        if let page = try? await OctaveCatalog.shared.charts() { octaveShelves = page.shelves }
     }
 
     private func reload(force: Bool = false) async {

@@ -89,6 +89,7 @@ jobs:
           path: Nova.ipa
 
       - name: Publish the IPA as a release
+        if: github.ref_name != 'codex/nova-mobile-octave'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

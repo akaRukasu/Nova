@@ -2,6 +2,8 @@
 
 export interface Track {
   id: string;
+  youtubeId?: string;
+  localFileName?: string;
   title: string;
   artist: string;
   album?: string;
@@ -21,6 +23,7 @@ export interface Collection {
   title: string;
   subtitle?: string;
   artwork?: string;
+  addedAt?: number;
 }
 
 export interface Category {
@@ -85,6 +88,7 @@ export interface UserPlaylist {
   name: string;
   tracks: Track[];
   created: number;
+  lastPlayedAt?: number;
   /** Playlist du compte YouTube correspondante (synchronisée avec l'iPhone). */
   youtubeId?: string;
 }
@@ -100,9 +104,22 @@ export interface SharedPlaylist {
 export interface TrackStats {
   playCount: number;
   lastPlayed?: number;
+  addedAt?: number;
 }
 
+export type ListeningYear = Record<string, { track: Track; plays: number }>;
+
 export type Transition = 'off' | 'crossfade' | 'automix';
+
+export interface OctaveAudioSettings {
+  automixStyle?: 'automatic' | 'apple' | 'legacy';
+  quality: 'low' | 'high' | 'lossless';
+  transition: Transition;
+  autoplay: boolean;
+  gapless: boolean;
+  soundCheck: boolean;
+  smartShuffle: boolean;
+}
 
 export interface Settings {
   region: string;
@@ -112,6 +129,9 @@ export interface Settings {
   crossfadeSeconds: number;
   autoplayRadio: boolean;
   recordHistory: boolean;
+  syncOctaveToYouTube?: boolean;
+  playlistSource?: 'octave' | 'youtube';
+  octaveAudio?: OctaveAudioSettings;
   ticketmasterKey: string;
   jamName: string;
   theme: 'system' | 'dark' | 'light';
@@ -131,6 +151,8 @@ export const defaultSettings: Settings = {
   crossfadeSeconds: 6,
   autoplayRadio: true,
   recordHistory: true,
+  syncOctaveToYouTube: true,
+  playlistSource: 'octave',
   ticketmasterKey: '',
   jamName: '',
   theme: 'system',
@@ -167,6 +189,8 @@ export interface LibraryState {
   saved: Collection[];
   searches: string[];
   stats: Record<string, TrackStats>;
+  listeningYears?: Record<string, ListeningYear>;
+  historyChanges?: import('./historySync.js').HistoryChanges;
   settings: Settings;
 }
 
@@ -189,6 +213,20 @@ export interface ImportedPlaylist {
   name: string;
   source: string;
   tracks: ImportedTrack[];
+  existingYoutubeId?: string;
+}
+
+export interface ImportJournalEntry {
+  id: string;
+  playlist: string;
+  source: string;
+  track: ImportedTrack;
+  firstAttempt: number;
+  lastAttempt: number;
+  attempts: number;
+  status: 'unresolved' | 'youtube' | 'resolved';
+  reason: string;
+  recording?: Track;
 }
 
 export interface ImportProgress {
@@ -200,6 +238,7 @@ export interface ImportProgress {
   done: boolean;
   /** Seconde recherche des titres pas encore trouvés. */
   verifying?: boolean;
+  journalError?: string;
   playlistId?: string;
 }
 
@@ -218,6 +257,7 @@ export interface JamState {
   queue: Track[];
   index: number;
   playing: boolean;
+  transitioning?: boolean;
   position: number;
   sentAt: number;
   participants: string[];

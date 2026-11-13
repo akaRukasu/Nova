@@ -63,7 +63,7 @@ struct CollectionView: View {
                 Section {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { position, track in
                         TrackRowButton(track: track, number: isAlbum && sort.isManual ? position + 1 : nil) {
-                            player.play(tracks, startAt: position)
+                            player.play(tracks, startAt: position, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
                         }
                     }
                     if isLoadingMore {
@@ -166,9 +166,9 @@ struct CollectionView: View {
                     .onTapGesture { withAnimation { showFullDescription.toggle() } }
             }
             PlayShuffleButtons {
-                player.play(tracks)
+                player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
             } shuffle: {
-                player.play(tracks, shuffled: true)
+                player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
             }
             .disabled(tracks.isEmpty)
             .padding(.top, 6)
@@ -191,7 +191,10 @@ struct CollectionView: View {
             // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
             let shared = SharedPlaylists.shared.entries.contains { "VL" + $0.id == id }
             try await loadCached("collection-\(id)", freshFor: shared ? 0 : 1800,
-                                 fetch: { try await client.collection(id) }) { loaded in
+                                 fetch: {
+                if OctaveCatalog.id(id) != nil { return try await OctaveCatalog.shared.collection(collection) }
+                return try await client.collection(id)
+            }) { loaded in
                 content = loaded
                 tracks = loaded.tracks
             }

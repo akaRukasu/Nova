@@ -19,9 +19,11 @@ final class RemoteControl {
         var duration: Double
         var volume: Double
         var shuffled: Bool?
+        var source: PlaybackSource?
+        var playbackSourceControl: Bool?
         var `repeat`: String?
 
-        enum CodingKeys: String, CodingKey { case name, track, queue, playing, loading, time, duration, volume, shuffled, `repeat` }
+        enum CodingKeys: String, CodingKey { case name, track, queue, playing, loading, time, duration, volume, shuffled, source, playbackSourceControl, `repeat` }
 
         /// Tolérant : un champ manquant ou illisible (position non définie, titre incomplet) ne fait pas rejeter tout l'état.
         init(from decoder: Decoder) throws {
@@ -35,6 +37,8 @@ final class RemoteControl {
             duration = (try? c.decodeIfPresent(Double.self, forKey: .duration)) ?? 0
             volume = (try? c.decodeIfPresent(Double.self, forKey: .volume)) ?? 0.8
             shuffled = try? c.decodeIfPresent(Bool.self, forKey: .shuffled)
+            source = try? c.decodeIfPresent(PlaybackSource.self, forKey: .source)
+            playbackSourceControl = try? c.decodeIfPresent(Bool.self, forKey: .playbackSourceControl)
             `repeat` = try? c.decodeIfPresent(String.self, forKey: .repeat)
         }
     }
@@ -67,7 +71,7 @@ final class RemoteControl {
         }
         base = found.base
         token = found.token
-        guard (await fetchState()) != nil else {
+        guard let target = await fetchState() else {
             if !quiet { errorMessage = "\(deviceName) ne répond pas." }
             return
         }
@@ -75,13 +79,14 @@ final class RemoteControl {
         let upcoming = Array(player.queue.dropFirst(player.index))
         let position = player.currentTime
         let wasPlaying = player.isPlaying
-        player.enterRemote()
+        let source = player.source
+        await player.enterRemote()
         isActive = true
         attachedAutomatically = !transfer
         SilentAudio.shared.start()
-        if transfer, !upcoming.isEmpty, wasPlaying {
-            await send(["action": "playTracks", "index": 0], tracks: upcoming)
-            if position > 2 { await send(["action": "seek", "value": position]) }
+        if transfer, !upcoming.isEmpty, wasPlaying || target.playbackSourceControl == true {
+            await send(["action": "playTracks", "index": 0, "playbackSource": source.rawValue, "position": position, "paused": !wasPlaying], tracks: upcoming)
+            if target.playbackSourceControl != true, position > 2 { await send(["action": "seek", "value": position]) }
         }
         startPolling(player: player)
     }
@@ -95,7 +100,7 @@ final class RemoteControl {
         poller = nil
         isActive = false
         SilentAudio.shared.stop()
-        player.leaveRemote(resumeAt: resumeHere && last?.playing == true ? last : nil)
+        player.leaveRemote(resumeAt: resumeHere ? last : nil)
         state = nil
     }
 

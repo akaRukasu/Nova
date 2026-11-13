@@ -1,10 +1,14 @@
 import CoreImage.CIFilterBuiltins
 import SwiftUI
+import UIKit
 
 /// Page du Jam : lancer, rejoindre, voir la file commune.
 struct JamView: View {
     @Environment(\.dismiss) private var dismiss
     private let jam = JamSession.shared
+    @State private var circleDraft = ""
+    @State private var invitationDraft = ""
+    @State private var copiedInvitation: URL?
 
     var body: some View {
         @Bindable var jam = jam
@@ -14,6 +18,14 @@ struct JamView: View {
                     Section {
                         Label(message, systemImage: "info.circle")
                             .foregroundStyle(.secondary)
+                    }
+                }
+                if jam.pendingInvitation != nil {
+                    Section("Invitation à un Jam") {
+                        Button("Rejoindre la session", systemImage: "person.crop.circle.badge.plus") {
+                            Task { await jam.joinInvitation() }
+                        }
+                        .disabled(jam.isConnecting)
                     }
                 }
                 switch jam.role {
@@ -31,7 +43,14 @@ struct JamView: View {
             }
             .onAppear {
                 jam.message = nil
+                circleDraft = jam.circleLink
                 jam.startBrowsing()
+            }
+            .task(id: jam.circleLink) {
+                while !Task.isCancelled {
+                    await jam.discoverRemote()
+                    try? await Task.sleep(for: .seconds(2.5))
+                }
             }
             .onDisappear { jam.stopBrowsing() }
             .animation(.default, value: jam.role)
@@ -44,19 +63,24 @@ struct JamView: View {
     @ViewBuilder private var startSections: some View {
         @Bindable var jam = jam
         Section {
-            VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: "person.2.wave.2.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(Color.novaAccent)
+                    .font(.system(size: 32, weight: .semibold))
                 Text("Écoutez ensemble")
-                    .font(.title2.weight(.bold))
-                Text("Lance un Jam : tes amis à côté de toi le rejoignent depuis Nova, ajoutent leurs titres à la file et peuvent écouter en même temps sur leur iPhone.")
+                    .font(.largeTitle.bold())
+                Text("Une file commune. Chacun peut proposer le prochain titre.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white.opacity(0.85))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(.white)
+            .padding(20)
+            .background {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(LinearGradient(colors: [Color(red: 0.16, green: 0.12, blue: 0.32), Color(red: 0.49, green: 0.13, blue: 0.41)],
+                                         startPoint: .bottomLeading, endPoint: .topTrailing))
+            }
+            .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
         }
         Section("Ton prénom") {
@@ -64,11 +88,32 @@ struct JamView: View {
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)
         }
+        Section("À distance") {
+            Button(jam.isConnecting ? "Connexion au Jam…" : "Créer un Jam à distance", systemImage: "globe") {
+                Task { await jam.connectRemote() }
+            }
+            .disabled(jam.isConnecting)
+            TextField("Lien d’invitation reçu", text: $invitationDraft)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !invitationDraft.isEmpty {
+                Button("Ouvrir l’invitation", systemImage: "link") {
+                    guard let url = URL(string: invitationDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
+                          jam.receiveInvitation(url) else {
+                        jam.message = "Ce lien ne correspond pas à une invitation Jam."
+                        return
+                    }
+                    invitationDraft = ""
+                }
+            }
+            circleSettings
+        }
         Section {
             Button {
                 jam.startHosting()
             } label: {
-                Label("Lancer un Jam", systemImage: "play.circle.fill")
+                Label("Créer un Jam local", systemImage: "play.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
@@ -105,14 +150,47 @@ struct JamView: View {
         }
     }
 
+    private var circleSettings: some View {
+        DisclosureGroup("Cercle privé") {
+            SecureField("Lien du cercle hôte", text: $circleDraft)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Enregistrer le lien", systemImage: "link") { jam.saveCircle(circleDraft) }
+                .disabled(jam.isConnecting)
+            if let error = jam.relayError {
+                Label(error, systemImage: "info.circle").foregroundStyle(.secondary)
+            }
+            if !jam.circleLink.isEmpty {
+                Button("Créer dans ce cercle", systemImage: "person.2") {
+                    Task { await jam.connectRemote(inCircle: true) }
+                }
+                .disabled(jam.isConnecting)
+                ForEach(jam.remoteRooms) { room in
+                    HStack {
+                        Text("Jam de " + room.name)
+                        Spacer()
+                        Button("Rejoindre") { Task { await jam.connectRemote(room: room) } }
+                            .buttonStyle(.bordered)
+                            .disabled(jam.isConnecting)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Hôte
 
     @ViewBuilder private var hostSections: some View {
         @Bindable var jam = jam
         let participants = jam.state?.participants ?? []
+        if let url = jam.invitationURL {
+            remoteInvitation(url)
+        }
         Section {
             if participants.isEmpty {
-                Label("En attente d'amis… Ils voient ton Jam en ouvrant Jam dans le lecteur de Nova.",
+                Label(jam.isRemote ? "Partage ton invitation pour que tes amis rejoignent le Jam."
+                                   : "Tes amis à proximité peuvent rejoindre depuis le menu Jam.",
                       systemImage: "hourglass")
                     .foregroundStyle(.secondary)
             }
@@ -150,7 +228,34 @@ struct JamView: View {
         }
         queueSections(jam.state)
         Section {
-            Button("Terminer le Jam", role: .destructive) { jam.leave() }
+            Button("Terminer le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
+        }
+    }
+
+    private func remoteInvitation(_ url: URL) -> some View {
+        Section("Invitation au Jam") {
+            VStack(spacing: 8) {
+                QRCodeView(text: url.absoluteString)
+                    .frame(width: 188, height: 188)
+                    .padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityLabel("QR code d’invitation au Jam")
+                Text("À scanner avec l’appareil photo")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            Button(copiedInvitation == url ? "Lien copié" : "Copier le lien",
+                   systemImage: copiedInvitation == url ? "checkmark" : "doc.on.doc") {
+                UIPasteboard.general.string = url.absoluteString
+                copiedInvitation = url
+            }
+            ShareLink(item: url) { Label("Partager l’invitation", systemImage: "square.and.arrow.up") }
+            Text(url.absoluteString)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
     }
 
@@ -187,7 +292,7 @@ struct JamView: View {
         }
         queueSections(state)
         Section {
-            Button("Quitter le Jam", role: .destructive) { jam.leave() }
+            Button("Quitter le Jam", role: .destructive) { Task { await jam.leaveConfirmed() } }
         }
     }
 
@@ -202,7 +307,7 @@ struct JamView: View {
         let upcoming = state?.upcoming ?? []
         if !upcoming.isEmpty {
             Section("À suivre") {
-                ForEach(Array(upcoming.prefix(40).enumerated()), id: \.offset) { _, track in
+                ForEach(Array(upcoming.enumerated()), id: \.offset) { _, track in
                     row(track, addedBy: state?.addedBy[track.id])
                 }
             }

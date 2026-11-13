@@ -11,6 +11,10 @@ struct NowPlayingView: View {
     @State private var showLyrics = false
     @State private var showJam = false
     @State private var palette: [Color] = [Color(white: 0.18), Color(white: 0.05)]
+    @AppStorage("octaveTransition") private var octaveTransition = "automix"
+    @AppStorage("octaveAutoplay") private var octaveAutoplay = true
+    @AppStorage("transitionStyle") private var transition = "automix"
+    @AppStorage("autoplayRadio") private var autoplay = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,7 +42,7 @@ struct NowPlayingView: View {
                 artwork
                     .overlay(alignment: .bottom) {
                         if player.isTransitioning {
-                            Label(PlaybackSettings.transition == .automix ? "AutoMix" : "Fondu enchaîné",
+                            Label((player.source == .octave ? octaveTransition : transition) == "automix" ? "AutoMix" : "Fondu enchaîné",
                                   systemImage: "infinity")
                                 .font(.subheadline.weight(.semibold))
                                 .padding(.horizontal, 14)
@@ -57,7 +61,8 @@ struct NowPlayingView: View {
 
                 titleBlock
             }
-            progress.padding(.top, 22)
+            if player.current != nil { PlaybackSourceMenu() }
+            progress.padding(.top, 6)
             controls.padding(.top, 18)
             modes.padding(.top, 10)
             Group {
@@ -90,6 +95,12 @@ struct NowPlayingView: View {
             QueueView()
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: Binding(
+            get: { player.showsOctaveAccount && router.showPlayer },
+            set: { if !$0 { player.showsOctaveAccount = false } }
+        ), onDismiss: { player.octave.hideAccount() }) {
+            OctaveAccountSheet()
+        }
         .newPlaylistAlert(isActive: true)
         .alert("Oups", isPresented: Binding(
             get: { player.errorMessage != nil },
@@ -100,6 +111,8 @@ struct NowPlayingView: View {
             Text(player.errorMessage ?? "")
         }
         .presentationDragIndicator(.hidden)
+        .onChange(of: octaveAutoplay) { if player.source == .octave { player.octave.refreshSettings() } }
+        .onChange(of: octaveTransition) { if player.source == .octave { player.octave.refreshSettings() } }
     }
 
     /// Pochette carrée en HD (retrouvée sur YouTube Music si besoin), miniature 16:9 pour un clip seul.
@@ -213,7 +226,16 @@ struct NowPlayingView: View {
             }
             .accessibilityLabel(player.isShuffled ? "Désactiver l'aléatoire" : "Lecture aléatoire")
             Spacer()
-            if player.sleepTimerEnd != nil {
+            if !RemoteControl.shared.isActive {
+                let octave = player.source == .octave
+                modeButton("AutoPlay", icon: "infinity", active: octave ? octaveAutoplay : autoplay) {
+                    if octave { octaveAutoplay.toggle() } else { autoplay.toggle() }
+                }
+                modeButton("AutoMix", icon: "waveform", active: (octave ? octaveTransition : transition) == "automix") {
+                    if octave { octaveTransition = octaveTransition == "automix" ? "off" : "automix" }
+                    else { transition = transition == "automix" ? "off" : "automix" }
+                }
+            } else if player.sleepTimerEnd != nil {
                 Label("Minuteur actif", systemImage: "moon.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.7))
@@ -228,6 +250,18 @@ struct NowPlayingView: View {
             .accessibilityLabel("Répétition")
         }
         .buttonStyle(.plain)
+    }
+
+    private func modeButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .foregroundStyle(active ? Color.novaAccent : .white.opacity(0.7))
+                .glassEffect(in: Capsule())
+        }
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private var progress: some View {
@@ -349,7 +383,7 @@ struct QueueView: View {
                     HStack {
                         Text(player.isShuffled ? "À suivre (aléatoire)" : "À suivre")
                         Spacer()
-                        if player.hasNext {
+                        if player.hasNext || !player.autoplayQueue.isEmpty {
                             Button("Effacer") { player.clearUpNext() }
                                 .font(.footnote.weight(.semibold))
                                 .textCase(nil)
@@ -358,6 +392,14 @@ struct QueueView: View {
                 } footer: {
                     if player.repeatMode == .off {
                         Text("À la fin de la file, Nova continue avec la radio du dernier titre.")
+                    }
+                }
+                if player.source == .octave && !player.autoplayQueue.isEmpty {
+                    Section("AutoPlay · Octave") {
+                        ForEach(player.autoplayQueue) { track in
+                            Button { player.play([track]) } label: { TrackRow(track: track) }
+                                .buttonStyle(.plain)
+                        }
                     }
                 }
             }

@@ -70,6 +70,11 @@ check(abs(plan.duration - 16 * 60 / 124) < 0.05, "16 temps de mélange")
 check(plan.start + plan.duration <= a.audibleEnd + 0.6, "mélange terminé avant la fin du titre sortant")
 check(abs(plan.incomingOffset - 2) < 0.08, "le titre entrant démarre sur son premier temps")
 
+let gains = (0...100).map { MixPlan.volumes(at: Double($0) / 100) }
+check(gains.first?.outgoing == 1 && gains.last?.incoming == 1, "volume entier aux deux extrémités du fondu")
+check(gains.allSatisfy { $0.incoming >= 0 && $0.outgoing >= 0 && $0.incoming + $0.outgoing <= 1 },
+      "somme des gains plafonnée pendant le recouvrement")
+
 print("\n=== Vraies musiques (Kevin MacLeod, CC BY)")
 let tracks = ["Monkeys Spinning Monkeys", "Sneaky Snitch", "Fluffing a Duck", "Investigations", "Local Forecast - Elevator", "Carefree", "Dreamer"]
 for name in tracks {

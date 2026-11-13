@@ -72,17 +72,21 @@ export function PageTitle({ children, actions }: { children: ReactNode; actions?
   return <div className="page-title"><h1>{children}</h1>{actions && <div className="page-actions">{actions}</div>}</div>;
 }
 
-export function PlayShuffle({ tracks }: { tracks: Track[] }) {
+export function PlayShuffle({ tracks, playlist = false, playlistId }: { tracks: Track[]; playlist?: boolean; playlistId?: string }) {
+  const play = (shuffle: boolean) => {
+    if (playlist) player.playPlaylist(tracks, 0, shuffle, playlistId);
+    else player.play(tracks, 0, shuffle);
+  };
   return (
     <div className="play-shuffle">
-      <button className="button" disabled={!tracks.length} onClick={() => player.play(tracks)}><Icon name="play" size={16} /> Lecture</button>
-      <button className="button secondary" disabled={!tracks.length} onClick={() => player.play(tracks, 0, true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
+      <button className="button" disabled={!tracks.length} onClick={() => play(false)}><Icon name="play" size={16} /> Lecture</button>
+      <button className="button secondary" disabled={!tracks.length} onClick={() => play(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
     </div>
   );
 }
 
-export function TrackList({ tracks, numbered, showArtwork = true, menuFor, limit }: {
-  tracks: Track[]; numbered?: boolean; showArtwork?: boolean; menuFor?: (track: Track, index: number) => MenuItem[]; limit?: number;
+export function TrackList({ tracks, numbered, showArtwork = true, menuFor, limit, playlist = false }: {
+  tracks: Track[]; numbered?: boolean; showArtwork?: boolean; menuFor?: (track: Track, index: number) => MenuItem[]; limit?: number; playlist?: boolean;
 }) {
   const [shown, setShown] = useState(limit ?? 300);
   const visible = tracks.slice(0, shown);
@@ -91,7 +95,7 @@ export function TrackList({ tracks, numbered, showArtwork = true, menuFor, limit
     <div className="track-list">
       {visible.map((track, i) => (
         <TrackRow key={`${track.id}-${i}`} track={track} index={i} showArtwork={showArtwork && !numbered}
-          onPlay={() => player.play(tracks, i)} extraMenu={menuFor?.(track, i)} />
+          onPlay={() => playlist ? player.playPlaylist(tracks, i) : player.play(tracks, i)} extraMenu={menuFor?.(track, i)} />
       ))}
       {tracks.length > shown && <button className="button secondary more-button" onClick={() => setShown(shown + 300)}>Afficher plus ({tracks.length - shown})</button>}
       <p className="muted list-footer">{tracks.length} titre{tracks.length > 1 ? 's' : ''}{total ? ` · ${formatTime(total)}` : ''}</p>

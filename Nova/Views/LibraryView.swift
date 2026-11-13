@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Rubriques de la bibliothèque, masquables et réordonnables (bouton « Modifier »).
 enum LibrarySection: String, CaseIterable, Identifiable {
-    case playlists, artists, albums, songs, liked, downloads, history, releases, concerts, youtube, importer
+    case playlists, artists, albums, songs, liked, downloads, history, wrapped, releases, concerts, youtube, importer
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "Titres likés"
         case .downloads: return "Téléchargés"
         case .history: return "Historique"
+        case .wrapped: return "Récap annuel"
         case .releases: return "Sorties"
         case .concerts: return "Concerts"
         case .youtube: return "Mon compte YouTube"
@@ -31,6 +32,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         case .liked: return "heart"
         case .downloads: return "arrow.down.circle"
         case .history: return "clock"
+        case .wrapped: return "sparkles"
         case .releases: return "sparkles.rectangle.stack"
         case .concerts: return "ticket"
         case .youtube: return "person.crop.circle"
@@ -38,7 +40,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads, .releases, .concerts]
+    static let defaultOrder: [LibrarySection] = [.playlists, .artists, .albums, .songs, .liked, .downloads, .history, .wrapped, .releases, .concerts]
 }
 
 struct LibraryView: View {
@@ -93,6 +95,10 @@ struct LibraryView: View {
             if sectionsVersion < 2 {
                 save(enabled + [.releases, .concerts].filter { !enabled.contains($0) })
                 sectionsVersion = 2
+            }
+            if sectionsVersion < 3 {
+                save(enabled + [.history, .wrapped].filter { !enabled.contains($0) })
+                sectionsVersion = 3
             }
         }
     }
@@ -167,6 +173,7 @@ struct LibraryView: View {
         case .liked: return .liked
         case .downloads: return .downloads
         case .history: return .history
+        case .wrapped: return .wrapped
         case .releases: return .releases
         case .concerts: return .concerts(artist: nil)
         case .youtube:
@@ -186,7 +193,7 @@ struct LibraryView: View {
         case .liked: return library.liked.count
         case .downloads: return downloads.tracks.count
         case .history: return library.recents.count
-        case .youtube, .importer, .releases, .concerts: return nil
+        case .youtube, .importer, .releases, .concerts, .wrapped: return nil
         }
     }
 
@@ -217,6 +224,12 @@ struct LibraryView: View {
 
     @ViewBuilder private func tile(_ addition: LibraryStore.RecentAddition) -> some View {
         switch addition {
+        case .group(let group):
+            NavigationLink(value: Route.libraryGroup(.album, group.id)) {
+                tileLabel(urls: group.artwork.squareArtworkURLs, title: group.title,
+                          subtitle: group.artist + " · " + group.releaseType, round: false)
+            }
+            .buttonStyle(.plain)
         case .track(let track):
             Button { player.startRadio(from: track) } label: {
                 tileLabel(urls: track.squareArtworkURLs, title: track.title, subtitle: track.artist, round: false)
@@ -324,6 +337,8 @@ struct LocalTracksList: View {
     /// Liste triable (bouton « Trier »), tri mémorisé sous cette clé.
     var sortKey: String?
     var manualSortLabel = "Ordre de la playlist"
+    var source: PlaybackSource = .octave
+    var playlistID: UUID?
 
     var body: some View {
         if let sortKey {
@@ -363,9 +378,9 @@ private struct TracksListBody: View {
             if !shown.isEmpty {
                 Section {
                     PlayShuffleButtons {
-                        player.play(shown)
+                        player.play(shown, source: list.source, playlistID: list.playlistID)
                     } shuffle: {
-                        player.play(shown, shuffled: true)
+                        player.play(shown, shuffled: true, source: list.source, playlistID: list.playlistID)
                     }
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -373,7 +388,7 @@ private struct TracksListBody: View {
                 Section {
                     ForEach(Array(shown.enumerated()), id: \.offset) { position, track in
                         TrackRowButton(track: track, onRemove: list.onDelete == nil ? nil : { list.onDelete?(IndexSet(integer: order[position])) }) {
-                            player.play(shown, startAt: position)
+                            player.play(shown, startAt: position, source: list.source, playlistID: list.playlistID)
                         }
                     }
                     .onDelete(perform: list.onDelete.map { delete in { (positions: IndexSet) in delete(IndexSet(positions.map { order[$0] })) } })
@@ -538,7 +553,8 @@ struct DownloadsView: View {
                             ids.forEach { downloads.remove($0) }
                         },
                         sortKey: "downloads",
-                        manualSortLabel: "Ordre de téléchargement")
+                        manualSortLabel: "Ordre de téléchargement",
+                        source: .youtube)
             .safeAreaInset(edge: .top) {
                 if !downloads.pending.isEmpty {
                     HStack(spacing: 12) {
@@ -568,6 +584,8 @@ struct UserPlaylistView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmDelete = false
+    @State private var octaveVerification: String?
+    @State private var verificationResult: String?
 
     var body: some View {
         let playlist = library.playlist(id)
@@ -577,7 +595,9 @@ struct UserPlaylistView: View {
                         emptyMessage: "Ajoute des titres avec le menu « … » › Ajouter à une playlist.",
                         onDelete: { library.removeTracks(at: $0, from: id) },
                         onMove: { library.moveTracks(from: $0, to: $1, in: id) },
-                        sortKey: "playlist.\(id.uuidString)")
+                        sortKey: "playlist.\(id.uuidString)",
+                        source: PlaybackSettings.playlistSource,
+                        playlistID: id)
             .navigationTitle(playlist?.name ?? "Playlist")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -588,6 +608,10 @@ struct UserPlaylistView: View {
                             renaming = true
                         }
                         if let tracks = playlist?.tracks, !tracks.isEmpty {
+                            Button(octaveVerification ?? "Vérifier sur Octave", systemImage: "checkmark.circle") {
+                                Task { await verify(tracks) }
+                            }
+                            .disabled(octaveVerification != nil)
                             Button("Ajouter à la file", systemImage: "text.line.last.and.arrowtriangle.forward") {
                                 player.enqueue(tracks)
                             }
@@ -617,6 +641,23 @@ struct UserPlaylistView: View {
                     dismiss()
                 }
             }
+            .alert("Correspondances Octave", isPresented: Binding(get: { verificationResult != nil },
+                                                                  set: { if !$0 { verificationResult = nil } })) {
+                Button("OK") { verificationResult = nil }
+            } message: { Text(verificationResult ?? "") }
+    }
+
+    private func verify(_ tracks: [Track]) async {
+        guard octaveVerification == nil else { return }
+        let candidates = tracks.filter { !$0.id.hasPrefix("octave:") || $0.albumID == nil }
+        var replacements: [String: Track] = [:]
+        for (position, track) in candidates.enumerated() {
+            octaveVerification = "\(position + 1) / \(candidates.count)"
+            if let recording = await ImportManager.resolveOctave(track), recording.id != track.id { replacements[track.id] = recording }
+        }
+        library.applyVerifiedRecordings(replacements, in: id)
+        octaveVerification = nil
+        verificationResult = replacements.isEmpty ? "Aucune nouvelle correspondance." : "\(replacements.count) correspondances corrigées."
     }
 }
 
@@ -626,9 +667,55 @@ struct LibraryPlaylistsView: View {
     @Environment(AccountStore.self) private var account
     @Environment(Router.self) private var router
     @State private var showSmartEditor = false
+    @AppStorage("novaPlaylistSort") private var playlistSort = PlaylistSort.manual
+
+    private enum PlaylistSort: String, CaseIterable, Identifiable {
+        case manual = "Ordre manuel"
+        case az = "Nom A à Z"
+        case za = "Nom Z à A"
+        case played = "Écoutées récemment"
+        case added = "Ajoutées récemment"
+
+        var id: String { rawValue }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(PlaylistSort.allCases) { sort in
+                Button {
+                    playlistSort = sort
+                } label: {
+                    if sort == playlistSort {
+                        Label(sort.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(sort.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Label("Trier · " + playlistSort.rawValue, systemImage: "arrow.up.arrow.down")
+        }
+    }
+
+    private var orderedPlaylists: [UserPlaylist] {
+        switch playlistSort {
+        case .manual: return library.playlists
+        case .az: return library.playlists.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        case .za: return library.playlists.sorted { $0.name.localizedStandardCompare($1.name) == .orderedDescending }
+        case .added: return library.playlists.sorted { $0.createdAt > $1.createdAt }
+        case .played:
+            return library.playlists.sorted {
+                let first = $0.lastPlayedAt ?? .distantPast
+                let second = $1.lastPlayedAt ?? .distantPast
+                return first == second ? $0.createdAt > $1.createdAt : first > second
+            }
+        }
+    }
 
     var body: some View {
+        let playlists = orderedPlaylists
         List {
+            if playlists.count > 1 { sortMenu }
             Button {
                 router.newPlaylistTracks = []
             } label: {
@@ -679,7 +766,7 @@ struct LibraryPlaylistsView: View {
                     }
                 }
             }
-            ForEach(library.playlists) { playlist in
+            ForEach(playlists) { playlist in
                 NavigationLink(value: Route.userPlaylist(playlist.id)) {
                     HStack(spacing: 12) {
                         ArtworkThumb(track: playlist.tracks.first)
@@ -692,8 +779,14 @@ struct LibraryPlaylistsView: View {
                         }
                     }
                 }
+                .moveDisabled(playlistSort != .manual)
             }
-            .onDelete { library.deletePlaylists(at: $0) }
+            .onDelete { offsets in
+                for index in offsets { library.deletePlaylist(playlists[index].id) }
+            }
+            .onMove { from, to in
+                if playlistSort == .manual { library.movePlaylists(from: from, to: to) }
+            }
             ForEach(library.saved.filter { $0.kind == .playlist }) { collection in
                 NavigationLink(value: Route.collection(collection)) {
                     CollectionRow(collection: collection)
@@ -703,6 +796,7 @@ struct LibraryPlaylistsView: View {
         }
         .listStyle(.plain)
         .navigationTitle("Playlists")
+        .toolbar { if library.playlists.count > 1 { EditButton() } }
         .sheet(isPresented: $showSmartEditor) {
             SmartPlaylistEditor(playlist: SmartPlaylist(name: "Playlist intelligente"))
         }
@@ -822,15 +916,26 @@ struct SharedPlaylistGuide: View {
     }
 }
 
-/// Bibliothèque › Artistes ou Albums enregistrés.
+/// Bibliothèque › Artistes ou Albums.
 struct LibraryCollectionsView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(AccountStore.self) private var account
     let kind: CollectionKind
-
-    private var items: [MusicCollection] { library.saved.filter { $0.kind == kind } }
+    @State private var query = ""
 
     var body: some View {
+        let filter = ArtistNames.key(query)
+        let visible = library.libraryCollections(kind: kind).filter { entry in
+            if filter.isEmpty { return true }
+            switch entry {
+            case .group(let group):
+                return ArtistNames.key(group.title + (kind == .album ? " " + group.artist : "")).contains(filter)
+            case .collection(let collection):
+                return ArtistNames.key(collection.title + " " + collection.subtitle).contains(filter)
+            default:
+                return false
+            }
+        }
         ScrollView {
             if account.isSignedIn {
                 NavigationLink(value: Route.account(
@@ -842,40 +947,17 @@ struct LibraryCollectionsView: View {
                         .padding(16)
                 }
             }
-            if kind == .artist {
-                LazyVStack(spacing: 10) {
-                    ForEach(items) { collection in
-                        ItemRow(item: .collection(collection)) { _ in }
-                    }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 16)], spacing: 20) {
+                ForEach(visible) { entry in
+                    collectionTile(entry)
                 }
-                .padding(.horizontal, 16)
-            } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 20) {
-                    ForEach(items) { collection in
-                        NavigationLink(value: Route.collection(collection)) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                RemoteImage(urls: collection.artworkURLs)
-                                    .aspectRatio(1, contentMode: .fit)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                Text(collection.title)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(Color.primary)
-                                    .lineLimit(1)
-                                Text(collection.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu { CollectionMenu(collection: collection) }
-                    }
-                }
-                .padding(16)
             }
+            .padding(16)
         }
         .overlay {
-            if items.isEmpty && !account.isSignedIn {
+            if visible.isEmpty && !filter.isEmpty {
+                ContentUnavailableView.search(text: query)
+            } else if visible.isEmpty && !account.isSignedIn {
                 ContentUnavailableView(kind == .artist ? "Aucun artiste" : "Aucun album",
                                        systemImage: kind == .artist ? "music.mic" : "square.stack",
                                        description: Text(kind == .artist
@@ -884,5 +966,126 @@ struct LibraryCollectionsView: View {
             }
         }
         .navigationTitle(kind == .artist ? "Artistes" : "Albums")
+        .searchable(text: $query, prompt: kind == .artist ? "Rechercher un artiste" : "Rechercher un album")
+    }
+
+    @ViewBuilder private func collectionTile(_ entry: LibraryStore.RecentAddition) -> some View {
+        switch entry {
+        case .group(let group):
+            NavigationLink(value: Route.libraryGroup(kind, group.id)) {
+                tile(urls: group.artwork.squareArtworkURLs, title: group.title,
+                     subtitle: kind == .artist ? "\(group.tracks.count) titres" : group.artist + " · " + group.releaseType)
+            }
+            .buttonStyle(.plain)
+        case .collection(let collection):
+            NavigationLink(value: Route.collection(collection)) {
+                tile(urls: collection.artworkURLs, title: collection.title, subtitle: collection.subtitle)
+            }
+            .buttonStyle(.plain)
+            .contextMenu { CollectionMenu(collection: collection) }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func tile(urls: [URL], title: String, subtitle: String) -> some View {
+        VStack(alignment: kind == .artist ? .center : .leading, spacing: 6) {
+            RemoteImage(urls: urls)
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(kind == .artist ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12)))
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                .multilineTextAlignment(kind == .artist ? .center : .leading)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
+struct LibraryGroupView: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(PlayerModel.self) private var player
+    let kind: CollectionKind
+    let id: String
+
+    var body: some View {
+        if let group = library.musicGroups(kind: kind, singles: true).first(where: { $0.id == id }) {
+            List {
+                if kind == .artist {
+                    artistSections(group)
+                } else {
+                    albumHeader(group)
+                }
+                Section {
+                    ForEach(Array(group.tracks.enumerated()), id: \.element.id) { index, track in
+                        TrackRowButton(track: track) { player.play(group.tracks, startAt: index) }
+                    }
+                } header: {
+                    if kind == .artist { Text("Titres") }
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle(group.title)
+            .navigationBarTitleDisplayMode(.inline)
+        } else {
+            ContentUnavailableView("Sortie introuvable", systemImage: "square.stack")
+        }
+    }
+
+    private func albumHeader(_ group: LibraryStore.MusicGroup) -> some View {
+        Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        RemoteImage(urls: group.artwork.squareArtworkURLs)
+                            .frame(width: 160, height: 160)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                        Text(group.artist + " · " + group.releaseType).foregroundStyle(.secondary)
+                        Button { player.play(group.tracks) } label: { Label("Lecture", systemImage: "play.fill") }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder private func artistSections(_ group: LibraryStore.MusicGroup) -> some View {
+        let ids = Set(group.tracks.map(\.id))
+        let releases = library.musicGroups(kind: .album).filter { $0.tracks.contains { ids.contains($0.id) } }
+        let catalogID = group.tracks.compactMap(\.artistID).first
+        ArtistHeader(name: group.title, artwork: group.artwork.squareArtworkURLs,
+                     details: "\(group.tracks.count) titre\(group.tracks.count > 1 ? "s" : "") dans ta bibliothèque") {
+            PlayShuffleButtons {
+                player.play(group.tracks)
+            } shuffle: {
+                player.play(group.tracks, shuffled: true)
+            }
+            if let catalogID {
+                NavigationLink(value: Route.collection(MusicCollection(id: catalogID, kind: .artist, title: group.title,
+                                                                       subtitle: "Artiste", artworkURL: group.artwork.artworkURL))) {
+                    Label("Voir dans le catalogue", systemImage: "arrow.up.right")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+        if !releases.isEmpty {
+            Section("Sorties dans ta bibliothèque") {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(releases) { release in
+                            NavigationLink(value: Route.libraryGroup(.album, release.id)) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    RemoteImage(urls: release.artwork.squareArtworkURLs)
+                                        .frame(width: 116, height: 116)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    Text(release.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                                    Text(release.releaseType).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .frame(width: 116, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
     }
 }

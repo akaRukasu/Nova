@@ -39,6 +39,117 @@ export function artistNames(value: string): string[] {
     .filter(Boolean);
 }
 
+function recordingTitle(title: string, artist: string): string {
+  let cleaned = title
+    .replace(/\s*[\[(]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*\/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*[\])]\s*/gi, ' ')
+    .replace(/\s+[-–—]\s*(?:official(?:\s+(?:music|explicit))?\s+(?:audio|video|visuali[sz]er)|(?:official\s+)?(?:with\s+)?lyrics?(?:\s+video)?|paroles(?:\s*\/\s*lyrics)?|audio(?:\s+officiel)?|clip\s+officiel|vid[ée]o\s+officielle|official)\s*$/i, '')
+    .trim();
+  const credited = [normalize(artist), normalize(mainArtist(artist))].filter(Boolean);
+  const labeled = cleaned.match(/^(.+?)(?:\s+[-–—|]\s+|\s*:\s+)(.+)$/);
+  if (labeled && credited.includes(normalize(labeled[1]))) cleaned = labeled[2].trim();
+  else if (labeled && credited.includes(normalize(labeled[2]))) cleaned = labeled[1].trim();
+  // Some video publishers put the entire title and its guest credit in quotation marks.
+  const wrappers = [['"', '"'], ['“', '”'], ['«', '»'], ["'", "'"], ['‘', '’']];
+  const wrapper = wrappers.find(([open, close]) => cleaned.startsWith(open) && cleaned.endsWith(close));
+  if (wrapper) cleaned = cleaned.slice(wrapper[0].length, -wrapper[1].length).trim();
+  return cleaned;
+}
+
+function recordingCredits(track: Track) {
+  const title = recordingTitle(track.title, track.artist);
+  const suffix = title.match(/\s*(?:\((?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^()]+)\)|\[(?:feat(?:uring)?\.?|ft\.?|with|avec)\s+([^\[\]]+)\]|\s+(?:feat(?:uring)?\.?|ft\.?)\s+(.+))\s*$/i);
+  const names = artistNames(track.artist).map(normalize).filter(Boolean);
+  const guests = artistNames(suffix?.[1] ?? suffix?.[2] ?? suffix?.[3] ?? '').map(normalize).filter(Boolean);
+  return {
+    title: normalize(suffix ? title.slice(0, suffix.index) : title),
+    artist: normalize(track.artist),
+    lead: names[0],
+    names: [...new Set([...names, ...guests])],
+    guests: [...new Set([...names.slice(1), ...guests])],
+  };
+}
+
+export function recordingSearchQueries(track: Track): string[] {
+  const identity = recordingCredits(track);
+  const lead = mainArtist(track.artist);
+  const abbreviated = recordingTitle(track.title, track.artist).match(/^(.*\s)\p{L}\**$/u);
+  return [...new Set([
+    `${recordingTitle(track.title, track.artist)} ${track.artist}`,
+    `${track.title} ${track.artist}`,
+    `${track.title} ${lead}`,
+    `${identity.title} ${lead}`,
+    ...artistNames(track.artist).slice(1).map(artist => `${track.title} ${artist}`),
+    ...(abbreviated ? [abbreviated[1].trim() + ' ' + lead] : []),
+  ])];
+}
+
+export function sameRecordingCredits(wanted: Track, candidate: Track): boolean {
+  const a = recordingCredits(wanted), b = recordingCredits(candidate);
+  if (!a.title || a.title !== b.title || !a.names.length || !b.names.length) return false;
+  if (a.lead === b.lead || a.artist === b.artist) {
+    return a.guests.every(name => b.guests.includes(name)) || b.guests.every(name => a.guests.includes(name));
+  }
+  return a.names.every(name => b.names.includes(name)) || b.names.every(name => a.names.includes(name));
+}
+
+export function matchRecording(wanted: Track, candidates: Track[]): Track | undefined {
+  const { title, artist, lead, guests } = recordingCredits(wanted);
+  if (!title || !artist) return undefined;
+  const matchingCredits = candidates.filter((candidate) => {
+    if (!sameRecordingCredits(wanted, candidate)) return false;
+    if (normalize(recordingTitle(candidate.title, candidate.artist)) === normalize(recordingTitle(wanted.title, wanted.artist))) return true;
+    return Boolean(wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 8);
+  });
+  const exact = matchingCredits.filter((candidate) =>
+    !wanted.duration || !candidate.duration || Math.abs(candidate.duration - wanted.duration) <= 8);
+  const album = normalize(wanted.album ?? '');
+  // Les anciennes entrées de lecture automatique pouvaient reprendre la durée du titre précédent.
+  const savedRelease = album && wanted.id.startsWith('octave:played-') ? matchingCredits.find((candidate) =>
+    normalize(candidate.album ?? '') === album && normalize(candidate.artist) === artist
+    && normalize(candidate.title) === normalize(wanted.title)) : undefined;
+  const match = (album ? exact.find((candidate) => normalize(candidate.album ?? '') === album) : undefined)
+    ?? savedRelease
+    ?? exact.find((candidate) => wanted.duration && candidate.duration && Math.abs(candidate.duration - wanted.duration) <= 2)
+    ?? exact[0];
+  if (match || wanted.square !== false || !wanted.duration) return match;
+  // Un clip officiel peut ajouter une courte intro ou un générique au même enregistrement.
+  const audio = matchingCredits.filter((candidate) => candidate.square && candidate.duration
+    && normalize(candidate.artist) === artist && wanted.duration! > candidate.duration
+    && wanted.duration! - candidate.duration <= Math.min(15, Math.max(10, wanted.duration! * 0.04)));
+  return audio.length === 1 ? audio[0] : undefined;
+}
+
+/** Certains catalogues ajoutent le nom de l’EP au titre de sa réédition. */
+export function sameClipRecordingCredits(clip: Track, candidate: Track): boolean {
+  if (sameRecordingCredits(clip, candidate)) return true;
+  const title = recordingTitle(candidate.title, candidate.artist);
+  const release = title.match(/\s+\(([^()]+) EP\)$/i);
+  if (!clip.duration || !candidate.duration) return false;
+  if (release && candidate.album && Math.abs(clip.duration - candidate.duration) <= 8
+    && normalize(candidate.album).startsWith(normalize(release[1]))
+    && !/\b(live|demo|remix|cover|instrumental|acoustic|edit)\b/i.test(release[1])) {
+    return sameRecordingCredits(clip, { ...candidate, title: title.slice(0, release.index) });
+  }
+  // La piste audio officielle doit confirmer le nom entier d’un dernier mot abrégé.
+  const abbreviated = recordingTitle(clip.title, clip.artist).match(/^(.*\s)(\p{L})\**$/u);
+  if (!abbreviated || Math.abs(clip.duration - candidate.duration) > 3
+    || normalize(clip.artist) !== normalize(candidate.artist)) return false;
+  const words = recordingCredits(candidate).title.split(' ');
+  const prefix = normalize(abbreviated[1]).split(' ');
+  const last = words.at(-1) ?? '';
+  return words.length === prefix.length + 1 && prefix.every((word, index) => words[index] === word)
+    && last.length >= 3 && last.startsWith(normalize(abbreviated[2]));
+}
+
+export function confirmClipRecording(clip: Track, candidates: Track[], songs: Track[]): Track | undefined {
+  if (clip.square !== false && clip.album) return undefined;
+  const audio = songs.filter(song => song.id !== clip.id && song.square && song.duration && sameClipRecordingCredits(clip, song));
+  const confirmed = candidates.filter(candidate => candidate.square && candidate.duration
+    && sameClipRecordingCredits(clip, candidate)
+    && audio.some(song => sameRecordingCredits(song, candidate) && Math.abs(song.duration! - candidate.duration!) <= 3));
+  return confirmed.length === 1 ? confirmed[0] : undefined;
+}
+
 type Scored = { track: Track; score: number };
 const unwanted = ['live', 'remix', 'cover', 'karaoke', 'instrumental', 'acoustic', 'acoustique', 'sped', 'slowed',
   'nightcore', '8d', 'reverb', 'extended', 'edit'];

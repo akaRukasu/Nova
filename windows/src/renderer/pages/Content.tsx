@@ -1,5 +1,7 @@
 // Pages d'artiste, d'album et de playlist YouTube Music.
+import type { ReactNode } from 'react';
 import type { Collection } from '../../shared/types';
+import { octaveCollectionUrl } from '../../shared/octave';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
 import { ShelfView } from '../components/Shelf';
@@ -9,6 +11,17 @@ import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { useStore } from '../lib/store';
 import { ErrorState, Loading, PlayShuffle, SortButton, TrackList, sortOrder, useCached, useTrackSort } from './common';
+
+export function ArtistHero({ name, artwork, details, children }: { name: string; artwork?: string; details?: string; children: ReactNode }) {
+  return <header className="artist-hero">
+    <Artwork url={artwork} size={184} round />
+    <div className="artist-hero-copy">
+      <h1>{name}</h1>
+      {details && <p>{details}</p>}
+      <div className="row-buttons">{children}</div>
+    </div>
+  </header>;
+}
 
 export function ArtistPage({ id, title }: { id: string; title: string }) {
   useStore(library);
@@ -24,10 +37,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
   };
   return (
     <div className="page artist-page">
-      <div className="artist-banner" style={{ backgroundImage: data.header.artwork ? `url("${data.header.artwork.replace(/=w\d+-h\d+/, '=w1400-h1400')}")` : undefined }}>
-        <div className="artist-banner-content">
-          <h1>{name}</h1>
-          <div className="row-buttons">
+      <ArtistHero name={name} artwork={data.header.artwork}>
             <button className="button" onClick={() => void playAll(false)}><Icon name="play" size={16} /> Lecture</button>
             <button className="button secondary" onClick={() => void playAll(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
             {data.tracks[0] && <button className="button secondary" onClick={() => player.startRadio(data.tracks[0])}><Icon name="radio" size={16} /> Radio</button>}
@@ -35,9 +45,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
               <Icon name={isSaved(id) ? 'check' : 'plus'} size={16} /> {isSaved(id) ? 'Suivi' : 'Suivre'}
             </button>
             <button className="button secondary" onClick={() => open({ name: 'concerts', artist: name })}><Icon name="ticket" size={16} /> Concerts</button>
-          </div>
-        </div>
-      </div>
+      </ArtistHero>
       {data.header.description && <p className="artist-description">{data.header.description}</p>}
       {data.shelves.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} limit={5} />)}
     </div>
@@ -50,11 +58,18 @@ export function CollectionPage({ collection }: { collection: Collection }) {
   // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
   const shared = isShared(collection.id);
   const { data, error, loading, reload } = useCached(`collection-${collection.id}`, () => api.collection(collection), shared ? 0 : 30 * 60_000);
+  const octave = octaveCollectionUrl(collection);
   if (loading && !data) return <Loading />;
-  if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
+  if (error && !data) return (
+    <div className="page">
+      <ErrorState message={error} retry={() => reload(true)} />
+      {octave && <button className="button" onClick={() => player.openOctave(octave)}>Ouvrir dans Octave</button>}
+    </div>
+  );
   if (!data) return null;
   const header = data.header;
   const isAlbum = collection.kind === 'album';
+  const isPlaylist = collection.kind === 'playlist';
   const tracks = sortOrder(data.tracks, sort.sort, sort.reversed, state.stats).map((i) => data.tracks[i]);
   const saved: Collection = { ...collection, title: header.title || collection.title, artwork: header.artwork ?? collection.artwork, subtitle: header.subtitle ?? collection.subtitle };
   return (
@@ -67,7 +82,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           {header.subtitle && <p className="muted">{header.subtitle}</p>}
           {header.description && <p className="description">{header.description}</p>}
           <div className="row-buttons">
-            <PlayShuffle tracks={tracks} />
+            <PlayShuffle tracks={tracks} playlist={isPlaylist} />
             <SortButton state={sort} manualLabel={isAlbum ? 'Ordre de l’album' : 'Ordre de la playlist'} />
             <button className="button secondary" onClick={() => toggleSaved(saved)}>
               <Icon name={isSaved(collection.id) ? 'check' : 'plus'} size={16} /> {isSaved(collection.id) ? 'Dans la bibliothèque' : 'Ajouter'}
@@ -92,7 +107,7 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           <button className="button secondary" onClick={() => void reload(true)}>Actualiser</button>
         </div>
       )}
-      <TrackList tracks={tracks} numbered={isAlbum && sort.manual} />
+      <TrackList tracks={tracks} numbered={isAlbum && sort.manual} playlist={isPlaylist} />
       {data.related.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} />)}
     </div>
   );
