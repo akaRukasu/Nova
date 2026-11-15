@@ -10,11 +10,19 @@ actor LocalAudioLibrary {
     }
 
     nonisolated static func url(for track: Track) -> URL? {
-        guard track.id.hasPrefix("local:"), let filename = track.localFileName,
-              filename.range(of: #"^[a-f0-9]{64}\.[a-z0-9]{1,8}$"#, options: .regularExpression) != nil,
-              filename.hasPrefix(String(track.id.dropFirst(6)) + ".") else { return nil }
-        let file = directory.appendingPathComponent(filename)
-        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+        guard track.id.hasPrefix("local:") else { return nil }
+        let hash = String(track.id.dropFirst(6))
+        guard hash.range(of: #"^[a-f0-9]{64}$"#, options: .regularExpression) != nil else { return nil }
+        if let filename = track.localFileName,
+           filename.range(of: #"^[a-f0-9]{64}\.[a-z0-9]{1,8}$"#, options: .regularExpression) != nil,
+           filename.hasPrefix(hash + ".") {
+            let file = directory.appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: file.path) { return file }
+        }
+        // L’historique échangé conserve l’identifiant du contenu, sans chemin privé.
+        return (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))?
+            .first { $0.lastPathComponent.hasPrefix(hash + ".")
+                && !["jpg", "jpeg", "png"].contains($0.pathExtension.lowercased()) }
     }
 
     func importFiles(_ urls: [URL]) async -> (tracks: [Track], errors: [String]) {
