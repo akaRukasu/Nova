@@ -55,10 +55,7 @@ do {
     try require(artist.top?.tracks?.first?.title == "Test", "La liste top d’artiste doit rester lisible")
 
     let library = await LibraryStore()
-    var canonical = try { () -> Track in
-        guard let teeSelected else { throw NSError(domain: "Regression", code: 1) }
-        return teeSelected
-    }()
+    guard var canonical = teeSelected else { throw NSError(domain: "Regression", code: 1) }
     canonical.youtubeID = teeVideo.id
     _ = await library.importIntoPlaylist(name: "Correspondance import QA", tracks: [teeVideo])
     let correction = await library.importIntoPlaylist(name: "Correspondance import QA", tracks: [canonical])
