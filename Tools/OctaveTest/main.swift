@@ -55,6 +55,17 @@ do {
     try require(artist.top?.tracks?.first?.title == "Test", "La liste top d’artiste doit rester lisible")
 
     let library = await LibraryStore()
+    var canonical = try { () -> Track in
+        guard let teeSelected else { throw NSError(domain: "Regression", code: 1) }
+        return teeSelected
+    }()
+    canonical.youtubeID = teeVideo.id
+    _ = await library.importIntoPlaylist(name: "Correspondance import QA", tracks: [teeVideo])
+    let correction = await library.importIntoPlaylist(name: "Correspondance import QA", tracks: [canonical])
+    let correctedPlaylist = await library.playlists.first { $0.name == "Correspondance import QA" }
+    try require(correction.added == 0 && correctedPlaylist?.tracks.count == 1
+                && correctedPlaylist?.tracks.first?.id == canonical.id, "Une correction d’import doit remplacer la source précédente sans doublon")
+
     let original = LibraryStore.HistorySnapshot.Entry(track: .init(requested), playedAt: 1000)
     let fresh = LibraryStore.HistorySnapshot(version: 1, entries: [original])
     await library.mergeHistory(fresh)

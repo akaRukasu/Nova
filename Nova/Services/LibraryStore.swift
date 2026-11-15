@@ -476,8 +476,19 @@ final class LibraryStore {
 
     /// Titres sans doublon (même identifiant, ou même titre et artiste sous une autre version).
     private static func unique(_ tracks: [Track]) -> [Track] {
+        var ordered: [Track] = []
+        var sources: [String: Int] = [:]
+        for track in tracks {
+            let source = track.youtubeID ?? track.id
+            if let index = sources[source] {
+                if track.id.hasPrefix("octave:") { ordered[index] = track }
+            } else {
+                sources[source] = ordered.count
+                ordered.append(track)
+            }
+        }
         var seenIDs = Set<String>(), seenKeys = Set<String>()
-        return tracks.filter { seenIDs.insert($0.id).inserted && seenKeys.insert(dedupeKey($0)).inserted }
+        return ordered.filter { seenIDs.insert($0.id).inserted && seenKeys.insert(dedupeKey($0)).inserted }
     }
 
     /// Import dans une playlist : créée si besoin ; si elle existe déjà, les titres manquants y sont ajoutés
@@ -494,15 +505,26 @@ final class LibraryStore {
         }
         let existing = playlists[index].tracks
         let knownIDs = Set(existing.map(\.id)), knownKeys = Set(existing.map(Self.dedupeKey))
-        let fresh = incoming.filter { !knownIDs.contains($0.id) && !knownKeys.contains(Self.dedupeKey($0)) }
+        let knownSources = Set(existing.map { $0.youtubeID ?? $0.id })
+        let fresh = incoming.filter {
+            !knownIDs.contains($0.id) && !knownSources.contains($0.youtubeID ?? $0.id) && !knownKeys.contains(Self.dedupeKey($0))
+        }
         outcome.alreadyPresent = incoming.count - fresh.count
         outcome.added = fresh.count
         // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
         let incomingIDs = Set(incoming.map(\.id)), incomingKeys = Set(incoming.map(Self.dedupeKey))
+        let incomingSources = Set(incoming.map { $0.youtubeID ?? $0.id })
+        var bySource: [String: Track] = [:]
+        for track in existing { bySource[track.youtubeID ?? track.id] = track }
         var byName: [String: Track] = [:]
         for track in existing { byName[Self.dedupeKey(track)] = track }
-        let mapped = incoming.map { track in track.id.hasPrefix("octave:") ? track : byName[Self.dedupeKey(track)] ?? track }
-        playlists[index].tracks = Self.unique(mapped + existing.filter { !incomingIDs.contains($0.id) && !incomingKeys.contains(Self.dedupeKey($0)) })
+        let mapped = incoming.map { track in
+            track.id.hasPrefix("octave:") || track.id.hasPrefix("local:") ? track
+                : bySource[track.youtubeID ?? track.id] ?? byName[Self.dedupeKey(track)] ?? track
+        }
+        playlists[index].tracks = Self.unique(mapped + existing.filter {
+            !incomingIDs.contains($0.id) && !incomingSources.contains($0.youtubeID ?? $0.id) && !incomingKeys.contains(Self.dedupeKey($0))
+        })
         markAdded(fresh)
         save()
         outcome.playlistID = playlists[index].id

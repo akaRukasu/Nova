@@ -67,8 +67,14 @@ export async function runImport(
       await searchAll(missing, 2, true);
       progress.verifying = false;
     }
+    const bySource = new Map<string, Track>();
+    for (const track of found) {
+      if (!track) continue;
+      const source = track.youtubeId ?? track.id;
+      if (!bySource.has(source) || isOctaveId(track.id)) bySource.set(source, track);
+    }
     const seen = new Set<string>();
-    const tracks = found.filter((t): t is Track => !!t && !seen.has(t.id) && !!seen.add(t.id));
+    const tracks = [...bySource.values()].filter(track => !seen.has(track.id) && !!seen.add(track.id));
     let youtubeId: string | undefined;
     // Compte YouTube connecté : la playlist est aussi créée sur le compte (visible sur l'iPhone).
     if (toAccount && tracks.length && !options.cancelled()) {
