@@ -6,6 +6,7 @@ import * as youtube from './yt.js';
 const matches = new Map<string, Track>();
 
 export async function findYouTubeRecording(track: Track): Promise<Track | undefined> {
+  if (track.id.startsWith('local:')) return undefined;
   if (!isOctaveId(track.id)) return track;
   if (track.youtubeId && /^[\w-]{11}$/.test(track.youtubeId)) return { ...track, id: track.youtubeId };
   const cached = matches.get(track.id);

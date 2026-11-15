@@ -334,6 +334,7 @@ actor OctaveCatalog {
         return result
     }
     func youtubeRecording(_ track: Track) async throws -> Track? {
+        if track.id.hasPrefix("local:") { return nil }
         if !track.id.hasPrefix("octave:") { return track }
         if let id = track.youtubeID, id.range(of: #"^[\w-]{11}$"#, options: .regularExpression) != nil {
             return Track(id: id, title: track.title, artist: track.artist, album: track.album, duration: track.duration, artworkURL: track.artworkURL)

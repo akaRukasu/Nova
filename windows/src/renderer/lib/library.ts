@@ -192,7 +192,7 @@ export function toggleLike(track: Track) {
     ...state,
     liked: liked ? [track, ...state.liked] : state.liked.filter((t) => t.id !== track.id),
   }));
-  if (!isOctaveId(track.id) && account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  if (!isOctaveId(track.id) && !track.id.startsWith('local:') && account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
   return liked;
 }
 
@@ -202,7 +202,7 @@ export function createPlaylist(name: string, tracks: Track[] = []): UserPlaylist
   const playlist: UserPlaylist = { id: crypto.randomUUID(), name: name.trim() || 'Nouvelle playlist', tracks: dedupe(tracks), created: Date.now() };
   update((state) => ({ ...state, playlists: [playlist, ...state.playlists] }));
   // Compte connecté : la playlist existe aussi sur YouTube (et donc sur l'iPhone).
-  if (account.get().signedIn && !playlist.tracks.some((track) => isOctaveId(track.id))) {
+  if (account.get().signedIn && !playlist.tracks.some((track) => isOctaveId(track.id) || track.id.startsWith('local:'))) {
     void api.createAccountPlaylist(playlist.name, playlist.tracks.map((t) => t.id)).then((youtubeId) => {
       if (youtubeId) update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === playlist.id ? { ...p, youtubeId } : p)) }));
     }).catch(() => undefined);
@@ -296,7 +296,7 @@ export function addToPlaylist(id: string, tracks: Track[]) {
   const known = new Set(playlist.tracks.map((t) => t.id)), keys = new Set(playlist.tracks.map(dedupeKey));
   const fresh = tracks.filter((t) => !known.has(t.id) && !keys.has(dedupeKey(t)) && !!known.add(t.id) && !!keys.add(dedupeKey(t)));
   update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...fresh] } : p)) }));
-  const youtubeTracks = fresh.filter((track) => !isOctaveId(track.id));
+  const youtubeTracks = fresh.filter((track) => !isOctaveId(track.id) && !track.id.startsWith('local:'));
   if (playlist.youtubeId && youtubeTracks.length && account.get().signedIn) {
     void api.addToAccountPlaylist(playlist.youtubeId, youtubeTracks.map((t) => t.id)).catch(() => undefined);
   }

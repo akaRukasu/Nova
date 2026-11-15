@@ -656,7 +656,7 @@ final class PlayerModel {
 
     func toggleLike(_ track: Track) {
         let liked = library.toggleLike(track)
-        guard account.isSignedIn else { return }
+        guard !track.id.hasPrefix("local:"), account.isSignedIn else { return }
         Task { try? await client.setLiked(liked, videoID: track.id) }
     }
 
