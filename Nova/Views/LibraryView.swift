@@ -1050,20 +1050,31 @@ struct LibraryGroupView: View {
         let catalogID = group.tracks.compactMap(\.artistID).first
         ArtistHeader(name: group.title, artwork: group.artwork.squareArtworkURLs,
                      details: "\(group.tracks.count) titre\(group.tracks.count > 1 ? "s" : "") dans ta bibliothèque") {
-            PlayShuffleButtons {
+            HStack(spacing: 10) {
+              Button {
                 player.play(group.tracks)
-            } shuffle: {
+              } label: {
+                Label("Lecture", systemImage: "play.fill").frame(maxWidth: .infinity)
+              }
+              .buttonStyle(.glassProminent).tint(Color.novaAccent)
+              Button {
                 player.play(group.tracks, shuffled: true)
+              } label: {
+                Image(systemName: "shuffle").frame(width: 24, height: 24)
+              }
+              .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
             }
+            .controlSize(.large)
             if let catalogID {
                 NavigationLink(value: Route.collection(MusicCollection(id: catalogID, kind: .artist, title: group.title,
                                                                        subtitle: "Artiste", artworkURL: group.artwork.artworkURL))) {
                     Label("Voir dans le catalogue", systemImage: "arrow.up.right")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
         }
         .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
         .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
         if !releases.isEmpty {
             Section("Sorties dans ta bibliothèque") {

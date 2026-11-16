@@ -433,6 +433,7 @@ app.whenReady().then(async () => {
     return link;
   });
   loadMatches(await readJSON('matches.json', {}));
+  octave.configureOctaveRecordings(await readJSON('octave-recordings-v1.json', {}), entries => writeJSON('octave-recordings-v1.json', entries));
   const cookie = await loadCookie();
   await configureYouTube(cookie);
 

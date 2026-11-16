@@ -106,6 +106,21 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
 }
 
 const recordings = new Map<string, Track>();
+const resolving = new Map<string, Promise<Track | undefined>>();
+let saveRecordings: ((entries: Record<string, Track>) => Promise<void>) | undefined;
+let savingRecordings: Promise<void> = Promise.resolve();
+
+export function configureOctaveRecordings(entries: Record<string, Track>, save?: typeof saveRecordings) {
+  recordings.clear();
+  for (const [key, value] of Object.entries(entries).slice(-3000)) {
+    if (octaveCatalogId(value.id) && value.albumId) recordings.set(key, value);
+  }
+  saveRecordings = save;
+}
+
+function recordingKey(track: Track) {
+  return JSON.stringify([track.id, track.title, track.artist, track.album, track.duration, track.square]);
+}
 
 export async function trackArtwork(track: Track): Promise<string | undefined> {
   // Une ancienne entrée AutoPlay peut n'avoir ni identifiant catalogue ni image.
@@ -116,8 +131,18 @@ export async function trackArtwork(track: Track): Promise<string | undefined> {
 export async function findRecording(track: Track, excluding?: string): Promise<Track | undefined> {
   if (track.id.startsWith('local:')) return undefined;
   if (octaveCatalogId(track.id) && track.albumId && !excluding) return track;
-  const cached = recordings.get(track.id);
+  const key = recordingKey(track);
+  const cached = recordings.get(key);
   if (cached && !excluding) return cached;
+  if (excluding) return lookupRecording(track, key, excluding);
+  const pending = resolving.get(key);
+  if (pending) return pending;
+  const lookup = lookupRecording(track, key).finally(() => resolving.delete(key));
+  resolving.set(key, lookup);
+  return lookup;
+}
+
+async function lookupRecording(track: Track, key: string, excluding?: string): Promise<Track | undefined> {
   const queries = recordingSearchQueries(track);
   const album = normalize(track.album ?? '');
   const lead = normalize(mainArtist(track.artist));
@@ -125,14 +150,18 @@ export async function findRecording(track: Track, excluding?: string): Promise<T
   const possibleAudio = new Map<string, Track>();
   const checkedReleases = new Set<string>();
   let fallback: Track | undefined;
+  let lastError: unknown;
+  let searched = false;
   for (const query of new Set(queries)) {
-    const items = (await search(query, 'all')).flatMap((shelf) => shelf.items);
+    let items: Item[];
+    try { items = (await search(query, 'all')).flatMap((shelf) => shelf.items); searched = true; }
+    catch (error) { lastError = error; continue; }
     const candidates = items.flatMap((item) =>
       item.type === 'track' && item.track.albumId && item.track.id !== excluding ? [item.track] : []);
     const exactId = candidates.find((candidate) => candidate.id === track.id);
-    if (exactId) return rememberRecording(track.id, exactId);
+    if (exactId) return rememberRecording(key, exactId);
     const found = matchRecording(track, candidates);
-    if (found && (!album || normalize(found.album ?? '') === album)) return rememberRecording(track.id, found);
+    if (found && (!album || normalize(found.album ?? '') === album)) return rememberRecording(key, found);
     if (album) {
       const release = items.flatMap(item => item.type === 'collection' ? [item.collection] : []).find(item =>
         item.kind === 'album' && !checkedReleases.has(item.id)
@@ -141,10 +170,10 @@ export async function findRecording(track: Track, excluding?: string): Promise<T
         checkedReleases.add(release.id);
         const page = await collection(release).catch(() => undefined);
         const sameRelease = page && matchRecording(track, page.tracks.filter(candidate => candidate.id !== excluding));
-        if (sameRelease) return rememberRecording(track.id, sameRelease);
+        if (sameRelease) return rememberRecording(key, sameRelease);
       }
     }
-    if (found && !track.id.startsWith('octave:played-')) return rememberRecording(track.id, found);
+    if (found && !track.id.startsWith('octave:played-')) return rememberRecording(key, found);
     fallback ??= found;
     if (track.square === false || !track.album) {
       for (const candidate of candidates) {
@@ -152,20 +181,25 @@ export async function findRecording(track: Track, excluding?: string): Promise<T
       }
     }
   }
-  if (fallback) return rememberRecording(track.id, fallback);
+  if (!searched && lastError) throw lastError;
+  if (fallback) return rememberRecording(key, fallback);
   if (!possibleAudio.size) return undefined;
   // Le clip peut inclure une scène ou un générique. Confirmer l'édition avec la piste audio YouTube Music.
   for (const query of new Set(queries)) {
     const shelves = await searchYouTube(query, 'song').catch(() => []);
     const audio = shelves.flatMap(shelf => shelf.items).flatMap(item => item.type === 'track' ? [item.track] : []);
     const confirmed = confirmClipRecording(track, [...possibleAudio.values()], audio);
-    if (confirmed) return rememberRecording(track.id, confirmed);
+    if (confirmed) return rememberRecording(key, confirmed);
   }
 }
 
 function rememberRecording(id: string, found: Track): Track {
-  if (recordings.size >= 500) recordings.delete(recordings.keys().next().value!);
+  if (recordings.size >= 3000) recordings.delete(recordings.keys().next().value!);
   recordings.set(id, found);
+  if (saveRecordings) {
+    const entries = Object.fromEntries(recordings);
+    savingRecordings = savingRecordings.then(() => saveRecordings?.(entries)).catch(() => undefined);
+  }
   return found;
 }
 

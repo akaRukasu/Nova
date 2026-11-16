@@ -7,15 +7,14 @@ struct ArtistHeader<Actions: View>: View {
     @ViewBuilder let actions: () -> Actions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            RemoteImage(urls: artwork, maxPixels: 420)
-                .frame(width: 118, height: 118)
-                .clipShape(Circle())
-                .overlay { Circle().strokeBorder(.white.opacity(0.22)) }
-                .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
+        VStack(alignment: .leading, spacing: 18) {
+            Spacer(minLength: 130)
             VStack(alignment: .leading, spacing: 5) {
+                Label("ARTISTE", systemImage: "music.mic")
+                    .font(.caption2.weight(.bold)).tracking(2)
+                    .padding(.bottom, 7)
                 Text(name)
-                    .font(.largeTitle.weight(.heavy))
+                    .font(.largeTitle.weight(.heavy)).tracking(-1)
                     .accessibilityAddTraits(.isHeader)
                     .fixedSize(horizontal: false, vertical: true)
                 if let details {
@@ -26,13 +25,21 @@ struct ArtistHeader<Actions: View>: View {
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .padding(24)
+        .frame(minHeight: 360)
         .background {
-            RoundedRectangle(cornerRadius: 22).fill(RadialGradient(
-                colors: [Color(red: 0.38, green: 0.25, blue: 0.43), Color(red: 0.13, green: 0.11, blue: 0.18)],
-                center: .topLeading, startRadius: 0, endRadius: 350
-            ))
+            GeometryReader { geometry in
+                RemoteImage(urls: artwork, maxPixels: 1200)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .overlay {
+                        LinearGradient(colors: [.black.opacity(0.08), .black.opacity(0.35), .black.opacity(0.96)],
+                                       startPoint: .top, endPoint: .bottom)
+                    }
+            }
         }
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.white.opacity(0.12)) }
+        .shadow(color: .black.opacity(0.16), radius: 18, y: 9)
     }
 }
 
@@ -45,6 +52,7 @@ struct ArtistView: View {
     @State private var page: BrowsePage?
     @State private var errorText: String?
     @State private var showFullDescription = false
+    @State private var showAllSongs = false
     private let client = InnerTubeClient()
 
     private var name: String {
@@ -58,23 +66,33 @@ struct ArtistView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            LazyVStack(alignment: .leading, spacing: 28) {
                 ArtistHeader(name: name, artwork: page?.header.artworkURL.map { [$0] } ?? artist.artworkURLs) {
                     if page != nil { actions }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 if let page {
-                    if let description = page.header.description {
-                        Text(description)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(showFullDescription ? nil : 3)
-                            .padding(.horizontal, 16)
-                            .onTapGesture { withAnimation { showFullDescription.toggle() } }
-                    }
                     ForEach(page.shelves) { shelf in
-                        ShelfView(shelf: shelf, listLimit: 5)
+                        VStack(alignment: .leading, spacing: 8) {
+                            ShelfView(shelf: shelf, listLimit: showAllSongs ? .max : 8, ranked: shelf.layout == .list)
+                            if shelf.layout == .list && shelf.items.count > 8 {
+                                Button(showAllSongs ? "Réduire" : "Tous les titres populaires") {
+                                    withAnimation { showAllSongs.toggle() }
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .frame(minHeight: 44).padding(.horizontal, 16)
+                            }
+                        }
+                    }
+                    if let description = page.header.description, !description.isEmpty {
+                        DisclosureGroup("À propos de " + name, isExpanded: $showFullDescription) {
+                            Text(description).font(.subheadline).foregroundStyle(.secondary)
+                                .lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
+                        }
+                        .font(.headline).padding(20)
+                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 20))
+                        .padding(.horizontal, 16)
                     }
                 }
             }
@@ -112,15 +130,24 @@ struct ArtistView: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+          HStack(spacing: 10) {
             Button {
-                player.play(artist, shuffled: true)
+                if !topSongs.isEmpty { player.play(topSongs) }
+                else { player.play(artist) }
             } label: {
-                Label("Aléatoire", systemImage: "shuffle")
+                Label("Lecture", systemImage: "play.fill")
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glassProminent)
+            .tint(Color.novaAccent)
+            Button { player.play(topSongs, shuffled: true) } label: {
+                Image(systemName: "shuffle").frame(width: 24, height: 24)
+            }
+            .buttonStyle(.glass).disabled(topSongs.isEmpty).accessibilityLabel("Lecture aléatoire")
+          }
+          HStack(spacing: 10) {
             Button {
                 if let first = topSongs.first { player.startRadio(from: first) }
             } label: {
@@ -134,11 +161,12 @@ struct ArtistView: View {
                                                     subtitle: "Artiste",
                                                     artworkURL: topSongs.first?.artworkURL ?? artist.artworkURL))
             } label: {
-                Image(systemName: library.isSaved(artist.id) ? "checkmark" : "plus")
-                    .frame(width: 24)
+                Label(library.isSaved(artist.id) ? "Suivi" : "Suivre", systemImage: library.isSaved(artist.id) ? "checkmark" : "plus")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glass)
             .accessibilityLabel(library.isSaved(artist.id) ? "Ne plus suivre" : "Suivre")
+          }
         }
         .controlSize(.large)
         .font(.headline)

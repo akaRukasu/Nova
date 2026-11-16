@@ -105,12 +105,11 @@ export class AndroidOctavePlayer {
     const paused = this.stop();
     const operation = this.operation;
     await this.hide();
-    const selected = await findRecording(track);
+    await paused;
+    const [selected, blocked] = await Promise.all([findRecording(track), this.prepare()]);
     const id = selected && octaveCatalogId(selected.id);
     if (operation !== this.operation) return 'cancelled';
     if (!id || !selected) return 'not-found';
-    await paused;
-    const blocked = await this.prepare();
     if (operation !== this.operation) return 'cancelled';
     if (blocked) {
       await this.native.octavePanel({ visible: true });
@@ -118,13 +117,21 @@ export class AndroidOctavePlayer {
     }
     const search = new URL('/search', octaveOrigin);
     search.searchParams.set('q', `${selected.title} ${selected.artist}`);
-    for (const url of [octaveTrackUrl(selected), search.href]) {
+    // Chercher dans la page déjà chargée conserve le moteur audio et la connexion.
+    // Une ouverture de l’album reste disponible si les résultats n’exposent pas cette édition.
+    for (const url of [undefined, octaveTrackUrl(selected), search.href]) {
       if (operation !== this.operation) return 'cancelled';
-      await this.native.octaveNavigate({ url });
+      if (url) await this.native.octaveNavigate({ url });
+      else {
+        for (let i = 0; i < 8 && operation === this.operation; i++) {
+          if (await this.call('search', { query: `${selected.title} ${selected.artist}` })) break;
+          await wait(80);
+        }
+      }
       let selectedAt = 0;
       let retried = false;
       let resumed = false;
-      const deadline = Date.now() + 8500;
+      const deadline = Date.now() + (url ? 8500 : 3200);
       while (operation === this.operation && Date.now() < deadline) {
         const sample = await this.call<Sample>('sample');
         if (operation !== this.operation) return 'cancelled';

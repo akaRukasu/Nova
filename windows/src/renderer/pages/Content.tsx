@@ -1,6 +1,6 @@
 // Pages d'artiste, d'album et de playlist YouTube Music.
-import type { ReactNode } from 'react';
-import type { Collection } from '../../shared/types';
+import { useState, type ReactNode } from 'react';
+import type { Collection, Track } from '../../shared/types';
 import { octaveCollectionUrl } from '../../shared/octave';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
@@ -12,10 +12,12 @@ import { open } from '../lib/router';
 import { useStore } from '../lib/store';
 import { ErrorState, Loading, PlayShuffle, SortButton, TrackList, sortOrder, useCached, useTrackSort } from './common';
 
-export function ArtistHero({ name, artwork, details, children }: { name: string; artwork?: string; details?: string; children: ReactNode }) {
+export function ArtistHero({ name, artwork, track, details, children }: { name: string; artwork?: string; track?: Track; details?: string; children: ReactNode }) {
   return <header className="artist-hero">
-    <Artwork url={artwork} size={184} round />
+    <div className="artist-hero-backdrop" aria-hidden="true"><Artwork track={track} url={artwork} size={1000} radius={0} /></div>
+    <div className="artist-hero-portrait"><Artwork track={track} url={artwork} size={184} round /></div>
     <div className="artist-hero-copy">
+      <p className="artist-eyebrow"><Icon name="mic" size={14} /> Artiste</p>
       <h1>{name}</h1>
       {details && <p>{details}</p>}
       <div className="row-buttons">{children}</div>
@@ -25,6 +27,7 @@ export function ArtistHero({ name, artwork, details, children }: { name: string;
 
 export function ArtistPage({ id, title }: { id: string; title: string }) {
   useStore(library);
+  const [showAll, setShowAll] = useState(false);
   const { data, error, loading, reload } = useCached(`artist-${id}`, () => api.artist(id), 30 * 60_000);
   if (loading && !data) return <Loading />;
   if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
@@ -32,12 +35,13 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
   const name = data.header.title || title;
   const collection: Collection = { id, kind: 'artist', title: name, artwork: data.header.artwork };
   const playAll = async (shuffle: boolean) => {
+    if (data.tracks.length) return player.play(data.tracks, 0, shuffle);
     const songs = await api.artistSongs(id).catch(() => []);
     player.play(songs.length ? songs : data.tracks, 0, shuffle);
   };
   return (
     <div className="page artist-page">
-      <ArtistHero name={name} artwork={data.header.artwork}>
+      <ArtistHero name={name} artwork={data.header.artwork} details={data.header.subtitle || 'Sa musique, ses albums, son univers.'}>
             <button className="button" onClick={() => void playAll(false)}><Icon name="play" size={16} /> Lecture</button>
             <button className="button secondary" onClick={() => void playAll(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
             {data.tracks[0] && <button className="button secondary" onClick={() => player.startRadio(data.tracks[0])}><Icon name="radio" size={16} /> Radio</button>}
@@ -46,8 +50,13 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
             </button>
             <button className="button secondary" onClick={() => open({ name: 'concerts', artist: name })}><Icon name="ticket" size={16} /> Concerts</button>
       </ArtistHero>
-      {data.header.description && <p className="artist-description">{data.header.description}</p>}
-      {data.shelves.map((shelf) => <ShelfView key={shelf.id} shelf={shelf} limit={5} />)}
+      <div className="artist-sections">
+        {data.shelves.map((shelf) => <div key={shelf.id} className={shelf.layout === 'list' ? 'artist-top-list' : undefined}>
+          <ShelfView shelf={shelf} limit={showAll ? Number.MAX_SAFE_INTEGER : 8} ranked={shelf.layout === 'list'} />
+          {shelf.layout === 'list' && shelf.items.length > 8 && <button className="artist-more" onClick={() => setShowAll(!showAll)}>{showAll ? 'Réduire' : 'Tous les titres populaires'} <Icon name={showAll ? 'up' : 'down'} size={14} /></button>}
+        </div>)}
+        {data.header.description && <details className="artist-about"><summary>À propos de {name}</summary><p>{data.header.description}</p></details>}
+      </div>
     </div>
   );
 }

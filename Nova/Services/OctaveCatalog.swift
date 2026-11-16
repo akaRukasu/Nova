@@ -10,6 +10,34 @@ actor OctaveCatalog {
     static let shared = OctaveCatalog()
     static let origin = URL(string: "https://music.octavestreaming.com")!
     private var recordings: [String: Track] = [:]
+    private var resolving: [String: Task<Track?, Error>] = [:]
+    private var saveTask: Task<Void, Never>?
+    private let recordingFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Nova/octave-recordings-v1.json")
+
+    init() {
+        if let data = try? Data(contentsOf: recordingFile),
+           let saved = try? JSONDecoder().decode([String: Track].self, from: data) {
+            recordings = saved.filter { Self.trackURL($0.value) != nil }
+        }
+    }
+
+    private func recordingKey(_ track: Track) -> String {
+        let fields = [track.id, track.title, track.artist, track.album ?? "", track.duration.map { String($0) } ?? "", String(track.hasSquareArtwork)]
+        return String(data: (try? JSONEncoder().encode(fields)) ?? Data(), encoding: .utf8) ?? track.id
+    }
+
+    private func saveRecordings() {
+        saveTask?.cancel()
+        saveTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                let data = try JSONEncoder().encode(recordings)
+                try FileManager.default.createDirectory(at: recordingFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: recordingFile, options: .atomic)
+            } catch { /* Une erreur du cache ne doit pas interrompre la lecture. */ }
+        }
+    }
 
     struct Entry: Decodable {
         struct ID: Decodable {
@@ -289,25 +317,46 @@ actor OctaveCatalog {
     func recording(_ track: Track) async throws -> Track? {
         if track.id.hasPrefix("local:") { return nil }
         if Self.trackURL(track) != nil { return track }
-        if let known = recordings[track.id] { return known }
+        let key = recordingKey(track)
+        if let known = recordings[key] { return known }
+        if let pending = resolving[key] { return try await pending.value }
+        let task = Task { try await self.lookupRecording(track) }
+        resolving[key] = task
+        defer { resolving[key] = nil }
+        let result = try await task.value
+        if let result {
+            if recordings.count >= 3000, let first = recordings.keys.first { recordings.removeValue(forKey: first) }
+            recordings[key] = result
+            saveRecordings()
+        }
+        return result
+    }
+
+    private func lookupRecording(_ track: Track) async throws -> Track? {
         let lead = Self.lead(track.artist)
         let query = Self.recordingTitle(track.title, artist: track.artist) + " " + lead
         let alternate = Self.credits(track).title + " " + lead
-        var shelves = try await search(query, scope: .all)
-        var tracks = shelves.flatMap(\.tracks).filter { Self.trackURL($0) != nil }
+        var shelves: [Shelf] = []
+        var tracks: [Track] = []
         var queries = [alternate] + Self.names(track.artist).dropFirst().map { track.title + " " + $0 }
         let cleanTitle = Self.recordingTitle(track.title, artist: track.artist)
         if let range = cleanTitle.range(of: #"\s+\p{L}\**$"#, options: .regularExpression) {
             queries.append(String(cleanTitle[..<range.lowerBound]) + " " + lead)
         }
         if let album = track.album { queries.append(album + " " + lead) }
-        var searched = Set([query])
-        for other in queries where suitable(track, tracks) == nil && searched.insert(other).inserted {
-            let extra = try await search(other, scope: .all)
-            shelves += extra
-            let known = Set(tracks.map(\.id))
-            tracks += extra.flatMap(\.tracks).filter { Self.trackURL($0) != nil && !known.contains($0.id) }
+        var searched = Set<String>()
+        var lastError: Error?
+        var searchedAny = false
+        for other in [query] + queries where suitable(track, tracks) == nil && searched.insert(other).inserted {
+            do {
+                let extra = try await search(other, scope: .all)
+                searchedAny = true
+                shelves += extra
+                let known = Set(tracks.map(\.id))
+                tracks += extra.flatMap(\.tracks).filter { Self.trackURL($0) != nil && !known.contains($0.id) }
+            } catch { lastError = error }
         }
+        if !searchedAny, let lastError { throw lastError }
         var result = suitable(track, tracks)
         if let album = track.album, Self.normalize(result?.album ?? "") != Self.normalize(album),
            let release = shelves.flatMap(\.items).compactMap(\.collection).first(where: {
@@ -317,7 +366,8 @@ actor OctaveCatalog {
         }
         if result == nil, !track.hasSquareArtwork || track.album == nil {
             let possible = tracks.filter { Self.sameClipCredits(track, $0) && $0.duration != nil }
-            for audioQuery in [query] + queries where result == nil && !possible.isEmpty {
+            var confirmedQueries = Set<String>()
+            for audioQuery in [query] + queries where result == nil && !possible.isEmpty && confirmedQueries.insert(audioQuery).inserted {
                 guard let songs = try? await InnerTubeClient().search(audioQuery, scope: .songs) else { continue }
                 let canonical = songs.flatMap(\.tracks).filter { $0.id != track.id && $0.hasSquareArtwork && Self.sameClipCredits(track, $0) }
                 let confirmed = possible.filter { candidate in canonical.contains { song in
@@ -326,10 +376,6 @@ actor OctaveCatalog {
                 }}
                 if confirmed.count == 1 { result = confirmed[0] }
             }
-        }
-        if let result {
-            if recordings.count >= 500, let first = recordings.keys.first { recordings.removeValue(forKey: first) }
-            recordings[track.id] = result
         }
         return result
     }

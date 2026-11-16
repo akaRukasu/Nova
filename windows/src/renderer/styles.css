@@ -308,26 +308,46 @@ main {
 .description { color: var(--muted); max-width: 640px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
 .artist-hero {
-  display: flex; align-items: center; gap: clamp(18px, 4vw, 38px); margin-bottom: 28px;
-  padding: clamp(20px, 4vw, 42px); border-radius: 24px; border: 1px solid #ffffff2a;
-  background: radial-gradient(ellipse at 22% -25%, #745777 0, #402d48 43%, #22212d 85%);
-  color: #fff;
+  position: relative; isolation: isolate; overflow: hidden;
+  display: flex; align-items: flex-end; gap: clamp(24px, 4vw, 44px); min-height: 330px; margin-bottom: 32px;
+  padding: clamp(24px, 4vw, 44px); border-radius: 28px; border: 1px solid #ffffff16;
+  background: #1b171c; color: #fff; box-shadow: 0 18px 42px #00000020;
 }
-.artist-hero > .artwork { flex: none; box-shadow: 0 10px 32px #130d24a0; outline: 1px solid #ffffff24; outline-offset: -1px; }
-.artist-hero-copy { min-width: 0; }
-.artist-hero h1 { font-size: clamp(30px, 4.5vw, 65px); font-weight: 800; letter-spacing: -.045em; line-height: 1.05; text-wrap: balance; }
-.artist-hero-copy > p { margin-top: 9px; color: #efe1ef; }
-.artist-hero .row-buttons { display: flex; flex-wrap: wrap; margin-top: 17px; }
-.artist-hero .button.secondary { background: #ffffff24; color: #fff; }
-.artist-hero .button.secondary:hover { background: #ffffff3b; }
+.artist-hero-backdrop { position: absolute; inset: 0; z-index: -2; pointer-events: none; }
+.artist-hero-backdrop > .artwork { width: 100% !important; height: 100% !important; object-fit: cover; object-position: 50% 32%; opacity: .72; }
+.artist-hero::after { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, #161216ed 0%, #161216b3 45%, #16121625 100%), linear-gradient(0deg, #161216ed, transparent 90%); }
+.artist-hero-portrait { flex: none; border-radius: 50%; padding: 5px; background: #ffffff12; border: 1px solid #ffffff30; box-shadow: 0 12px 36px #0007; }
+.artist-hero-portrait .artwork { outline: 1px solid #ffffff18; outline-offset: -1px; }
+.artist-hero-copy { min-width: 0; flex: 1; }
+.artist-hero h1 { font-size: clamp(34px, 4.5vw, 68px); font-weight: 800; letter-spacing: -.045em; line-height: 1.03; text-wrap: balance; }
+.artist-hero-copy > p { margin: 12px 0 0; color: #ffffffb8; }
+.artist-hero-copy > .artist-eyebrow { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #fff; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .18em; }
+.artist-hero .row-buttons { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
+.artist-hero .button { min-height: 44px; border-radius: 999px; padding-inline: 19px; }
+.artist-hero .button.secondary { background: #ffffff16; border: 1px solid #ffffff24; color: #fff; backdrop-filter: blur(16px); transition: background-color 150ms ease, transform 150ms ease; }
+.artist-hero .button.secondary:hover { background: #ffffff2b; }
+.artist-hero .button:active { transform: scale(.97); }
+.artist-sections { display: grid; gap: 28px; }
+.artist-sections .shelf { margin-bottom: 0; }
+.artist-top-list { border: 1px solid var(--line); border-radius: 20px; padding: 20px; background: var(--surface); }
+.artist-top-list .rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 22px; }
+.artist-more { display: flex; align-items: center; gap: 7px; color: var(--accent); min-height: 44px; padding: 8px; font-weight: 600; }
+.artist-about { padding: 22px 24px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); }
+.artist-about summary { font-size: 18px; font-weight: 650; cursor: pointer; min-height: 28px; }
+.artist-about p { margin: 18px 0 0; max-width: 850px; line-height: 1.75; color: var(--muted); white-space: pre-line; text-wrap: pretty; }
 .artist-description { color: var(--muted); max-width: 820px; line-height: 1.6; margin-bottom: 24px; }
 .artist-release-row { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 12px; }
 .artist-release-row > button { flex: 0 0 176px; }
 .artist-tracks-title { margin: 22px 0 12px; }
 @media (max-width: 600px) {
-  .artist-hero { align-items: flex-start; flex-direction: column; }
-  .artist-hero > .artwork { width: 112px !important; height: 112px !important; }
-  .artist-hero h1 { font-size: clamp(28px, 9vw, 44px); }
+  .artist-hero { align-items: flex-start; flex-direction: column; justify-content: flex-end; min-height: 420px; padding: 24px; gap: 18px; border-radius: 24px; }
+  .artist-hero-portrait { display: none; }
+  .artist-hero::after { background: linear-gradient(0deg, #161216fa 0%, #161216d0 25%, #16121615 100%); }
+  .artist-hero h1 { font-size: clamp(32px, 9vw, 46px); }
+  .artist-hero .row-buttons { margin-top: 19px; gap: 8px; }
+  .artist-hero .button { padding-inline: 14px; }
+  .artist-top-list { padding: 16px 8px; border-radius: 18px; }
+  .artist-top-list .rows { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* MARK: Recherche */

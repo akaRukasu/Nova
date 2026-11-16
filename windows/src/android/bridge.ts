@@ -341,6 +341,7 @@ native.addListener('relay', ({ channel, args }) => {
 export async function prepare() {
   if (!Capacitor.isNativePlatform()) return;
   loadMatches(await readJSON('matches.json', {}));
+  octave.configureOctaveRecordings(await readJSON('octave-recordings-v1.json', {}), entries => writeJSON('octave-recordings-v1.json', entries));
   await configure(localStorage.getItem('youtubeCookie'));
   octavePlayer.setSettings((await loadLibrary()).settings.octaveAudio);
   octavePlayer.warmUp();

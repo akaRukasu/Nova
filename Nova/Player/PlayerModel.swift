@@ -920,6 +920,7 @@ final class PlayerModel {
     }
 
     private func startOctave(_ track: Track, at position: Double, session: Int) async throws {
+        octave.warmUp()
         guard let recording = try await OctaveCatalog.shared.recording(track) else { throw OctaveWebPlayer.Failure.notFound }
         try Task.checkCancellation()
         try? AVAudioSession.sharedInstance().setActive(true)

@@ -191,14 +191,22 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let id = OctaveCatalog.id(track.id) else { throw Failure.notFound }
         await view.pauseAllMediaPlayback()
         try await prepare()
-        for url in [OctaveCatalog.trackURL(track), OctaveCatalog.searchURL(track)].compactMap({ $0 }) {
+        let locations: [URL?] = [nil, OctaveCatalog.trackURL(track), OctaveCatalog.searchURL(track)]
+        for url in locations {
             try Task.checkCancellation()
             guard generation == request else { throw CancellationError() }
-            try await navigate(url)
+            if let url { try await navigate(url) }
+            else {
+                for _ in 0..<8 {
+                    try Task.checkCancellation()
+                    if await call("search", args: ["query": track.title + " " + track.artist]) as? Bool == true { break }
+                    try await Task.sleep(for: .milliseconds(80))
+                }
+            }
             var sentAt: Date?
             var retried = false
             var resumed = false
-            for _ in 0..<45 {
+            for _ in 0..<(url == nil ? 18 : 45) {
                 try Task.checkCancellation()
                 guard generation == request else { throw CancellationError() }
                 let state = await sample()

@@ -222,7 +222,7 @@ export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupK
   if (!group) return <Empty icon="album" title="Sortie introuvable" />;
   const catalogID = kind === 'album' ? group.tracks.find(track => track.albumId)?.albumId : group.tracks.find(track => track.artistId)?.artistId;
   if (kind === 'artist') return <div className="page artist-page">
-    <ArtistHero name={group.title} artwork={group.artworkTrack.artwork}
+    <ArtistHero name={group.title} track={group.artworkTrack}
       details={group.tracks.length + (group.tracks.length === 1 ? ' titre dans ta bibliothèque' : ' titres dans ta bibliothèque')}>
       <PlayShuffle tracks={group.tracks} />
       {catalogID && <button className="button secondary" onClick={() => open({ name: 'artist', id: catalogID, title: group.title })}>Voir dans le catalogue</button>}
