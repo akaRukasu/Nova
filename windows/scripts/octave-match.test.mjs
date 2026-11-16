@@ -128,6 +128,9 @@ test('an abbreviated final word needs the same artist, close duration and a conf
   assert.equal(confirmClipRecording(clip, [octave], []), undefined);
   assert.equal(confirmClipRecording(clip, [octave], [audio]), octave);
   assert.equal(confirmClipRecording(clip, [{ ...octave, duration: 180 }], [audio]), undefined);
+  const release = { ...octave, duration: 130 };
+  assert.equal(confirmClipRecording(clip, [release], [{ ...audio, duration: 131 }]), release);
+  assert.equal(confirmClipRecording(clip, [release], [audio]), undefined);
   assert.equal(confirmClipRecording(clip, [{ ...octave, artist: 'Other Artist' }], [audio]), undefined);
   assert.equal(confirmClipRecording(clip, [{ ...octave, title: 'Vrai négro (Remix)' }], [{ ...audio, title: 'Vrai négro (Remix)' }]), undefined);
 });

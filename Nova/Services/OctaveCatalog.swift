@@ -309,7 +309,9 @@ actor OctaveCatalog {
             }
         }
         let clipTitle = recordingTitle(clip.title, artist: clip.artist)
-        guard abs(left - right) <= 3, normalize(clip.artist) == normalize(candidate.artist),
+        // Le clip peut être plus court. Les deux pistes audio doivent rester à trois secondes l'une de l'autre.
+        let durationTolerance = min(15, max(12, left * 0.05))
+        guard abs(left - right) <= durationTolerance, normalize(clip.artist) == normalize(candidate.artist),
               let regex = try? NSRegularExpression(pattern: #"^(.*\s)(\p{L})\**$"#),
               let match = regex.firstMatch(in: clipTitle, range: NSRange(clipTitle.startIndex..., in: clipTitle)),
               let prefixRange = Range(match.range(at: 1), in: clipTitle),
@@ -386,7 +388,8 @@ actor OctaveCatalog {
         var queries = [alternate] + Self.names(track.artist).dropFirst().map { track.title + " " + $0 }
         let cleanTitle = Self.recordingTitle(track.title, artist: track.artist)
         if let range = cleanTitle.range(of: #"\s+\p{L}\**$"#, options: .regularExpression) {
-            queries.append(String(cleanTitle[..<range.lowerBound]) + " " + lead)
+            let prefix = String(cleanTitle[..<range.lowerBound])
+            queries += [prefix + " " + lead, lead + " " + prefix]
         }
         if let album = track.album { queries.append(album + " " + lead) }
         var searched = Set<String>()

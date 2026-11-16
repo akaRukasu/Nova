@@ -83,7 +83,7 @@ export function recordingSearchQueries(track: Track): string[] {
     `${track.title} ${lead}`,
     `${identity.title} ${lead}`,
     ...artistNames(track.artist).slice(1).map(artist => `${track.title} ${artist}`),
-    ...(abbreviated ? [abbreviated[1].trim() + ' ' + lead] : []),
+    ...(abbreviated ? [abbreviated[1].trim() + ' ' + lead, lead + ' ' + abbreviated[1].trim()] : []),
   ])];
 }
 
@@ -136,7 +136,9 @@ export function sameClipRecordingCredits(clip: Track, candidate: Track): boolean
   }
   // La piste audio officielle doit confirmer le nom entier d’un dernier mot abrégé.
   const abbreviated = recordingTitle(clip.title, clip.artist).match(/^(.*\s)(\p{L})\**$/u);
-  if (!abbreviated || Math.abs(clip.duration - candidate.duration) > 3
+  // Les deux pistes audio devront encore confirmer leur titre et leur durée entre elles.
+  const durationTolerance = Math.min(15, Math.max(12, clip.duration * 0.05));
+  if (!abbreviated || Math.abs(clip.duration - candidate.duration) > durationTolerance
     || normalize(clip.artist) !== normalize(candidate.artist)) return false;
   const words = recordingCredits(candidate).title.split(' ');
   const prefix = normalize(abbreviated[1]).split(' ');
