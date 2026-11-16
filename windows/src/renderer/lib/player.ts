@@ -97,6 +97,7 @@ class Engine {
   private octaveSignIn = false;
   private octaveNext?: { id: string; recordingId: string };
   private preferredSource?: PlaybackSource;
+  private allowPopularFallback = false;
   private loadRequest = 0;
   private youtubeTrack?: Track;
   private get usingOctave() { return playerState.get().source === 'octave'; }
@@ -172,10 +173,11 @@ class Engine {
 
   private playlistId?: string;
 
-  play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false, playlistId?: string) {
+  play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false, playlistId?: string, allowPopularFallback = false) {
     if (!tracks.length) return;
     this.playlistId = playlistId;
     this.preferredSource = source ?? (supportsOctave ? 'octave' : undefined);
+    this.allowPopularFallback = allowPopularFallback;
     start = Math.min(Math.max(Math.trunc(start) || 0, 0), tracks.length - 1);
     if (shuffle) {
       this.unshuffled = tracks;
@@ -204,6 +206,7 @@ class Engine {
     const state = playerState.get();
     if (!supportsOctave || !currentTrack() || currentTrack()?.id.startsWith('local:')) return;
     this.preferredSource = source;
+    this.allowPopularFallback = false;
     if (state.source === source && !state.error) return;
     this.load(timeState.get().time, !state.playing && !state.loading && !state.error);
   }
@@ -237,6 +240,10 @@ class Engine {
     if (paused) return;
     void api.playOctave(track, request, playerState.get().volume, startAt).then((result) => {
       if (request !== this.octaveRequest || result === 'cancelled') return;
+      if (result === 'not-found' && this.allowPopularFallback && /^[\w-]{11}$/.test(track.id)) {
+        this.load(startAt, false, 'youtube');
+        return;
+      }
       this.octaveLoaded = result === 'playing';
       this.octaveSignIn = result === 'sign-in';
       const error = result === 'sign-in' ? 'Connecte Octave, puis relance la lecture.'
@@ -508,6 +515,7 @@ class Engine {
     const previous = playerState.get();
     if (playing && previous.playing && (previous.transitioning || hostTransitioning)) return;
     this.preferredSource = source;
+    this.allowPopularFallback = false;
     if (previous.queue[previous.index]?.id !== target.id || previous.source !== source) {
       this.unshuffled = null;
       this.playlistId = undefined;
@@ -532,7 +540,7 @@ class Engine {
     return (track && (track.duration ?? durations.get(track.id))) || timeState.get().duration || reported;
   }
 
-  private load(startAt = 0, paused = false) {
+  private load(startAt = 0, paused = false, sourceOverride?: PlaybackSource) {
     const track = currentTrack();
     if (!track) return;
     const request = ++this.loadRequest;
@@ -543,7 +551,7 @@ class Engine {
     this.endHandled = false;
     this.stalledSince = 0;
     clearTimeout(this.prefetchTimer);
-    const source = this.preferredSource ?? (isOctaveId(track.id) ? 'octave' : 'youtube');
+    const source = sourceOverride ?? this.preferredSource ?? (isOctaveId(track.id) ? 'octave' : 'youtube');
     if (supportsOctave && source === 'octave' && !track.id.startsWith('local:')) return this.playOctave(track, startAt, paused);
     if (this.usingOctave) {
       this.octaveLoaded = false;

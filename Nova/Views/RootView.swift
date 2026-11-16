@@ -21,7 +21,7 @@ struct RootView: View {
             }
             Tab("Classements", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
                 NavigationStack(path: $router.explorePath) {
-                    BrowseView(title: "Classements Octave", link: BrowseLink(browseID: "octave:charts"),
+                    BrowseView(title: "Classements", link: BrowseLink(browseID: "octave:charts"),
                                largeTitle: true, showsReleasesCard: true)
                         .withRoutes()
                 }

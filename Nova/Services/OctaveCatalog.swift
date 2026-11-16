@@ -182,6 +182,32 @@ actor OctaveCatalog {
         let result = try await request("charts")
         return BrowsePage(shelves: shelves(result, scope: .all, charts: true))
     }
+
+    func popularPage() async throws -> BrowsePage {
+        async let octavePage = try? charts()
+        async let youtubeTracks = (try? InnerTubeClient().popularTracks()) ?? []
+        let (octave, youtube) = await (octavePage, youtubeTracks)
+        let octaveTracks = octave?.shelves.first(where: { $0.id == "octave-tracks" })?.tracks ?? []
+        var preferred = Array(octaveTracks.prefix(60))
+        var others: [Track] = []
+        for track in youtube.prefix(60) {
+            if let candidate = suitable(track, preferred), let index = preferred.firstIndex(where: { $0.id == candidate.id }) {
+                if preferred[index].youtubeID == nil { preferred[index].youtubeID = track.id }
+            } else if !others.contains(where: { $0.id == track.id }), suitable(track, others) == nil {
+                others.append(track)
+            }
+        }
+        var items: [MusicItem] = []
+        var seen = Set<String>()
+        for index in 0..<max(preferred.count, others.count) {
+            if preferred.indices.contains(index), seen.insert(preferred[index].id).inserted { items.append(.track(preferred[index])) }
+            if others.indices.contains(index), seen.insert(others[index].id).inserted { items.append(.track(others[index])) }
+            if items.count >= 60 { break }
+        }
+        guard !items.isEmpty else { throw NovaError.emptyPage }
+        let popular = Shelf(id: "popular-tracks", title: "Titres populaires", items: Array(items.prefix(60)), layout: .grid)
+        return BrowsePage(shelves: [popular] + (octave?.shelves.filter { $0.id != "octave-tracks" } ?? []))
+    }
     func collection(_ collection: MusicCollection) async throws -> CollectionContent {
         guard let id = Self.id(collection.id) else { throw NovaError.emptyPage }
         let data = try await request(collection.kind.rawValue + "/" + id)

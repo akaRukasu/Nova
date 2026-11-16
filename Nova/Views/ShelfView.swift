@@ -112,7 +112,7 @@ struct ShelfView: View {
         if let onPlay {
             onPlay(track, tracks)
         } else {
-            player.play(tracks, startAt: tracks.firstIndex(of: track) ?? 0)
+            player.play(tracks, startAt: tracks.firstIndex(of: track) ?? 0, allowPopularFallback: shelf.id == "popular-tracks")
         }
     }
 }
@@ -220,7 +220,7 @@ struct BrowseView: View {
             let freshFor: TimeInterval = link.browseID.hasPrefix("FEmusic_") ? 0 : 1800
             try await loadCached("browse-\(link.browseID)-\(link.params ?? "")-\(account.isSignedIn)",
                                  freshFor: freshFor, fetch: {
-                if link.browseID == "octave:charts" { return try await OctaveCatalog.shared.charts() }
+                if link.browseID == "octave:charts" { return try await OctaveCatalog.shared.popularPage() }
                 return try await client.browse(link)
             }) { page = $0 }
             errorText = nil

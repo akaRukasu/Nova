@@ -85,6 +85,17 @@ struct InnerTubeClient {
         try await browse(BrowseLink(browseID: "FEmusic_home"))
     }
 
+    func popularTracks() async throws -> [Track] {
+        let charts = try? await browse(BrowseLink(browseID: "FEmusic_charts"))
+        let lists = (charts?.shelves ?? []).flatMap(\.items).compactMap(\.collection).filter { $0.kind == .playlist }
+        if let list = lists.first(where: { $0.title.range(of: #"\b100\b"#, options: .regularExpression) != nil }) ?? lists.first,
+           let page = try? await collection(list.id), !page.tracks.isEmpty {
+            return Array(page.tracks.prefix(60))
+        }
+        let explore = try await browse(BrowseLink(browseID: "FEmusic_explore"))
+        return Array((explore.shelves.first { $0.layout == .grid && !$0.tracks.isEmpty }?.tracks ?? []).prefix(60))
+    }
+
     func browse(_ link: BrowseLink) async throws -> BrowsePage {
         var body: [String: Any] = ["browseId": link.browseID]
         if let params = link.params { body["params"] = params }

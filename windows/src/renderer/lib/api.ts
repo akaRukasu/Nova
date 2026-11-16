@@ -29,6 +29,7 @@ export const api = {
   search: (query: string, scope: SearchScope) => call<Shelf[]>('yt:search', query, scope),
   suggestions: (query: string) => call<string[]>('yt:suggestions', query),
   home: () => call<Page>('yt:home'),
+  popular: () => call<Page>('yt:popular'),
   homeMore: () => call<Page>('yt:homeMore'),
   explore: () => call<Page>('yt:explore'),
   browse: (link: BrowseLink) => call<Page>('yt:browse', link),

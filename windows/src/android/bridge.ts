@@ -1,5 +1,6 @@
 import { ImportJournal } from '../shared/importJournal';
 import { octaveBackupLibrary } from '../shared/octaveBackup';
+import { popularPage } from '../main/popular';
 // Nova pour Android : ce que fait le processus principal sur PC (YouTube Music, disque, compte,
 // import, lecteur), dans l'app Android. L'interface appelle les mêmes canaux que sur Windows.
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
@@ -168,8 +169,9 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'yt:search': (query, scope) => scope === 'video' ? yt.search(query, scope) : octave.search(query, scope),
   'yt:suggestions': (query) => octave.suggestions(query),
   'yt:home': () => octave.charts(true),
+  'yt:popular': () => popularPage(),
   'yt:homeMore': () => ({ shelves: [] }),
-  'yt:explore': () => octave.charts(),
+  'yt:explore': () => popularPage(),
   'yt:browse': (link) => yt.browse(link),
   'yt:artist': (id) => isOctaveId(id) ? octave.artist(id) : yt.artist(id),
   'yt:artistSongs': (id) => isOctaveId(id) ? octave.artistSongs(id) : yt.artistAllSongs(id),

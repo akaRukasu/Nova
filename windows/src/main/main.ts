@@ -2,6 +2,7 @@ import { LocalAudioLibrary } from './localAudio.js';
 import { createPhoneBackup } from './libraryBackup.js';
 import { ImportJournal } from '../shared/importJournal.js';
 import { octaveBackupLibrary } from '../shared/octaveBackup.js';
+import { popularPage } from './popular.js';
 // Nova pour Windows : processus principal.
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
@@ -444,8 +445,9 @@ app.whenReady().then(async () => {
   handle('yt:search', octave.search);
   handle('yt:suggestions', octave.suggestions);
   handle('yt:home', () => octave.charts(true));
+  handle('yt:popular', () => popularPage());
   handle('yt:homeMore', () => ({ shelves: [] }));
-  handle('yt:explore', () => octave.charts());
+  handle('yt:explore', () => popularPage());
   handle('yt:browse', (link) => yt.browse(link));
   handle('yt:artist', (id: string) => isOctaveId(id) ? octave.artist(id) : yt.artist(id));
   handle('yt:artistSongs', (id: string) => isOctaveId(id) ? octave.artistSongs(id) : yt.artistAllSongs(id));

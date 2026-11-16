@@ -83,7 +83,8 @@ export function ShelfView({ shelf, onPlay, limit = 6, ranked, moreRoute }: {
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const tracks = shelf.items.flatMap((i) => (i.type === 'track' ? [i.track] : []));
-  const play = (track: Track) => (onPlay ? onPlay(track, tracks) : player.play(tracks, tracks.indexOf(track)));
+  const play = (track: Track) => (onPlay ? onPlay(track, tracks)
+    : player.play(tracks, tracks.indexOf(track), false, undefined, 0, false, undefined, shelf.id === 'popular-tracks'));
   const target = moreRoute ?? (shelf.more ? routeForLink(shelf.more, shelf.title) : undefined);
   const scroll = (direction: number) => scroller.current?.scrollBy({ left: direction * scroller.current.clientWidth * 0.8, behavior: 'smooth' });
   const allCategories = shelf.items.every((i) => i.type === 'category');

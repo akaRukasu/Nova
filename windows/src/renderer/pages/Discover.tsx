@@ -141,8 +141,9 @@ export function HomePage() {
   }, [data]);
 
   const all = data?.shelves ?? [];
+  const { data: popular } = useCached('popular-tracks', () => api.popular(), 15 * 60_000);
   const catalogPicks = all.find((shelf) => shelf.layout === 'grid' && shelf.items.some((i) => i.type === 'track'));
-  const quickPicks = useQuickPicks(state.recents[0], catalogPicks);
+  const quickPicks = useQuickPicks(state.recents[0], popular?.shelves[0] ?? catalogPicks);
   const shelves = all.filter((shelf) => shelf !== catalogPicks);
   const { data: explore } = useCached('explore', () => api.explore(), 60 * 60_000);
   const moods = explore?.shelves.find((shelf) => shelf.items.length > 6 && shelf.items.every((i) => i.type === 'category'));
@@ -158,7 +159,7 @@ export function HomePage() {
           {mixes.map((kind) => <MixCard key={kind.id} kind={kind} />)}
         </section>
       )}
-      {quickPicks && <ShelfView shelf={{ ...quickPicks, title: quickPicks.title || 'Sélection rapide' }} />}
+      {quickPicks && <ShelfView shelf={{ ...quickPicks, title: quickPicks.title || 'Sélection rapide' }} moreRoute={{ name: 'explore' }} />}
       {state.recents.length > 0 && (
         <ShelfView shelf={{ id: 'recents', title: 'Écoutés récemment', layout: 'cards', items: recentItems(state.recents) }}
           moreRoute={{ name: 'history' }} />
@@ -186,7 +187,7 @@ export function ExplorePage() {
   if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
   return (
     <div className="page">
-      <PageTitle>{supportsOctave ? 'Classements Octave' : 'Nouveautés'}</PageTitle>
+      <PageTitle>{supportsOctave ? 'Classements' : 'Nouveautés'}</PageTitle>
       {data?.shelves.map((shelf) => (shelf.id === 'explore-top'
         ? <div key={shelf.id} className="top-buttons"><CategoryGrid shelf={shelf} /></div>
         : <ShelfView key={shelf.id} shelf={shelf} ranked={shelf.layout === 'grid'} />))}

@@ -38,6 +38,7 @@ final class PlayerModel {
     var showsOctaveAccount = false
     @ObservationIgnored private(set) lazy var octave = OctaveWebPlayer()
     @ObservationIgnored private var preferredSource: PlaybackSource = .octave
+    @ObservationIgnored private var allowPopularFallback = false
     @ObservationIgnored private var playingPlaylistID: UUID?
     @ObservationIgnored private var octaveTrack: Track?
     @ObservationIgnored private var octaveNext: (original: Track, recording: Track)?
@@ -523,7 +524,7 @@ final class PlayerModel {
     // MARK: Commandes
 
     /// Lance une liste à partir d'un index, puis complète la file avec la radio du titre.
-    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false, source: PlaybackSource = .octave, playlistID: UUID? = nil) {
+    func play(_ tracks: [Track], startAt start: Int = 0, shuffled: Bool = false, source: PlaybackSource = .octave, playlistID: UUID? = nil, allowPopularFallback: Bool = false) {
         guard !tracks.isEmpty else { return }
         if RemoteControl.shared.isActive {
             Task { await RemoteControl.shared.send(["action": "playTracks", "index": start, "shuffled": shuffled, "playbackSource": source.rawValue], tracks: tracks) }
@@ -531,6 +532,7 @@ final class PlayerModel {
         }
         playingPlaylistID = playlistID
         preferredSource = source
+        self.allowPopularFallback = allowPopularFallback
         if shuffled {
             unshuffledQueue = tracks
             queue = tracks.shuffled()
@@ -825,7 +827,7 @@ final class PlayerModel {
     // MARK: Chargement
 
     /// `transition` : le titre précédent continue pendant le chargement, puis s'efface en fondu.
-    private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil, paused: Bool = false) {
+    private func load(resumeAt startTime: TimeInterval = 0, transition: TimeInterval? = nil, paused: Bool = false, sourceOverride: PlaybackSource? = nil) {
         guard let track = current else { return }
         loadTask?.cancel()
         octaveMonitor?.cancel()
@@ -836,7 +838,7 @@ final class PlayerModel {
         octaveSession += 1
         let session = octaveSession
         let localDownload = !NetworkMonitor.shared.isConnected && downloads.localURL(for: track.id) != nil
-        source = localDownload || track.id.hasPrefix("local:") ? .youtube : preferredSource
+        source = localDownload || track.id.hasPrefix("local:") ? .youtube : (sourceOverride ?? preferredSource)
         rateTask?.cancel()
         statusObservation = nil
         beginLoadingBackgroundTask()
@@ -885,6 +887,11 @@ final class PlayerModel {
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }
+                if self.source == .octave, self.allowPopularFallback, error as? OctaveWebPlayer.Failure == .notFound,
+                   track.id.range(of: #"^[\w-]{11}$"#, options: .regularExpression) != nil {
+                    self.load(resumeAt: startTime, sourceOverride: .youtube)
+                    return
+                }
                 if self.source == .octave || track.id.hasPrefix("octave:") || track.id.hasPrefix("local:") {
                     self.isLoading = false
                     self.isPlaying = false
@@ -914,6 +921,7 @@ final class PlayerModel {
             return
         }
         preferredSource = newSource
+        allowPopularFallback = false
         guard newSource != source || errorMessage != nil, current != nil else { return }
         let stayPaused = !isPlaying && !isLoading && errorMessage == nil
         errorMessage = nil

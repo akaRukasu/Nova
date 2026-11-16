@@ -20,7 +20,9 @@ struct HomeView: View {
             LazyVStack(alignment: .leading, spacing: 30) {
                 resumeCard
                 MixesRow(compactGrid: true)
-                ForEach(octaveShelves.prefix(1)) { shelf in ShelfView(shelf: shelf) }
+                ForEach(octaveShelves.prefix(1)) { shelf in
+                    ShelfView(shelf: shelf, moreRoute: .more(title: "Classements", link: BrowseLink(browseID: "octave:charts")))
+                }
                 if !library.recents.isEmpty {
                     // 20 derniers titres ; le titre de la rangée ouvre l'historique complet.
                     ShelfView(shelf: Shelf(id: "recents", title: "Écoutés récemment",
@@ -132,7 +134,11 @@ struct HomeView: View {
     }
 
     private func loadOctaveCharts() async {
-        if let page = try? await OctaveCatalog.shared.charts() { octaveShelves = page.shelves }
+        if octaveShelves.isEmpty, let page = try? await OctaveCatalog.shared.charts() { octaveShelves = page.shelves }
+        _ = try? await loadCached("nova-popular-tracks", freshFor: 900,
+                                  fetch: { try await OctaveCatalog.shared.popularPage() }) { page in
+            octaveShelves = page.shelves
+        }
     }
 
     private func reload(force: Bool = false) async {
