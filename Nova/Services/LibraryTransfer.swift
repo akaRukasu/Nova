@@ -75,7 +75,7 @@ enum LibraryTransfer {
     }
 
     @MainActor
-    static func receive(_ request: Request, library: LibraryStore) async throws -> String {
+    static func receive(_ request: Request) async throws -> Data {
         guard isLocal(request.url), var url = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else { throw TransferError.notLocal }
         url.path = "/library"
         url.query = nil
@@ -88,7 +88,7 @@ enum LibraryTransfer {
         if status == 404 { throw TransferError.updatePC }
         guard status == 200 else { throw TransferError.refused(status) }
         guard response.mimeType == "application/json" else { throw TransferError.updatePC }
-        return try library.restoreData(data).message
+        return data
     }
 
     @MainActor
@@ -152,7 +152,9 @@ final class PCSync {
         state = State(request: request)
         pairedComputer = request.computer
         persist()
-        let message = restoring ? try await restore(library: library) : try await sync(library: library, force: true) ?? ""
+        let message: String
+        if restoring { message = try await restore(library: library) }
+        else { message = try await sync(library: library, force: true) ?? "" }
         startHeartbeat(library: library)
         return message
     }
@@ -163,8 +165,10 @@ final class PCSync {
         defer { isSyncing = false }
         guard let url = await locate(current.request) else { throw LibraryTransfer.TransferError.refused(0) }
         current.request.url = url
-        let message = try await LibraryTransfer.receive(current.request, library: library)
-        guard state?.request.token == current.request.token else { return "" }
+        let data = try await LibraryTransfer.receive(current.request)
+        try Task.checkCancellation()
+        guard state?.request.token == current.request.token else { throw CancellationError() }
+        let message = try library.restoreData(data).message
         current.lastRevision = library.revision
         current.lastHistoryRevision = library.historyRevision
         current.lastSync = Date()
