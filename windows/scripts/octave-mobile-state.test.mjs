@@ -46,7 +46,7 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   let queueOpened = false;
   const queue = { getAttribute: () => 'Queue', closest: () => null, click() { queueOpened = true; } };
   const title = { textContent: 'Cross Off' };
-  const artist = { textContent: 'Mark Morton & Chester Bennington' };
+  const artist = { textContent: 'Mark Morton & Chester Bennington · Autoplay' };
   const cover = { src: 'https://example.com/cover.jpg' };
   const nowPlaying = { querySelector: selector => selector.includes('marquee') ? title : selector === 'p' ? artist : cover };
   const document = {
@@ -108,6 +108,7 @@ test('a metadata change on the same deck and clock does not commit a handoff', (
   const previous = { audioId: 1, position: 174, duration: 175 };
   const earlyMetadata = { ...previous, position: 174.5, title: 'Upcoming track' };
   assert.equal(octaveHandoff(previous, earlyMetadata), false);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, duration: 200 }), false);
   assert.equal(octaveHandoff(previous, { ...earlyMetadata, audioId: 2 }), true);
   assert.equal(octaveHandoff(previous, { ...earlyMetadata, position: 1 }), true);
 });

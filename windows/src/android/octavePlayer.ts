@@ -252,7 +252,7 @@ export class AndroidOctavePlayer {
       active.audioId = sample.audioId ?? active.audioId;
       if (sample.playing || sample.buffering) active.endedAt = undefined;
       else if (sample.ended || (active.playing && sample.duration > 0 && sample.duration - active.position < 1.5)) active.endedAt ??= Date.now();
-      const ended = Boolean(active.endedAt && Date.now() - active.endedAt > 2500);
+      const ended = Boolean(active.endedAt && Date.now() - active.endedAt > 10000);
       const elapsed = sample.position - active.position;
       active.position = sample.position;
       active.duration = sample.duration || active.duration;

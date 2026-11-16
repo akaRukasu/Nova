@@ -1061,3 +1061,25 @@ html.android .command-button { display: none; }
   .library-group-card { width: 100%; }
   .library-group-card > .artwork { width: 100% !important; height: auto !important; aspect-ratio: 1; }
 }
+.album-hero { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; gap: 34px; padding: 32px; margin: 8px 0 28px; border-radius: 28px; border: 1px solid #ffffff18; background: var(--elevated); box-shadow: 0 16px 42px #0002; }
+.album-hero-backdrop { position: absolute; inset: 0; z-index: -2; pointer-events: none; filter: blur(48px); opacity: .22; transform: scale(1.2); }
+.album-hero-backdrop .artwork { width: 100% !important; height: 100% !important; object-fit: cover; }
+.album-hero::after { content: ''; position: absolute; inset: 0; z-index: -1; background: linear-gradient(120deg, #17141770, #171417c0); }
+.album-hero-cover { flex: none; box-shadow: 0 16px 32px #0005; border-radius: 18px; outline: 1px solid #ffffff20; }
+.album-hero-copy { min-width: 0; }
+.album-hero h1 { font-size: clamp(27px, 3.4vw, 44px); line-height: 1.12; letter-spacing: -.035em; text-wrap: balance; color: #fff; }
+.album-hero .eyebrow { font-size: 11px; color: #ffffff9c; letter-spacing: .08em; }
+.album-hero-artist { font-size: 17px; color: #ffffffc9; margin: 12px 0 0; }
+.album-hero .row-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.album-hero .button { min-height: 44px; border-radius: 14px; }
+.album-hero .button.secondary, .album-hero .icon-button { color: #fff; background: #ffffff14; border: 1px solid #ffffff22; }
+.album-hero .button:active { transform: scale(.97); }
+.library-total { margin: -8px 0 24px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.octave-library-status { padding: 18px; margin: 12px 0 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--elevated); }
+@media (max-width: 700px) {
+  .album-hero { flex-direction: column; align-items: center; text-align: center; gap: 24px; padding: 28px 18px 22px; border-radius: 26px; }
+  .album-hero-cover .artwork { width: min(238px, 63vw) !important; height: min(238px, 63vw) !important; }
+  .album-hero h1 { font-size: 28px; }
+  .album-hero .row-buttons { justify-content: center; gap: 9px; margin-top: 22px; }
+  .album-hero .button { min-height: 46px; }
+}

@@ -133,29 +133,27 @@ struct CollectionView: View {
     }
 
     private func headerView(_ tracks: [Track]) -> some View {
-        VStack(spacing: 10) {
-            ArtworkThumb(urls: header.artworkURL.map { [$0] } ?? collection.artworkURLs, size: 230, corner: 18)
-                .shadow(color: .black.opacity(0.25), radius: 18, y: 10)
-                .padding(.bottom, 6)
-            Text(header.title)
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-            if let artist = header.artist, !artist.isEmpty {
-                Button(artist) {
-                    if let id = header.artistID {
-                        router.open(.collection(MusicCollection(id: id, kind: .artist, title: artist)))
+        VStack(spacing: 18) {
+            AlbumHeader(title: header.title.isEmpty ? collection.title : header.title,
+                        artist: header.artist ?? collection.subtitle,
+                        artwork: header.artworkURL.map { [$0] } ?? collection.artworkURLs,
+                        details: [isAlbum ? "ALBUM" : "PLAYLIST", header.secondSubtitle, tracks.isEmpty ? "" : summary].filter { !$0.isEmpty }.joined(separator: " · "),
+                        onArtist: header.artistID.map { id in { router.open(.collection(MusicCollection(id: id, kind: .artist, title: header.artist ?? "Artiste"))) } }) {
+                HStack(spacing: 10) {
+                    Button { player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) } label: {
+                        Label("Lecture", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.glassProminent).tint(Color.novaAccent)
+                    Button { player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) } label: {
+                        Image(systemName: "shuffle").frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
+                    Button { library.toggleSaved(savable) } label: {
+                        Image(systemName: library.isSaved(collection.id) ? "checkmark" : "plus").frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.glass).accessibilityLabel(library.isSaved(collection.id) ? "Retirer de la bibliothèque" : "Ajouter à la bibliothèque")
                 }
-                .font(.headline)
-                .foregroundStyle(Color.novaAccent)
-                .disabled(header.artistID == nil)
-            }
-            let details = [header.subtitle, header.secondSubtitle].filter { !$0.isEmpty }.joined(separator: " • ")
-            if !details.isEmpty {
-                Text(details)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                .disabled(tracks.isEmpty)
             }
             if let description = header.description {
                 Text(description)
@@ -165,13 +163,6 @@ struct CollectionView: View {
                     .multilineTextAlignment(.center)
                     .onTapGesture { withAnimation { showFullDescription.toggle() } }
             }
-            PlayShuffleButtons {
-                player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
-            } shuffle: {
-                player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
-            }
-            .disabled(tracks.isEmpty)
-            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)

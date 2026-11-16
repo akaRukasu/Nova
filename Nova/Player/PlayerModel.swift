@@ -51,6 +51,7 @@ final class PlayerModel {
     }
 
     let library = LibraryStore()
+    let octaveLibrary = OctaveLibrarySync()
     let downloads = DownloadStore()
     let account = AccountStore()
 
@@ -110,6 +111,7 @@ final class PlayerModel {
         Self.configure(player)
         loadDurations()
         restoreSession()
+        library.onOctaveAddition = { [weak self] track, album in self?.octaveLibrary.enqueue(track: track, album: album) }
         attachTimeObserver()
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
@@ -1016,13 +1018,11 @@ final class PlayerModel {
                     if repeatMode != .one, let recording = nextRecording, plannedMatches {
                         index += 1
                         octaveTrack = recording
-                    } else if hasNext || repeatMode != .off {
-                        if repeatMode != .one { index = hasNext ? index + 1 : 0 }
-                        load()
-                        return
                     } else if let related = sample.track {
-                        queue.append(related)
-                        index = queue.count - 1
+                        // Le moteur Octave joue déjà ce titre. L'adopter sans arrêter
+                        // ses deux lecteurs, et conserver les titres demandés dans la file.
+                        queue.insert(related, at: min(index + 1, queue.count))
+                        index += 1
                         octaveTrack = related
                     } else { continue }
                     artwork = nil
@@ -1039,7 +1039,7 @@ final class PlayerModel {
                 if sample.duration > 0 { duration = sample.duration }
                 isPlaying = sample.playing
                 updateNowPlaying()
-                if let endedAt, Date().timeIntervalSince(endedAt) > 2.5 {
+                if let endedAt, Date().timeIntervalSince(endedAt) > 10 {
                     if repeatMode == .one { load() }
                     else if hasNext || repeatMode == .all {
                         index = hasNext ? index + 1 : 0

@@ -266,6 +266,8 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'webplayer:command': (deck, command) => native.command({ deck, command }),
   'webplayer:show': (deck) => native.showDeck({ deck }),
   'octave:open': (url) => octavePlayer.open(url),
+  'octave:library': (args) => native.octaveCall({ operation: 'library', args }).then(result => JSON.parse(result.value)),
+  'octave:library-index': (tracks) => octave.configureOctaveLibrary(tracks),
   'octave:hide': () => octavePlayer.hide(),
   'octave:stop': () => octavePlayer.stop(),
   'octave:play': (track, request, volume, position) => octavePlayer.play(track, request, volume, position),

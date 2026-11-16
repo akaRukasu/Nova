@@ -305,11 +305,6 @@ class Engine {
         upcoming?.title === next.title && upcoming.artist === next.artist
         && (!upcoming.duration || !next.duration || Math.abs(upcoming.duration - next.duration) <= 8)
       );
-      if (this.preferredSource === 'octave' && upcoming && !matches) {
-        set({ index: index + 1 });
-        this.load();
-        return;
-      }
       playerState.set((state) => {
         const { queue, index } = state;
         if (matches) return { ...state, index: index + 1 };

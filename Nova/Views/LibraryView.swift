@@ -143,8 +143,9 @@ struct LibraryView: View {
                 .font(.title3)
                 .foregroundStyle(Color.primary)
             Spacer()
-            if let count = count(for: section), count > 0 {
+            if let count = count(for: section) {
                 Text("\(count)")
+                    .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Image(systemName: "chevron.right")
@@ -187,8 +188,8 @@ struct LibraryView: View {
     private func count(for section: LibrarySection) -> Int? {
         switch section {
         case .playlists: return library.playlists.count + library.smartPlaylists.count + library.saved.filter { $0.kind == .playlist }.count
-        case .artists: return library.saved.filter { $0.kind == .artist }.count
-        case .albums: return library.saved.filter { $0.kind == .album }.count
+        case .artists: return library.libraryCollections(kind: .artist).count
+        case .albums: return library.libraryCollections(kind: .album).count
         case .songs: return library.songs.count
         case .liked: return library.liked.count
         case .downloads: return downloads.tracks.count
@@ -1032,15 +1033,21 @@ struct LibraryGroupView: View {
 
     private func albumHeader(_ group: LibraryStore.MusicGroup) -> some View {
         Section {
-                    VStack(alignment: .leading, spacing: 12) {
-                        RemoteImage(urls: group.artwork.squareArtworkURLs)
-                            .frame(width: 160, height: 160)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                        Text(group.artist + " · " + group.releaseType).foregroundStyle(.secondary)
-                        Button { player.play(group.tracks) } label: { Label("Lecture", systemImage: "play.fill") }
-                            .buttonStyle(.borderedProminent)
+            AlbumHeader(title: group.title, artist: group.artist, artwork: group.artwork.squareArtworkURLs,
+                        details: group.releaseType + " · \(group.tracks.count) titres") {
+                HStack(spacing: 10) {
+                    Button { player.play(group.tracks) } label: {
+                        Label("Lecture", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
-                    .padding(.vertical, 8)
+                    .buttonStyle(.glassProminent).tint(Color.novaAccent)
+                    Button { player.play(group.tracks, shuffled: true) } label: {
+                        Image(systemName: "shuffle").frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
+                }
+            }
+            .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 16, trailing: 16))
         }
     }
 

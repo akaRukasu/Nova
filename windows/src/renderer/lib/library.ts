@@ -9,6 +9,7 @@ import { listeningHistory, mergeListeningHistory, type HistorySnapshot } from '.
 import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
 import { api, isAndroid, on } from './api';
 import { Store } from './store';
+import { queueOctaveAddition, startOctaveLibrary } from './octaveLibrary';
 
 export const library = new Store<LibraryState>({
   recents: [], liked: [], playlists: [], smartPlaylists: [], saved: [], searches: [], stats: {}, settings: defaultSettings,
@@ -40,6 +41,7 @@ export async function loadLibrary() {
   // Le compte YouTube (likes, playlists) arrive après coup : l'interface s'affiche sans l'attendre,
   // même si YouTube est lent ou ne répond pas.
   void refreshAccount();
+  startOctaveLibrary();
   if (isAndroid) void import('./pcHistory').then(module => module.startPCHistory());
 }
 
@@ -188,6 +190,7 @@ export const isLiked = (id: string) => library.get().liked.some((t) => t.id === 
 
 export function toggleLike(track: Track) {
   const liked = !isLiked(track.id);
+  if (liked) queueOctaveAddition(track);
   update((state) => ({
     ...state,
     liked: liked ? [track, ...state.liked] : state.liked.filter((t) => t.id !== track.id),
@@ -395,6 +398,7 @@ export const isSaved = (id: string) => library.get().saved.some((c) => c.id === 
 
 export function toggleSaved(collection: Collection) {
   const saved = !isSaved(collection.id);
+  if (saved && collection.kind === 'album') queueOctaveAddition(undefined, collection);
   update((state) => ({ ...state, saved: saved ? [{ ...collection, addedAt: Date.now() }, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
   notify(saved ? `« ${collection.title} » ajouté à la bibliothèque` : `« ${collection.title} » retiré de la bibliothèque`);
 }

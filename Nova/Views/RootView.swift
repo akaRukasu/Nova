@@ -47,7 +47,10 @@ struct RootView: View {
         .sheet(isPresented: Binding(
             get: { player.showsOctaveAccount && !router.showPlayer },
             set: { if !$0 { player.showsOctaveAccount = false } }
-        ), onDismiss: { player.octave.hideAccount() }) {
+        ), onDismiss: {
+            player.octave.hideAccount()
+            Task { await player.octaveLibrary.refresh() }
+        }) {
             OctaveAccountSheet()
         }
         .newPlaylistAlert(isActive: !router.showPlayer)
@@ -129,6 +132,7 @@ struct RootView: View {
         .onChange(of: player.library.historyRevision) { _, _ in PCSync.shared.libraryChanged(player.library) }
         .task {
             player.octave.warmUp()
+            player.octaveLibrary.start(using: player.octave)
             PCSync.shared.startHeartbeat(library: player.library)
             RemoteControl.shared.watchComputer(player: player)
         }

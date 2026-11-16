@@ -33,7 +33,8 @@ export function octaveHandoff(previous: { audioId?: number; position: number; du
   sample: { audioId?: number; position: number; duration: number }) {
   const switchedDeck = previous.audioId != null && sample.audioId != null && previous.audioId !== sample.audioId;
   const restartedClock = previous.position > 4 && sample.position + 3 < previous.position;
-  const differentDuration = previous.duration > 0 && sample.duration > 0 && Math.abs(previous.duration - sample.duration) > 1.5;
+  const differentDuration = (previous.audioId == null || sample.audioId == null)
+    && previous.duration > 0 && sample.duration > 0 && Math.abs(previous.duration - sample.duration) > 1.5;
   return switchedDeck || restartedClock || differentDuration;
 }
 

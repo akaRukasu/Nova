@@ -106,7 +106,7 @@
     return {
       id: document.querySelector('[data-track-id][data-active="true"]')?.getAttribute('data-track-id'),
       title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
-      artist: nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '', album: metadata?.album ?? '',
+      artist: (nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(), album: metadata?.album ?? '',
       artwork: nowPlaying?.querySelector('img')?.src ?? metadata?.artwork.find(item => item.src.startsWith('https:'))?.src,
       position: audio?.currentTime ?? (Number.isFinite(reportedTime) && (reportedTime > 0 || !playing) ? reportedTime : null),
       outgoingPosition: fading ? outgoing.currentTime : undefined,
@@ -134,11 +134,10 @@
       row.querySelector('button[aria-label="Remove from queue"]') && / · Autoplay/.test(row.textContent))
       .slice(0, 30).flatMap(row => {
         const name = row.querySelector('button > div > p:first-child > span.truncate')?.textContent?.trim();
-        const artist = row.querySelector('button > div > p:nth-child(2)')?.cloneNode(true);
-        artist?.querySelectorAll('span').forEach(node => node.remove());
+        const artist = row.querySelector('button > div > p:nth-child(2)')?.textContent?.replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim();
         const id = row.getAttribute('data-track-id');
-        if (!name || !artist?.textContent?.trim() || !/^\d{1,20}$/.test(id)) return [];
-        return [{id:'octave:'+id,title:name,artist:artist.textContent.trim(),artwork:row.querySelector('img')?.src,square:true}];
+        if (!name || !artist || !/^\d{1,20}$/.test(id)) return [];
+        return [{id:'octave:'+id,title:name,artist,artwork:row.querySelector('img')?.src,square:true}];
       });
   }
 
@@ -227,6 +226,7 @@
   }
 
   const calls = {
+    library(args) { return window.novaOctaveLibrary?.(args) ?? null; },
     navigate({url}) {
       const target = new URL(url, location.origin);
       if (target.origin !== location.origin || !/^\/(?:album\/\d{1,20}|search|settings)$/.test(target.pathname)) return false;

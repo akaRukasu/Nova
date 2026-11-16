@@ -25,6 +25,21 @@ export function ArtistHero({ name, artwork, track, details, children }: { name: 
   </header>;
 }
 
+export function AlbumHero({ title, artist, artwork, track, details, children }: {
+  title: string; artist?: string; artwork?: string; track?: Track; details?: string; children: ReactNode;
+}) {
+  return <header className="album-hero">
+    <div className="album-hero-backdrop" aria-hidden="true"><Artwork track={track} url={artwork} size={1000} /></div>
+    <div className="album-hero-cover"><Artwork track={track} url={artwork} size={240} radius={18} /></div>
+    <div className="album-hero-copy">
+      <p className="eyebrow">{details || 'Album'}</p>
+      <h1>{title}</h1>
+      {artist && <p className="album-hero-artist">{artist}</p>}
+      <div className="row-buttons">{children}</div>
+    </div>
+  </header>;
+}
+
 export function ArtistPage({ id, title }: { id: string; title: string }) {
   useStore(library);
   const [showAll, setShowAll] = useState(false);
@@ -81,9 +96,22 @@ export function CollectionPage({ collection }: { collection: Collection }) {
   const isPlaylist = collection.kind === 'playlist';
   const tracks = sortOrder(data.tracks, sort.sort, sort.reversed, state.stats).map((i) => data.tracks[i]);
   const saved: Collection = { ...collection, title: header.title || collection.title, artwork: header.artwork ?? collection.artwork, subtitle: header.subtitle ?? collection.subtitle };
+  const controls = <>
+    <PlayShuffle tracks={tracks} playlist={isPlaylist} />
+    <SortButton state={sort} manualLabel={isAlbum ? 'Ordre de l’album' : 'Ordre de la playlist'} />
+    <button className="button secondary" onClick={() => toggleSaved(saved)}>
+      <Icon name={isSaved(collection.id) ? 'check' : 'plus'} size={16} /> {isSaved(collection.id) ? 'Dans la bibliothèque' : 'Ajouter'}
+    </button>
+    {!isAlbum && <button className="button secondary" onClick={() => { upsertPlaylist(saved.title, data.tracks); notify('Copiée dans tes playlists'); }}>
+      <Icon name="list" size={16} /> Copier
+    </button>}
+  </>;
   return (
     <div className="page">
-      <div className="collection-header">
+      {isAlbum ? <AlbumHero title={saved.title} artist={header.subtitle || collection.subtitle} artwork={saved.artwork}
+        details={`Album · ${tracks.length} titres · ${Math.round(tracks.reduce((sum, track) => sum + (track.duration || 0), 0) / 60)} min`}>
+        {controls}
+      </AlbumHero> : <div className="collection-header">
         <Artwork url={header.artwork ?? collection.artwork} size={240} radius={12} />
         <div className="collection-info">
           <p className="eyebrow">{isAlbum ? 'Album' : 'Playlist'}</p>
@@ -91,19 +119,11 @@ export function CollectionPage({ collection }: { collection: Collection }) {
           {header.subtitle && <p className="muted">{header.subtitle}</p>}
           {header.description && <p className="description">{header.description}</p>}
           <div className="row-buttons">
-            <PlayShuffle tracks={tracks} playlist={isPlaylist} />
-            <SortButton state={sort} manualLabel={isAlbum ? 'Ordre de l’album' : 'Ordre de la playlist'} />
-            <button className="button secondary" onClick={() => toggleSaved(saved)}>
-              <Icon name={isSaved(collection.id) ? 'check' : 'plus'} size={16} /> {isSaved(collection.id) ? 'Dans la bibliothèque' : 'Ajouter'}
-            </button>
-            {!isAlbum && (
-              <button className="button secondary" onClick={() => { upsertPlaylist(saved.title, data.tracks); notify('Copiée dans tes playlists'); }}>
-                <Icon name="list" size={16} /> Copier
-              </button>
-            )}
+            {controls}
           </div>
         </div>
-      </div>
+      </div>}
+      {isAlbum && header.description && <p className="description">{header.description}</p>}
       {shared && (
         <div className="shared-banner">
           <Icon name="jam" size={20} />

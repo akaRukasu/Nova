@@ -5,6 +5,7 @@ import { octaveAudioDefaults } from '../../shared/octave';
 import { Icon } from '../components/icons';
 import { EQ_PRESETS } from '../lib/equalizer';
 import { api, isAndroid, on, supportsOctave } from '../lib/api';
+import { octaveLibrary, refreshOctaveLibrary } from '../lib/octaveLibrary';
 import { jam, jamCommand, joinJam, joinJamInvitation, joinRemoteJam, leaveJam, openJamInvitation, refreshJamCircle, saveJamCircle, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
 import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import { player } from '../lib/player';
@@ -555,6 +556,7 @@ const regions: [string, string][] = [['FR', 'France'], ['BE', 'Belgique'], ['CH'
 
 export function SettingsPage() {
   const state = useStore(library);
+  const cloud = useStore(octaveLibrary);
   const user = useStore(account);
   const settings = state.settings;
   const octave = { ...octaveAudioDefaults, ...settings.octaveAudio };
@@ -580,6 +582,18 @@ export function SettingsPage() {
       <section>
         {supportsOctave && <>
           <h3>Lecture Octave</h3>
+          <div className="octave-library-status">
+            <strong>Bibliothèque Octave</strong>
+            <p className="muted small">{cloud.status
+              ? `${cloud.status.tracks.toLocaleString('fr')} références musicales · ${cloud.status.albums.toLocaleString('fr')} albums enregistrés sur Octave`
+              : 'Connecte ton compte cloud dans Compte Octave pour retrouver ta bibliothèque.'}</p>
+            <p className="muted small">Les titres ajoutés aux favoris et les albums ajoutés dans Nova sont aussi ajoutés à Octave.</p>
+            {cloud.pending > 0 && <p className="muted small">{cloud.pending} ajout(s) en attente de confirmation par Octave.</p>}
+            {cloud.error && <p className="error small" role="status">{cloud.error}</p>}
+            <button className="button secondary" disabled={cloud.busy} onClick={() => void refreshOctaveLibrary()}>
+              <Icon name="refresh" size={16} /> {cloud.busy ? 'Synchronisation…' : 'Actualiser la bibliothèque Octave'}
+            </button>
+          </div>
           <label className="field">Source des playlists
             <select value={settings.playlistSource ?? 'octave'} onChange={(e) => updateSettings({
               playlistSource: e.target.value === 'youtube' ? 'youtube' : 'octave',

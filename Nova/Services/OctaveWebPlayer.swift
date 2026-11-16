@@ -49,7 +49,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         func switchedAudio(previousID: Int?, position previousPosition: Double, duration previousDuration: Double) -> Bool {
             if let previousID, let audioId, previousID != audioId { return true }
             if let position, previousPosition > 4, position + 3 < previousPosition { return true }
-            return previousDuration > 0 && duration > 0 && abs(previousDuration - duration) > 1.5
+            return (previousID == nil || audioId == nil) && previousDuration > 0 && duration > 0 && abs(previousDuration - duration) > 1.5
         }
         var track: Track? {
             guard !title.isEmpty else { return nil }
@@ -70,7 +70,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsAirPlayForMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        for resource in ["nova-octave-transition", "nova-octave"] {
+        for resource in ["nova-octave-library", "nova-octave-transition", "nova-octave"] {
             if let url = Bundle.main.url(forResource: resource, withExtension: "js"),
                let script = try? String(contentsOf: url, encoding: .utf8) {
                 configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -133,6 +133,10 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let raw = await call("sample", args: args), JSONSerialization.isValidJSONObject(raw),
               let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
         return try? JSONDecoder().decode(Sample.self, from: data)
+    }
+
+    func libraryCall(_ args: [String: Any]) async -> Any? {
+        await call("library", args: args)
     }
 
     @discardableResult func command(_ type: String, value: Double? = nil) async -> Bool {

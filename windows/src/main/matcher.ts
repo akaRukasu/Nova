@@ -24,7 +24,7 @@ export function stripExtras(value: string): string {
 }
 
 export function mainArtist(value: string): string {
-  let result = value;
+  let result = playbackArtist(value);
   for (const separator of [',', '&', ' feat', ' ft.', ' x ', ' et ', ' and ', ';', '/']) {
     const index = result.toLowerCase().indexOf(separator);
     if (index > 0) result = result.slice(0, index);
@@ -33,10 +33,14 @@ export function mainArtist(value: string): string {
 }
 
 export function artistNames(value: string): string[] {
-  return value
+  return playbackArtist(value)
     .split(/\s*(?:,|&|;|\/|\bfeat\.?|\bft\.?|\bx\b|\bet\b|\band\b)\s*/i)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+export function playbackArtist(value: string): string {
+  return value.replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim();
 }
 
 function recordingTitle(title: string, artist: string): string {
@@ -62,7 +66,7 @@ function recordingCredits(track: Track) {
   const guests = artistNames(suffix?.[1] ?? suffix?.[2] ?? suffix?.[3] ?? '').map(normalize).filter(Boolean);
   return {
     title: normalize(suffix ? title.slice(0, suffix.index) : title),
-    artist: normalize(track.artist),
+    artist: normalize(playbackArtist(track.artist)),
     lead: names[0],
     names: [...new Set([...names, ...guests])],
     guests: [...new Set([...names.slice(1), ...guests])],

@@ -11,6 +11,11 @@ actor OctaveCatalog {
     static let origin = URL(string: "https://music.octavestreaming.com")!
     private var recordings: [String: Track] = [:]
     private var resolving: [String: Task<Track?, Error>] = [:]
+    private var libraryRecordings: [String: [Track]] = [:]
+
+    func setLibraryRecordings(_ tracks: [Track]) {
+        libraryRecordings = Dictionary(grouping: tracks.filter { Self.trackURL($0) != nil }, by: { Self.normalize($0.title) })
+    }
     private var saveTask: Task<Void, Never>?
     private let recordingFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Nova/octave-recordings-v1.json")
@@ -203,9 +208,13 @@ actor OctaveCatalog {
         names(value).first ?? value
     }
     private nonisolated static func names(_ value: String) -> [String] {
-        value.replacingOccurrences(of: #"\s*(?:[,;&]|\s+(?:et|and|feat\.?|ft\.?)\s+)\s*"#,
+        playbackArtist(value).replacingOccurrences(of: #"\s*(?:[,;&]|\s+(?:et|and|feat\.?|ft\.?)\s+)\s*"#,
                                    with: "|", options: .regularExpression)
             .split(separator: "|").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    nonisolated static func playbackArtist(_ value: String) -> String {
+        value.replacingOccurrences(of: #"\s*[·•]\s*(?:autoplay|lecture automatique)\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private nonisolated static func recordingTitle(_ title: String, artist: String) -> String {
         var cleaned = title
@@ -315,10 +324,17 @@ actor OctaveCatalog {
         return nil
     }
     func recording(_ track: Track) async throws -> Track? {
+        var track = track
+        track.artist = Self.playbackArtist(track.artist)
         if track.id.hasPrefix("local:") { return nil }
         if Self.trackURL(track) != nil { return track }
         let key = recordingKey(track)
         if let known = recordings[key] { return known }
+        if let found = suitable(track, libraryRecordings[Self.normalize(track.title)] ?? []) {
+            recordings[key] = found
+            saveRecordings()
+            return found
+        }
         if let pending = resolving[key] { return try await pending.value }
         let task = Task { try await self.lookupRecording(track) }
         resolving[key] = task

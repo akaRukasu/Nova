@@ -29,6 +29,8 @@ final class LibraryStore {
     private var addedIDs: Set<String> = []
     private var likedIDs: Set<String> = []
     private var savedIDs: Set<String> = []
+    @ObservationIgnored private var groupCache: [String: [MusicGroup]] = [:]
+    @ObservationIgnored var onOctaveAddition: ((Track?, MusicCollection?) -> Void)?
 
     private struct Snapshot: Codable {
         var recents: [Track]?
@@ -105,6 +107,7 @@ final class LibraryStore {
         guard addedIDs.insert(track.id).inserted else { return }
         addedTracks.insert(track, at: 0)
         markAdded([track], force: true)
+        onOctaveAddition?(track, nil)
         save()
     }
 
@@ -148,6 +151,9 @@ final class LibraryStore {
     }
 
     func musicGroups(kind: CollectionKind, singles: Bool = false) -> [MusicGroup] {
+        _ = revision
+        let cacheKey = kind.rawValue + (singles ? "-singles" : "")
+        if let cached = groupCache[cacheKey] { return cached }
         func key(_ value: String) -> String {
             value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -176,7 +182,9 @@ final class LibraryStore {
                 groups[id] = MusicGroup(id: id, title: title, artist: track.artist, tracks: [track], added: date)
             }
         }
-        return groups.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let result = groups.values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        groupCache[cacheKey] = result
+        return result
     }
 
     func libraryCollections(kind: CollectionKind, singles: Bool = false, newestFirst: Bool = false) -> [RecentAddition] {
@@ -433,6 +441,7 @@ final class LibraryStore {
         liked.insert(track, at: 0)
         likedIDs.insert(track.id)
         markAdded([track])
+        onOctaveAddition?(track, nil)
         save()
         return true
     }
@@ -619,6 +628,7 @@ final class LibraryStore {
             saved.insert(collection, at: 0)
             savedIDs.insert(collection.id)
             savedDates[collection.id] = Date()
+            if collection.kind == .album { onOctaveAddition?(nil, collection) }
         }
         save()
     }
@@ -789,6 +799,7 @@ final class LibraryStore {
     private(set) var historyRevision = UserDefaults.standard.integer(forKey: "libraryHistoryRevision")
 
     private func save(rebuildingSongs: Bool = true) {
+        groupCache.removeAll()
         if rebuildingSongs {
             rebuildSongs()
             revision += 1

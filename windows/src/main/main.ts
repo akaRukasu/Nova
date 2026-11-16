@@ -516,6 +516,8 @@ app.whenReady().then(async () => {
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
   handle('import:match', (wanted) => match(wanted));
   handle('octave:match', (track: Track) => octave.findRecording(track));
+  handle('octave:library', (args: object) => octavePlayer.library(args));
+  handle('octave:library-index', (tracks: Track[]) => octave.configureOctaveLibrary(tracks));
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;

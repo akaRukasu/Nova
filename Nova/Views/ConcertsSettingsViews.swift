@@ -388,6 +388,28 @@ struct SettingsView: View {
 
             LibraryRestoreSection()
 
+            Section("Bibliothèque Octave") {
+                if let state = player.octaveLibrary.status {
+                    LabeledContent("Références musicales", value: state.tracks.formatted())
+                    LabeledContent("Albums enregistrés sur Octave", value: state.albums.formatted())
+                    if !state.connected { Text("Connecte le compte cloud dans Compte Octave.").foregroundStyle(.secondary) }
+                }
+                if player.octaveLibrary.pending > 0 {
+                    Text("\(player.octaveLibrary.pending) ajout(s) en attente de confirmation par Octave.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if let error = player.octaveLibrary.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+                Button {
+                    Task { await player.octaveLibrary.refresh() }
+                } label: {
+                    HStack {
+                        Text("Actualiser la bibliothèque Octave")
+                        if player.octaveLibrary.busy { Spacer(); ProgressView() }
+                    }
+                }.disabled(player.octaveLibrary.busy)
+                Text("Les morceaux ajoutés ou likés sont ajoutés aux favoris Octave. Les albums ajoutés sont enregistrés sur Octave.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
             Section("Lecture Octave") {
                 Button("Compte et réglages Octave") { player.openOctaveAccount() }
                 Picker("Source des playlists", selection: $playlistSource) {

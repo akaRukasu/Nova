@@ -16,7 +16,7 @@ import { artistNameKey } from '../../shared/artistNames';
 import { libraryEntries, libraryGroups, recentLibraryEntries, releaseType, type LibraryGroup, type LibraryGroupKind } from '../lib/libraryGroups';
 import { useStore } from '../lib/store';
 import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
-import { ArtistHero } from './Content';
+import { AlbumHero, ArtistHero } from './Content';
 
 export function UserPlaylistPage({ id }: { id: string }) {
   const state = useStore(library);
@@ -201,6 +201,7 @@ export function AlbumsPage({ kind = 'album' }: { kind?: LibraryGroupKind }) {
   return (
     <div className="page">
       <PageTitle>{kind === 'artist' ? 'Artistes' : 'Albums'}</PageTitle>
+      <p className="muted library-total">{entries.length.toLocaleString('fr')} {kind === 'artist' ? 'artistes' : 'albums'} dans ta bibliothèque</p>
       {entries.length > 0 && <label className="field library-group-search">{kind === 'artist' ? 'Rechercher un artiste' : 'Rechercher un album'}
         <input type="search" value={query} onChange={event => setQuery(event.target.value)} />
       </label>}
@@ -235,20 +236,13 @@ export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupK
     <TrackList tracks={group.tracks} />
   </div>;
   return <div className="page">
-    <div className="collection-header">
-      <Artwork track={group.artworkTrack} size={200} radius={14} />
-      <div className="collection-info">
-        <p className="eyebrow">{releaseType(group)}</p>
-        <h1>{group.title}</h1>
-        {group.subtitle && <p className="muted">{group.subtitle}</p>}
-        <div className="row-buttons">
+    <AlbumHero title={group.title} artist={group.subtitle} track={group.artworkTrack}
+      details={`${releaseType(group)} · ${group.tracks.length} titres · ${Math.round(group.tracks.reduce((sum, track) => sum + (track.duration || 0), 0) / 60)} min`}>
           <PlayShuffle tracks={group.tracks} />
           {catalogID && <button className="button secondary" onClick={() => open({
             name: 'collection', collection: { id: catalogID, kind: 'album', title: group.title, subtitle: group.subtitle },
           })}>Voir dans le catalogue</button>}
-        </div>
-      </div>
-    </div>
+    </AlbumHero>
     <TrackList tracks={group.tracks} />
   </div>;
 }

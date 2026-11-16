@@ -13,6 +13,7 @@ import { sameRecordingCredits } from './matcher.js';
 const navigationOrigins = new Set([octaveOrigin, 'https://api.octavestreaming.com', 'https://discord.com']);
 const interval = 250;
 const transitionScript = readFileSync(new URL('./nova-octave-transition.js', import.meta.url), 'utf8');
+const libraryScript = readFileSync(new URL('./nova-octave-library.js', import.meta.url), 'utf8');
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Sample = {
@@ -60,16 +61,16 @@ function readPlayback(targetId?: string, mix?: { track: string; pair: number }):
     .filter(row => row.querySelector('button[aria-label="Remove from queue"]') && / · Autoplay/.test(row.textContent ?? ''))
     .slice(0, 30).flatMap(row => {
       const title = row.querySelector('button > div > p:first-child > span.truncate')?.textContent?.trim();
-      const artist = row.querySelector('button > div > p:nth-child(2)')?.cloneNode(true) as HTMLElement | undefined;
-      artist?.querySelectorAll('span').forEach(node => node.remove());
+      const artist = row.querySelector('button > div > p:nth-child(2)')?.textContent
+        ?.replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim();
       const id = row.dataset.trackId;
-      return title && artist?.textContent?.trim() && id && /^\d{1,20}$/.test(id)
-        ? [{id:'octave:'+id,title,artist:artist.textContent.trim(),artwork:row.querySelector('img')?.src,square:true}] : [];
+      return title && artist && id && /^\d{1,20}$/.test(id)
+        ? [{id:'octave:'+id,title,artist,artwork:row.querySelector('img')?.src,square:true}] : [];
     }) : [];
   return {
     id: document.querySelector<HTMLElement>('[data-track-id][data-active="true"]')?.dataset.trackId,
     title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
-    artist: nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '',
+    artist: (nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(),
     album: metadata?.album || undefined, artwork: metadata?.artwork.find((item) => item.src.startsWith('https://'))?.src,
     position: media?.position ?? (position ? Number(position.value) : undefined),
     duration: media?.duration ?? Number(position?.max ?? 0),
@@ -368,6 +369,13 @@ export class OctavePlayer {
     void this.prepare(this.contents()).catch(() => undefined);
   }
 
+  async library(args: object): Promise<unknown> {
+    const contents = this.contents();
+    if (!contents.getURL().startsWith(octaveOrigin + '/')) await this.prepare(contents);
+    if (contents.isDestroyed()) return null;
+    return contents.executeJavaScript(`${libraryScript}\nwindow.novaOctaveLibrary(${JSON.stringify(args)})`).catch(() => null);
+  }
+
   private prepare(contents: WebContents): Promise<Sample['blocked']> {
     const settings = JSON.stringify(this.audioSettings);
     if (this.appliedAudio === settings) return Promise.resolve(undefined);
@@ -570,6 +578,7 @@ export class OctavePlayer {
 
   private matches(track: Track, sample: Sample): boolean {
     const id = octaveCatalogId(track.id);
+    if (id && sample.id === id) return true;
     if (!sample.title) return !!id && sample.id === id;
     return sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist});
   }

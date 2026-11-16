@@ -1,7 +1,7 @@
 import type { Collection, CollectionKind, CollectionPage, Item, Page, PageHeader, Shelf, Track } from '../shared/types.js';
 import { octaveCatalogId, octaveId } from '../shared/octave.js';
 import { artistNameKey } from '../shared/artistNames.js';
-import { confirmClipRecording, mainArtist, matchRecording, normalize, recordingSearchQueries, sameClipRecordingCredits } from './matcher.js';
+import { confirmClipRecording, mainArtist, matchRecording, normalize, playbackArtist, recordingSearchQueries, sameClipRecordingCredits } from './matcher.js';
 import { search as searchYouTube, type SearchScope } from './yt.js';
 
 const base = 'https://api.octavestreaming.com/api';
@@ -107,6 +107,18 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
 
 const recordings = new Map<string, Track>();
 const resolving = new Map<string, Promise<Track | undefined>>();
+const libraryRecordings = new Map<string, Track[]>();
+
+export function configureOctaveLibrary(entries: Track[]) {
+  libraryRecordings.clear();
+  for (const entry of entries) {
+    if (!octaveCatalogId(entry.id) || !entry.albumId || !entry.title || !entry.artist) continue;
+    const key = normalize(entry.title);
+    const bucket = libraryRecordings.get(key) ?? [];
+    bucket.push(entry);
+    libraryRecordings.set(key, bucket);
+  }
+}
 let saveRecordings: ((entries: Record<string, Track>) => Promise<void>) | undefined;
 let savingRecordings: Promise<void> = Promise.resolve();
 
@@ -129,11 +141,14 @@ export async function trackArtwork(track: Track): Promise<string | undefined> {
 }
 
 export async function findRecording(track: Track, excluding?: string): Promise<Track | undefined> {
+  track = { ...track, artist: playbackArtist(track.artist) };
   if (track.id.startsWith('local:')) return undefined;
   if (octaveCatalogId(track.id) && track.albumId && !excluding) return track;
   const key = recordingKey(track);
   const cached = recordings.get(key);
   if (cached && !excluding) return cached;
+  const fromLibrary = matchRecording(track, (libraryRecordings.get(normalize(track.title)) ?? []).filter(item => item.id !== excluding));
+  if (fromLibrary) return rememberRecording(key, fromLibrary);
   if (excluding) return lookupRecording(track, key, excluding);
   const pending = resolving.get(key);
   if (pending) return pending;
