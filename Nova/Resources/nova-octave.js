@@ -83,6 +83,7 @@
   };
 
   function sample() {
+    window.novaOctaveTransition?.();
     const engine = window.__octaveEngine;
     const available = media();
     const audible = available.filter(audio => !audio.paused && !audio.ended);
@@ -100,14 +101,15 @@
     const position = slider('Seek');
     const reportedTime = Number(position?.value);
     const metadata = session?.metadata;
+    const current = window.__octavePlayerStore?.getState?.()?.currentTrack;
     // Android WebView peut lire l'audio sans exposer navigator.mediaSession.
     const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
     if (audio && !audioIds.has(audio)) audioIds.set(audio, ++nextAudioId);
     return {
-      id: document.querySelector('[data-track-id][data-active="true"]')?.getAttribute('data-track-id'),
-      title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
-      artist: (nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(), album: metadata?.album ?? '',
-      artwork: nowPlaying?.querySelector('img')?.src ?? metadata?.artwork.find(item => item.src.startsWith('https:'))?.src,
+      id: current?.id != null ? String(current.id) : document.querySelector('[data-track-id][data-active="true"]')?.getAttribute('data-track-id'),
+      title: current?.title || nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
+      artist: (current?.artist?.name || nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(), album: current?.album?.title ?? metadata?.album ?? '',
+      artwork: current?.album?.cover_big ?? nowPlaying?.querySelector('img')?.src ?? metadata?.artwork.find(item => item.src.startsWith('https:'))?.src,
       position: audio?.currentTime ?? (Number.isFinite(reportedTime) && (reportedTime > 0 || !playing) ? reportedTime : null),
       outgoingPosition: fading ? outgoing.currentTime : undefined,
       audioId: audio ? audioIds.get(audio) : undefined,

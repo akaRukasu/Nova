@@ -2,8 +2,10 @@ import Foundation
 
 final class ReleasePagesProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool {
-        guard let url = request.url, url.host == "api.deezer.com" else { return false }
+        guard let url = request.url else { return false }
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        if url.host == "musicbrainz.org" { return query?.contains { $0.value?.contains("Nova Release QA & Duo") == true } == true }
+        guard url.host == "api.deezer.com" else { return false }
         return url.path == "/artist/-4242/albums" || query?.first(where: { $0.name == "q" })?.value == "Nova Release QA & Duo"
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -12,7 +14,14 @@ final class ReleasePagesProtocol: URLProtocol, @unchecked Sendable {
         let url = request.url!
         let artist: [String: Any] = ["id": -4242, "name": "Nova Release QA & Duo"]
         let json: [String: Any]
-        if url.path == "/search/artist" {
+        if url.host == "musicbrainz.org" {
+            let future = String(ISO8601DateFormatter().string(from: Date().addingTimeInterval(40 * 86_400)).prefix(10))
+            let credits: [[String: Any]] = [["artist": ["name": "Nova Release QA & Duo"]]]
+            json = ["count": 2, "release-groups": [
+                ["id": "11111111-2222-3333-4444-555555555555", "title": "Album annoncé", "first-release-date": future, "primary-type": "Album", "artist-credit": credits],
+                ["id": "22222222-2222-3333-4444-555555555555", "title": "Date encore incomplète", "first-release-date": "2099-12", "primary-type": "Album", "artist-credit": credits]
+            ]]
+        } else if url.path == "/search/artist" {
             json = ["data": [["id": -1, "name": "Autre artiste"], artist]]
         } else if url.query?.contains("index=100") == true {
             let today = ISO8601DateFormatter().string(from: Date()).prefix(10)
@@ -36,8 +45,8 @@ func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
 do {
     URLProtocol.registerClass(ReleasePagesProtocol.self)
     let recentReleases = try await ReleasesService.releases(artistNames: ["Nova Release QA & Duo"], since: Date().addingTimeInterval(-30 * 86_400))
-    try require(recentReleases.count == 1 && recentReleases.first?.id == -4242, "Les sorties récentes doivent être cherchées après les 100 premiers disques et chez le bon artiste")
-    try require(recentReleases.first?.type == "single", "Les singles doivent rester présents dans les sorties")
+    try require(recentReleases.count == 2 && recentReleases.contains { $0.id == -4242 && $0.type == "single" }, "Les sorties récentes doivent être cherchées après les 100 premiers disques et chez le bon artiste")
+    try require(recentReleases.filter(\.isUpcoming).count == 1 && recentReleases.first?.title == "Album annoncé", "Les sorties annoncées après sept jours doivent apparaître avec une date complète")
     URLProtocol.unregisterClass(ReleasePagesProtocol.self)
     print("Sorties OK — artiste exact, caractère &, pagination complète et singles récents")
     let restoredLibrary = await LibraryStore()

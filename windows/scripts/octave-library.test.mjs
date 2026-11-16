@@ -45,11 +45,17 @@ test('official library snapshots paginate and deduplicate without reading accoun
   const sdk=setup();
   const {value,error}=await sdk.run({operation:'refresh'});
   assert.equal(error,undefined);assert.equal(value.tracks,650);assert.equal(value.connected,true);
+  assert.equal(value.libraryAlbums,1);assert.equal(value.libraryArtists,1);assert.equal(value.playlists,0);
   assert.equal(sdk.call({operation:'page',offset:0}).tracks.length,300);
   assert.equal(sdk.call({operation:'page',offset:600}).tracks.length,50);
   assert.equal(sdk.call({operation:'page',offset:0}).tracks[0].albumId,'octave:8');
-  await sdk.run({operation:'refresh'});
+  const repeated=await sdk.run({operation:'refresh'});
+  assert.equal(repeated.value.updatedAt,value.updatedAt);
   assert.equal(sdk.counts().pulled,1);
+  sdk.state.playlists.push({id:'imported',tracks:[{...track(901),artist:{id:99,name:'Another Artist'},album:{id:77,title:'Another Album'}}]});
+  const refreshed=await sdk.run({operation:'refresh'});
+  assert.equal(refreshed.value.tracks,651);assert.equal(refreshed.value.libraryAlbums,2);
+  assert.equal(refreshed.value.libraryArtists,2);assert.equal(refreshed.value.playlists,1);
 });
 
 test('additions use idempotent client methods and preserve unrelated library tracks',async()=>{

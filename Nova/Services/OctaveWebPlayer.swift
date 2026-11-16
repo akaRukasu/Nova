@@ -108,6 +108,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         panel = false
         view.removeFromSuperview()
         attach()
+        refreshSettings()
     }
 
     func warmUp() {

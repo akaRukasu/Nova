@@ -17,6 +17,11 @@ struct Release: Identifiable, Codable, Hashable {
     /// « album », « single », « ep »…
     var type: String
     var genre: String?
+    var sourceURL: URL?
+
+    var isUpcoming: Bool {
+        releaseDate.map { Calendar.current.startOfDay(for: $0) > Calendar.current.startOfDay(for: Date()) } ?? false
+    }
 
     var typeLabel: String {
         switch type.lowercased() {
@@ -62,8 +67,9 @@ enum ReleasesService {
         }
         artists = Array(artists.prefix(100))
         var releases = try await albums(of: artists, since: since)
+        releases += (try? await upcoming(artistNames: artists.map(\.1))) ?? []
         for index in releases.indices { releases[index].genre = genre.name }
-        return releases
+        return combine(releases)
     }
 
     /// Sorties d'artistes nommés (artistes suivis ou les plus écoutés).
@@ -91,7 +97,9 @@ enum ReleasesService {
         }
         var seen = Set<Int>()
         artists = artists.filter { seen.insert($0.0).inserted }
-        return try await albums(of: artists, since: since)
+        var releases = try await albums(of: artists, since: since)
+        releases += (try? await upcoming(artistNames: artists.map(\.1))) ?? []
+        return combine(releases)
     }
 
     /// Sorties d'un artiste depuis `since`.
@@ -121,7 +129,7 @@ enum ReleasesService {
                         }
                         return albums.compactMap { item -> Release? in
                             guard var release = release(from: item, genre: nil),
-                                  let date = release.releaseDate, date >= since, date <= Date().addingTimeInterval(86_400 * 7)
+                                  let date = release.releaseDate, date >= since
                             else { return nil }
                             release.artist = name
                             return release
@@ -146,7 +154,56 @@ enum ReleasesService {
                        coverURL: cover.flatMap(URL.init(string:)),
                        releaseDate: (item["release_date"] as? String).flatMap(dateFormatter.date(from:)),
                        type: item["record_type"] as? String ?? "album",
-                       genre: genre)
+                       genre: genre, sourceURL: URL(string: "https://www.deezer.com/album/\(id)"))
+    }
+
+    static func combine(_ releases: [Release]) -> [Release] {
+        var seen = Set<String>()
+        return releases.filter { release in
+            let key = [TrackMatcher.normalize(release.title), TrackMatcher.normalize(release.artist), release.releaseDate.map { dateFormatter.string(from: $0) } ?? String(release.id)].joined(separator: "|")
+            return seen.insert(key).inserted
+        }.sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
+    }
+
+    static func upcoming(artistNames: [String]) async throws -> [Release] {
+        let names = Array(Set(artistNames)).sorted()
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        var result: [Release] = []
+        for offset in stride(from: 0, to: names.count, by: 40) {
+            let batch = Array(names[offset..<min(offset + 40, names.count)])
+            let quoted = batch.map { name in
+                "artist:\"" + name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+            }.joined(separator: " OR ")
+            let query = "firstreleasedate:[\(dateFormatter.string(from: tomorrow)) TO *] AND (\(quoted))"
+            var page = 0
+            var total = 1
+            while page < total {
+                var url = URLComponents(string: "https://musicbrainz.org/ws/2/release-group")!
+                url.queryItems = [URLQueryItem(name: "query", value: query), URLQueryItem(name: "fmt", value: "json"), URLQueryItem(name: "limit", value: "100"), URLQueryItem(name: "offset", value: String(page))]
+                let data = try await ReleaseAnnouncements.shared.get(url.url!)
+                let json = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                let groups = json["release-groups"] as? [[String: Any]] ?? []
+                for group in groups {
+                    guard let id = group["id"] as? String, UUID(uuidString: id) != nil,
+                          let title = group["title"] as? String,
+                          let rawDate = group["first-release-date"] as? String, rawDate.count == 10,
+                          let date = dateFormatter.date(from: rawDate), dateFormatter.string(from: date) == rawDate,
+                          let credits = group["artist-credit"] as? [[String: Any]],
+                          let number = Int(id.replacingOccurrences(of: "-", with: "").prefix(15), radix: 16) else { continue }
+                    let artists = credits.compactMap { ($0["artist"] as? [String: Any])?["name"] as? String }
+                    guard artists.contains(where: { artist in batch.contains { TrackMatcher.normalize($0) == TrackMatcher.normalize(artist) } }) else { continue }
+                    let release = Release(id: -number, title: title, artist: artists.joined(separator: " & "),
+                        coverURL: URL(string: "https://coverartarchive.org/release-group/\(id)/front-500"), releaseDate: date,
+                        type: (group["primary-type"] as? String ?? "album").lowercased(),
+                        sourceURL: URL(string: "https://musicbrainz.org/release-group/\(id)"))
+                    if release.isUpcoming { result.append(release) }
+                }
+                guard !groups.isEmpty else { break }
+                page += groups.count
+                total = json["count"] as? Int ?? page
+            }
+        }
+        return combine(result)
     }
 
     /// Requête à l'API publique de Deezer, avec nouvel essai quand le quota est atteint.
@@ -162,6 +219,24 @@ enum ReleasesService {
             return try await get(address, attempt: attempt + 1)
         }
         return json
+    }
+}
+
+private actor ReleaseAnnouncements {
+    static let shared = ReleaseAnnouncements()
+    private var nextRequest = Date.distantPast
+
+    func get(_ url: URL) async throws -> Data {
+        let slot = max(Date(), nextRequest)
+        nextRequest = slot.addingTimeInterval(1.1)
+        let delay = slot.timeIntervalSinceNow
+        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("Nova/0.4.17 (https://github.com/akaRukasu/Nova)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return data
     }
 }
 

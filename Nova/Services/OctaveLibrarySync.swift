@@ -10,6 +10,9 @@ final class OctaveLibrarySync {
         var albums: Int
         var artists: Int
         var updatedAt: Double
+        var playlists: Int?
+        var libraryAlbums: Int?
+        var libraryArtists: Int?
     }
     private struct Addition: Codable {
         var key: String
@@ -58,7 +61,7 @@ final class OctaveLibrarySync {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self, !Task.isCancelled else { return }
-                if pending > 0 || youtubePending > 0 { await refresh() }
+                await refresh()
             }
         }
     }
@@ -157,14 +160,15 @@ final class OctaveLibrarySync {
         do {
             var state = try await run("refresh")
             var tracks: [Track] = []
-            for offset in stride(from: 0, to: state.tracks, by: 300) {
+            let changed = status?.updatedAt != state.updatedAt
+            for offset in stride(from: 0, to: changed ? state.tracks : 0, by: 300) {
                 if let page = await player.libraryCall(["operation": "page", "offset": offset]) as? [String: Any],
                    let raw = page["tracks"], JSONSerialization.isValidJSONObject(raw),
                    let entries = try? JSONDecoder().decode([Entry].self, from: JSONSerialization.data(withJSONObject: raw)) {
                     tracks.append(contentsOf: entries.map(\.track))
                 }
             }
-            await OctaveCatalog.shared.setLibraryRecordings(state.connected ? tracks : [])
+            if changed { await OctaveCatalog.shared.setLibraryRecordings(state.connected ? tracks : []) }
             status = state
             for item in outbox.filter({ $0.octaveDone != true }).prefix(20) {
                 guard state.connected, outbox.contains(where: { $0.key == item.key }) else { break }

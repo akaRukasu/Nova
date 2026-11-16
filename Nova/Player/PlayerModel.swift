@@ -1004,14 +1004,6 @@ final class PlayerModel {
                     updateNowPlaying()
                     return
                 }
-                if sample.fading == true {
-                    if let position = sample.outgoingPosition, position >= currentTime, position <= duration + 1 {
-                        currentTime = position
-                    }
-                    isPlaying = sample.playing
-                    updateNowPlaying()
-                    continue
-                }
                 guard let position = sample.position else { continue }
                 let previous = currentTime
                 var changed = false

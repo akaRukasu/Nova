@@ -98,7 +98,10 @@ struct NowPlayingView: View {
         .sheet(isPresented: Binding(
             get: { player.showsOctaveAccount && router.showPlayer },
             set: { if !$0 { player.showsOctaveAccount = false } }
-        ), onDismiss: { player.octave.hideAccount() }) {
+        ), onDismiss: {
+            player.octave.hideAccount()
+            Task { await player.octaveLibrary.refresh() }
+        }) {
             OctaveAccountSheet()
         }
         .newPlaylistAlert(isActive: true)

@@ -102,6 +102,10 @@ test('Android without MediaSession reports the actual track, audio clock and aut
   assert.equal(state.position, 4);
   incoming.readyState = 2;
   assert.equal(window.novaOctave('sample').buffering, true);
+  window.__octavePlayerStore = {getState:()=>({currentTrack:{id:900,title:'Titre réellement lu',artist:{name:'Artiste suivant'},album:{title:'Album suivant',cover_big:'https://example.com/new.jpg'}}})};
+  state = window.novaOctave('sample');
+  assert.equal(state.id,'900');assert.equal(state.title,'Titre réellement lu');
+  assert.equal(state.artist,'Artiste suivant');assert.equal(state.position,4);
 });
 
 test('a metadata change on the same deck and clock does not commit a handoff', () => {

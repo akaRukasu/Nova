@@ -1,7 +1,7 @@
 {
   "name": "nova-windows",
   "productName": "Nova",
-  "version": "0.4.24",
+  "version": "0.4.25",
   "description": "Nova pour Windows : lecture Octave intégrée et historique YouTube Music.",
   "main": "dist/main/main.js",
   "private": true,

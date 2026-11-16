@@ -8,6 +8,7 @@
   const jobs = new Map();
   let context, sdk, connecting, jobID = 0, lastPull = 0;
   let snapshot = [], snapshotAt = 0;
+  let snapshotInputs, snapshotAlbums = 0, snapshotArtists = 0;
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const numeric = id => /^\d{1,20}$/.test(String(id)) ? String(id) : null;
   const safeImage = value => typeof value === 'string' && value.startsWith('https://') ? value : undefined;
@@ -69,11 +70,16 @@
     const account = client.account.useAccount.getState();
     return { connected: Boolean(account.userId), pending: Boolean(account.dirty),
       albums: state.savedAlbums?.length ?? 0, artists: state.followedArtists?.length ?? 0,
-      tracks: snapshot.length, updatedAt: snapshotAt };
+      tracks: snapshot.length, updatedAt: snapshotAt,
+      playlists: (state.playlists ?? []).filter(list => list.id !== 'liked').length,
+      libraryAlbums: snapshotAlbums, libraryArtists: snapshotArtists };
   }
 
   function buildSnapshot(client) {
     const library = client.library.useLibrary.getState();
+    const inputs = [library.playlists, ...(library.playlists ?? []).map(list => list.tracks), library.trackMeta, library.recentTracks,
+      library.savedAlbums, library.savedAlbums?.length, library.followedArtists, library.followedArtists?.length];
+    if (snapshotInputs?.every((value, index) => value === inputs[index])) return status(client);
     const raw = [ ...(library.playlists ?? []).flatMap(list => list.tracks ?? []),
       ...Object.values(library.trackMeta ?? {}), ...(library.recentTracks ?? []) ];
     const seen = new Set();
@@ -89,13 +95,16 @@
         artistId: numeric(artist?.id) ? 'octave:' + artist.id : undefined, square: true }];
     });
     snapshotAt = Date.now();
+    snapshotInputs = inputs;
+    snapshotAlbums = new Set(snapshot.filter(track => track.albumId || track.album).map(track => track.albumId ?? JSON.stringify([track.album, track.artist]))).size;
+    snapshotArtists = new Set(snapshot.filter(track => track.artistId || track.artist).map(track => track.artistId ?? track.artist.trim().toLowerCase())).size;
     return status(client);
   }
 
   async function refresh() {
     const clientSDK = await client();
     const account = clientSDK.account.useAccount.getState();
-    if (account.userId && Date.now() - lastPull > 30000) {
+    if (account.userId && !account.dirty && Date.now() - lastPull > 30000) {
       await clientSDK.sync.syncToDevice();
       lastPull = Date.now();
     }

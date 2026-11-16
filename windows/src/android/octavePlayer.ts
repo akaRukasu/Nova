@@ -219,12 +219,6 @@ export class AndroidOctavePlayer {
         return;
       }
       if (sample.position == null) return;
-      if (sample.fading) {
-        if (sample.outgoingPosition != null && sample.outgoingPosition >= active.position) active.position = sample.outgoingPosition;
-        this.publish({request:active.request,time:active.position,duration:active.duration,
-          playing:sample.playing,mixing:sample.mixing,upcoming:sample.upcoming});
-        return;
-      }
       let next: Track | undefined;
       let queuedTrackId: string | undefined;
       const planned = active.next;

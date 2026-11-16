@@ -43,6 +43,7 @@ type Playback = {
 function readPlayback(targetId?: string, mix?: { track: string; pair: number }): Sample {
   const player = navigator.mediaSession;
   const metadata = player?.metadata;
+  const current = (window as Window & { __octavePlayerStore?: { getState(): { currentTrack?: { id: string | number; title?: string; artist?: { name?: string }; album?: { title?: string; cover_big?: string } } } } }).__octavePlayerStore?.getState().currentTrack;
   const nowPlaying = document.querySelector('[data-np-zoom-host="true"]');
   const media = (window as Window & { __novaOctaveMedia?: OctaveMedia }).__novaOctaveMedia?.read();
   if (mix && media?.playing && !media.fading && media.position != null) {
@@ -68,10 +69,10 @@ function readPlayback(targetId?: string, mix?: { track: string; pair: number }):
         ? [{id:'octave:'+id,title,artist,artwork:row.querySelector('img')?.src,square:true}] : [];
     }) : [];
   return {
-    id: document.querySelector<HTMLElement>('[data-track-id][data-active="true"]')?.dataset.trackId,
-    title: nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
-    artist: (nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(),
-    album: metadata?.album || undefined, artwork: metadata?.artwork.find((item) => item.src.startsWith('https://'))?.src,
+    id: current?.id != null ? String(current.id) : document.querySelector<HTMLElement>('[data-track-id][data-active="true"]')?.dataset.trackId,
+    title: current?.title || nowPlaying?.querySelector('[data-marquee-copy="true"]')?.textContent?.trim() || metadata?.title || '',
+    artist: (current?.artist?.name || nowPlaying?.querySelector('p')?.textContent?.trim() || metadata?.artist || '').replace(/\s*[·•]\s*(?:autoplay|lecture automatique)\s*$/i, '').trim(),
+    album: current?.album?.title ?? metadata?.album ?? undefined, artwork: current?.album?.cover_big ?? metadata?.artwork.find((item) => item.src.startsWith('https://'))?.src,
     position: media?.position ?? (position ? Number(position.value) : undefined),
     duration: media?.duration ?? Number(position?.max ?? 0),
     playing: media ? media.playing : player?.playbackState === 'playing',
@@ -571,7 +572,7 @@ export class OctavePlayer {
 
   private read(contents: WebContents, targetId?: string, mix?: { track: string; pair: number }): Promise<Sample | undefined> {
     if (contents.isDestroyed() || !contents.getURL().startsWith(`${octaveOrigin}/`)) return Promise.resolve(undefined);
-    const install = mix ? `if (!window.novaOctaveTransition) { ${transitionScript} }` : '';
+    const install = `if (!window.novaOctaveTransition) { ${transitionScript} } window.novaOctaveTransition?.();`;
     return contents.executeJavaScript(`${install}\n(${readPlayback.toString()})(${JSON.stringify(targetId)}, ${JSON.stringify(mix)})`)
       .catch(() => undefined);
   }
@@ -598,14 +599,6 @@ export class OctavePlayer {
         return;
       }
       if (sample.position === undefined) return;
-      if (sample.fading) {
-        // Octave peut publier les métadonnées du titre entrant avant la fin du fondu.
-        // Attendre la fin de sa transition avant de déplacer la file Nova.
-        if (sample.outgoingPosition != null && sample.outgoingPosition >= playback.position) playback.position = sample.outgoingPosition;
-        this.status({request:playback.request,time:playback.position,duration:playback.duration,
-          playing:sample.playing, mixing:sample.mixing, upcoming:sample.upcoming});
-        return;
-      }
       const delta = sample.position - playback.position;
       let next: Track | undefined;
       let queuedTrackId: string | undefined;

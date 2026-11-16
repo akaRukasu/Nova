@@ -392,6 +392,9 @@ struct SettingsView: View {
             Section("Bibliothèque Octave") {
                 if let state = player.octaveLibrary.status {
                     LabeledContent("Références musicales", value: state.tracks.formatted())
+                    if let count = state.playlists { LabeledContent("Playlists", value: count.formatted()) }
+                    if let count = state.libraryAlbums { LabeledContent("Albums dans les morceaux", value: count.formatted()) }
+                    if let count = state.libraryArtists { LabeledContent("Artistes dans les morceaux", value: count.formatted()) }
                     LabeledContent("Albums enregistrés sur Octave", value: state.albums.formatted())
                     if !state.connected { Text("Connecte le compte cloud dans Compte Octave.").foregroundStyle(.secondary) }
                 }
@@ -560,6 +563,10 @@ struct SettingsView: View {
         }
         .navigationTitle("Réglages")
         .onDisappear { if player.source == .octave { player.octave.refreshSettings() } }
+        .onChange(of: "\(octaveQuality)|\(octaveTransition)|\(octaveAutomixStyle)|\(octaveAutoplay)|\(octaveGapless)|\(octaveSoundCheck)|\(octaveSmartShuffle)") {
+            player.octave.refreshSettings()
+        }
+        .task { await player.octaveLibrary.refresh() }
         .sheet(isPresented: $showAccount) { AccountSheet() }
         .sheet(isPresented: $showImport) { ImportView() }
         .task { cacheSize = await AudioCache.shared.sizeInBytes() }
