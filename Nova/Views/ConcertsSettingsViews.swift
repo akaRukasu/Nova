@@ -397,6 +397,9 @@ struct SettingsView: View {
                 if player.octaveLibrary.pending > 0 {
                     Text("\(player.octaveLibrary.pending) ajout(s) en attente de confirmation par Octave.").font(.footnote).foregroundStyle(.secondary)
                 }
+                if player.octaveLibrary.youtubePending > 0 {
+                    Text("\(player.octaveLibrary.youtubePending) ajout(s) en attente de confirmation par YouTube Music.").font(.footnote).foregroundStyle(.secondary)
+                }
                 if let error = player.octaveLibrary.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 Button {
                     Task { await player.octaveLibrary.refresh() }
@@ -406,7 +409,7 @@ struct SettingsView: View {
                         if player.octaveLibrary.busy { Spacer(); ProgressView() }
                     }
                 }.disabled(player.octaveLibrary.busy)
-                Text("Les morceaux ajoutés ou likés sont ajoutés aux favoris Octave. Les albums ajoutés sont enregistrés sur Octave.")
+                Text("Les nouveaux titres et albums ajoutés dans Nova sont envoyés à Octave et à YouTube Music quand les comptes sont connectés.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
 

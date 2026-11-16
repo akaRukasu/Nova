@@ -172,7 +172,7 @@ struct NowPlayingView: View {
             }
             Spacer()
             if let track = player.current {
-                let liked = library.isLiked(track.id)
+                let liked = library.isLiked(track)
                 Button {
                     player.toggleLike(track)
                 } label: {

@@ -7,7 +7,7 @@ import { EQ_PRESETS } from '../lib/equalizer';
 import { api, isAndroid, on, supportsOctave } from '../lib/api';
 import { octaveLibrary, refreshOctaveLibrary } from '../lib/octaveLibrary';
 import { jam, jamCommand, joinJam, joinJamInvitation, joinRemoteJam, leaveJam, openJamInvitation, refreshJamCircle, saveJamCircle, setGuestsCanControl, setListenAlong, startJam } from '../lib/jam';
-import { account, importIntoPlaylist, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
+import { account, importIntoPlaylist, importOctaveLibrary, library, mergeFromPhone, notify, phoneSync, refreshAccount, updateSettings, upsertPlaylist } from '../lib/library';
 import { player } from '../lib/player';
 import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
 import QRCode from 'qrcode';
@@ -76,6 +76,21 @@ export function ImportPage() {
     <div className="page narrow">
       <PageTitle>Importer</PageTitle>
       <PhoneTransfer />
+      {supportsOctave && <section className="phone-transfer"><div>
+        <h3>Bibliothèque Octave</h3>
+        <p className="muted small">Ouvre le fichier JSON exporté depuis Réglages → Library → Export Library dans Octave.</p>
+        <button className="button secondary" disabled={busy || running} onClick={async () => {
+          setBusy(true); setError(undefined);
+          try {
+            const data = await api.openOctaveBackup();
+            if (data) {
+              const result = importOctaveLibrary(data);
+              notify(`${result.tracks.toLocaleString('fr')} titres et ${result.playlists} playlists Octave vérifiés dans ta bibliothèque.`);
+            }
+          } catch (e) { setError(errorText(e)); }
+          finally { setBusy(false); }
+        }}><Icon name="import" size={16} /> Ouvrir une sauvegarde Octave</button>
+      </div></section>}
       <ImportJournal disabled={running} onBusy={setRunning} />
       <h3 className="section-title">Mes fichiers audio</h3>
       <p className="muted small">Ajoute tes MP3, WAV, FLAC, M4A, AAC et autres fichiers audio à Nova pour les écouter sur cet appareil.</p>
@@ -587,8 +602,9 @@ export function SettingsPage() {
             <p className="muted small">{cloud.status
               ? `${cloud.status.tracks.toLocaleString('fr')} références musicales · ${cloud.status.albums.toLocaleString('fr')} albums enregistrés sur Octave`
               : 'Connecte ton compte cloud dans Compte Octave pour retrouver ta bibliothèque.'}</p>
-            <p className="muted small">Les titres ajoutés aux favoris et les albums ajoutés dans Nova sont aussi ajoutés à Octave.</p>
+            <p className="muted small">Les nouveaux titres et albums ajoutés dans Nova sont envoyés à Octave et à YouTube Music quand les comptes sont connectés.</p>
             {cloud.pending > 0 && <p className="muted small">{cloud.pending} ajout(s) en attente de confirmation par Octave.</p>}
+            {cloud.youtubePending > 0 && <p className="muted small">{cloud.youtubePending} ajout(s) en attente de confirmation par YouTube Music.</p>}
             {cloud.error && <p className="error small" role="status">{cloud.error}</p>}
             <button className="button secondary" disabled={cloud.busy} onClick={() => void refreshOctaveLibrary()}>
               <Icon name="refresh" size={16} /> {cloud.busy ? 'Synchronisation…' : 'Actualiser la bibliothèque Octave'}

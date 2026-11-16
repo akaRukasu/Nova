@@ -24,7 +24,7 @@ export function TrackRow({ track, index, onPlay, showArtwork = true, showAlbum =
   const state = useStore(playerState);
   useStore(library);
   const current = state.queue[state.index]?.id === track.id;
-  const liked = isLiked(track.id);
+  const liked = isLiked(track);
   const octave = isOctaveId(track.id);
   const playLabel = octave ? `Lire ${track.title} dans Octave` : `Lire ${track.title}`;
   return (

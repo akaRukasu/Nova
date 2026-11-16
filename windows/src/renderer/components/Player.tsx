@@ -116,7 +116,7 @@ export function PlayerBar() {
   const jamState = useStore(jam);
   const track = state.queue[state.index];
   if (!track) return <footer className="player-bar empty"><span>Choisis un titre pour commencer l’écoute.</span></footer>;
-  const liked = isLiked(track.id);
+  const liked = isLiked(track);
   const { automix } = playbackOptions(library.get().settings, state.source);
   return (
     <footer className="player-bar">
@@ -264,7 +264,7 @@ export function NowPlaying() {
   }, []);
 
   if (!mode || !track) return null;
-  const liked = isLiked(track.id);
+  const liked = isLiked(track);
   const { automix } = playbackOptions(library.get().settings, state.source);
   return (
     <div className="now-playing">

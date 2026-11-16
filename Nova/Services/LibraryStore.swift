@@ -31,6 +31,7 @@ final class LibraryStore {
     private var savedIDs: Set<String> = []
     @ObservationIgnored private var groupCache: [String: [MusicGroup]] = [:]
     @ObservationIgnored var onOctaveAddition: ((Track?, MusicCollection?) -> Void)?
+    @ObservationIgnored var onLibraryRemoval: ((Track?, MusicCollection?) -> Void)?
 
     private struct Snapshot: Codable {
         var recents: [Track]?
@@ -114,6 +115,7 @@ final class LibraryStore {
     func removeFromLibrary(_ track: Track) {
         guard addedIDs.remove(track.id) != nil else { return }
         addedTracks.removeAll { $0.id == track.id }
+        if !isLiked(track.id) { onLibraryRemoval?(track, nil) }
         save()
     }
 
@@ -428,13 +430,22 @@ final class LibraryStore {
     // MARK: Titres likés
 
     func isLiked(_ id: String) -> Bool { likedIDs.contains(id) }
+    func isLiked(_ track: Track) -> Bool { liked.contains { Self.sameTrackID($0, track) } }
+
+    private static func sameTrackID(_ a: Track, _ b: Track) -> Bool {
+        a.id == b.id || a.youtubeID == b.id || b.youtubeID == a.id || (a.youtubeID != nil && a.youtubeID == b.youtubeID)
+    }
 
     /// Renvoie le nouvel état.
     @discardableResult
     func toggleLike(_ track: Track) -> Bool {
-        if likedIDs.contains(track.id) {
-            liked.removeAll { $0.id == track.id }
-            likedIDs.remove(track.id)
+        let matching = liked.filter { Self.sameTrackID($0, track) }
+        if !matching.isEmpty {
+            liked.removeAll { Self.sameTrackID($0, track) }
+            for candidate in matching {
+                likedIDs.remove(candidate.id)
+                if !addedTracks.contains(where: { Self.sameTrackID($0, candidate) }) { onLibraryRemoval?(candidate, nil) }
+            }
             save()
             return false
         }
@@ -624,6 +635,7 @@ final class LibraryStore {
         if savedIDs.contains(collection.id) {
             saved.removeAll { $0.id == collection.id }
             savedIDs.remove(collection.id)
+            if collection.kind == .album { onLibraryRemoval?(nil, collection) }
         } else {
             saved.insert(collection, at: 0)
             savedIDs.insert(collection.id)
@@ -692,6 +704,73 @@ final class LibraryStore {
         var playlists: Int
         var tracks: Int
         var message: String { "Bibliothèque restaurée : \(playlists) playlists et \(tracks) titres. Les données déjà présentes ont été conservées." }
+    }
+
+    @discardableResult
+    func importOctaveBackup(_ state: OctaveBackup.State) -> RestoreSummary {
+        var allTracks: [String: Track] = [:]
+        var names = Set<String>()
+        var positions: [String: Int] = [:]
+        let key: (String) -> String = { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        for (index, list) in playlists.enumerated() where positions[key(list.name)] == nil {
+            positions[key(list.name)] = index
+        }
+        for source in state.playlists {
+            let tracks = (source.tracks ?? []).compactMap { $0.track() }
+            for track in tracks { allTracks[track.id] = track }
+            if source.id == "liked" {
+                liked = Self.mergeImportedRecordings(liked, tracks)
+                continue
+            }
+            guard let name = source.name, !key(name).isEmpty else { continue }
+            let nameKey = key(name)
+            names.insert(nameKey)
+            if let index = positions[nameKey] {
+                playlists[index].tracks = Self.mergeImportedRecordings(playlists[index].tracks, tracks)
+            } else {
+                positions[nameKey] = playlists.count
+                playlists.append(UserPlaylist(name: name, tracks: Self.mergeImportedRecordings([], tracks), createdAt: source.createdAt ?? Date()))
+            }
+        }
+        for collection in (state.savedAlbums ?? []).compactMap({ $0.collection(.album) }) + (state.followedArtists ?? []).compactMap({ $0.collection(.artist) }) {
+            if savedIDs.insert(collection.id).inserted { saved.append(collection) }
+        }
+        likedIDs = Set(liked.map(\.id))
+        save()
+        let references = Array(allTracks.values)
+        Task { await OctaveCatalog.shared.setLibraryRecordings(references, imported: true) }
+        return RestoreSummary(playlists: names.count, tracks: references.count)
+    }
+
+    func refreshImportedRecordings() async {
+        var tracks: [String: Track] = [:]
+        for track in addedTracks + liked + playlists.flatMap(\.tracks) where OctaveCatalog.id(track.id) != nil {
+            tracks[track.id] = track
+        }
+        await OctaveCatalog.shared.setLibraryRecordings(Array(tracks.values), imported: true)
+    }
+
+    static func mergeImportedRecordings(_ existing: [Track], _ incoming: [Track]) -> [Track] {
+        func release(_ track: Track) -> String {
+            [track.title, track.artist, track.album ?? ""].map { OctaveCatalog.normalize($0) }.joined(separator: "|")
+        }
+        var tracks = existing
+        var known = Set(existing.flatMap { [$0.id, $0.youtubeID].compactMap { $0 } })
+        let byRelease = Dictionary(grouping: existing.indices.filter { existing[$0].album != nil && !existing[$0].id.hasPrefix("local:") }, by: { release(existing[$0]) })
+        for track in incoming where known.insert(track.id).inserted {
+            if let youtubeID = track.youtubeID, known.contains(youtubeID) { continue }
+            let other = track.album.flatMap { _ in byRelease[release(track)]?.first(where: { index in
+                let candidate = tracks[index]
+                guard (OctaveCatalog.id(candidate.id) != nil) != (OctaveCatalog.id(track.id) != nil),
+                      let a = candidate.duration, let b = track.duration else { return false }
+                return abs(a - b) <= 5
+            }) }
+            if let other {
+                if OctaveCatalog.id(tracks[other].id) != nil && tracks[other].youtubeID == nil { tracks[other].youtubeID = track.id }
+                if tracks[other].artworkURL == nil { tracks[other].artworkURL = track.artworkURL }
+            } else { tracks.append(track) }
+        }
+        return tracks
     }
 
     /// Le format portable du PC et de l’iPhone utilise des dates Unix en millisecondes.

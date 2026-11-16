@@ -12,9 +12,11 @@ actor OctaveCatalog {
     private var recordings: [String: Track] = [:]
     private var resolving: [String: Task<Track?, Error>] = [:]
     private var libraryRecordings: [String: [Track]] = [:]
+    private var importedRecordings: [String: [Track]] = [:]
 
-    func setLibraryRecordings(_ tracks: [Track]) {
-        libraryRecordings = Dictionary(grouping: tracks.filter { Self.trackURL($0) != nil }, by: { Self.normalize($0.title) })
+    func setLibraryRecordings(_ tracks: [Track], imported: Bool = false) {
+        let entries = Dictionary(grouping: tracks.filter { Self.trackURL($0) != nil }, by: { Self.normalize($0.title) })
+        if imported { importedRecordings = entries } else { libraryRecordings = entries }
     }
     private var saveTask: Task<Void, Never>?
     private let recordingFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -44,8 +46,8 @@ actor OctaveCatalog {
         }
     }
 
-    struct Entry: Decodable {
-        struct ID: Decodable {
+    struct Entry: Decodable, Sendable {
+        struct ID: Decodable, Sendable {
             let value: String
             init(from decoder: Decoder) throws {
                 let container = try decoder.singleValueContainer()
@@ -53,7 +55,7 @@ actor OctaveCatalog {
                 else { value = try container.decode(String.self) }
             }
         }
-        struct Detail: Decodable {
+        struct Detail: Decodable, Sendable {
             var id: ID?
             var title: String?
             var name: String?
@@ -330,7 +332,8 @@ actor OctaveCatalog {
         if Self.trackURL(track) != nil { return track }
         let key = recordingKey(track)
         if let known = recordings[key] { return known }
-        if let found = suitable(track, libraryRecordings[Self.normalize(track.title)] ?? []) {
+        let title = Self.normalize(track.title)
+        if let found = suitable(track, (importedRecordings[title] ?? []) + (libraryRecordings[title] ?? [])) {
             recordings[key] = found
             saveRecordings()
             return found

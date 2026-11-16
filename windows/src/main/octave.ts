@@ -108,15 +108,17 @@ export async function search(query: string, scope: SearchScope): Promise<Shelf[]
 const recordings = new Map<string, Track>();
 const resolving = new Map<string, Promise<Track | undefined>>();
 const libraryRecordings = new Map<string, Track[]>();
+const importedRecordings = new Map<string, Track[]>();
 
-export function configureOctaveLibrary(entries: Track[]) {
-  libraryRecordings.clear();
+export function configureOctaveLibrary(entries: Track[], source?: 'imported') {
+  const index = source === 'imported' ? importedRecordings : libraryRecordings;
+  index.clear();
   for (const entry of entries) {
     if (!octaveCatalogId(entry.id) || !entry.albumId || !entry.title || !entry.artist) continue;
     const key = normalize(entry.title);
-    const bucket = libraryRecordings.get(key) ?? [];
+    const bucket = index.get(key) ?? [];
     bucket.push(entry);
-    libraryRecordings.set(key, bucket);
+    index.set(key, bucket);
   }
 }
 let saveRecordings: ((entries: Record<string, Track>) => Promise<void>) | undefined;
@@ -147,7 +149,9 @@ export async function findRecording(track: Track, excluding?: string): Promise<T
   const key = recordingKey(track);
   const cached = recordings.get(key);
   if (cached && !excluding) return cached;
-  const fromLibrary = matchRecording(track, (libraryRecordings.get(normalize(track.title)) ?? []).filter(item => item.id !== excluding));
+  const title = normalize(track.title);
+  const fromLibrary = matchRecording(track, [...(importedRecordings.get(title) ?? []), ...(libraryRecordings.get(title) ?? [])]
+    .filter(item => item.id !== excluding));
   if (fromLibrary) return rememberRecording(key, fromLibrary);
   if (excluding) return lookupRecording(track, key, excluding);
   const pending = resolving.get(key);

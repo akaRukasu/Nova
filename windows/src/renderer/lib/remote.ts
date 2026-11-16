@@ -30,7 +30,7 @@ function publish() {
     loading: state.loading,
     source: state.source,
     ...playbackOptions(library.get().settings, state.source),
-    liked: track ? isLiked(track.id) : false,
+    liked: track ? isLiked(track) : false,
     playbackSourceControl: true,
     time: timeState.get().time,
     duration: timeState.get().duration,

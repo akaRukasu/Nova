@@ -1,9 +1,23 @@
-import type { Track } from '../shared/types.js';
+import type { Collection, Track } from '../shared/types.js';
 import { isOctaveId } from '../shared/octave.js';
 import { matchRecording, recordingSearchQueries } from './matcher.js';
 import * as youtube from './yt.js';
 
 const matches = new Map<string, Track>();
+
+export async function saveYouTubeAlbum(album: Collection, tracks: Track[]) {
+  let target: Collection | undefined = album.id.startsWith('MPREb') ? album : undefined;
+  for (const track of tracks.slice(0, 3)) {
+    if (target) break;
+    const found = await findYouTubeRecording({ ...track, youtubeId: undefined });
+    if (found?.albumId?.startsWith('MPREb') && found.album
+      && found.album.trim().toLocaleLowerCase('fr') === album.title.trim().toLocaleLowerCase('fr')) {
+      target = { ...album, id: found.albumId };
+    }
+  }
+  if (!target) throw new Error('L’album « ' + album.title + ' » doit être identifié dans YouTube Music.');
+  await youtube.saveAlbum(target);
+}
 
 export async function findYouTubeRecording(track: Track): Promise<Track | undefined> {
   if (track.id.startsWith('local:')) return undefined;

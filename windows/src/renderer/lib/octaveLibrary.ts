@@ -3,17 +3,48 @@ import { octaveCatalogId } from '../../shared/octave';
 import { api, on, supportsOctave } from './api';
 import { Store } from './store';
 
-type Addition = { key: string; track?: Track; album?: Collection };
+type Addition = { key: string; track?: Track; album?: Collection; octaveDone?: boolean; youtubeDone?: boolean };
 type Status = { connected: boolean; pending: boolean; tracks: number; albums: number; artists: number; updatedAt: number };
-export const octaveLibrary = new Store<{ busy: boolean; pending: number; status?: Status; error?: string }>({ busy: false, pending: 0 });
+export const octaveLibrary = new Store<{ busy: boolean; pending: number; youtubePending: number; status?: Status; error?: string }>({ busy: false, pending: 0, youtubePending: 0 });
 const storage = 'novaOctaveLibraryOutbox';
 let outbox: Addition[] = [];
 try { outbox = JSON.parse(localStorage.getItem(storage) ?? '[]').filter((item: Addition) => item?.key && (item.track || item.album)); } catch {}
 let work: Promise<void> | undefined;
+let youtubeWork: Promise<void> | undefined;
 let started = false;
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const call = <T,>(args: object) => window.nova.invoke<T>('octave:library', args);
-const persist = () => { localStorage.setItem(storage, JSON.stringify(outbox)); octaveLibrary.set(state => ({ ...state, pending: outbox.length })); };
+const pendingCounts = () => ({ pending: outbox.filter(item => !item.octaveDone).length, youtubePending: outbox.filter(item => !item.youtubeDone).length });
+const persist = () => {
+  outbox = outbox.filter(item => !item.octaveDone || !item.youtubeDone);
+  localStorage.setItem(storage, JSON.stringify(outbox));
+  octaveLibrary.set(state => ({ ...state, ...pendingCounts() }));
+};
+
+export function syncYouTubeAdditions() {
+  if (youtubeWork || !outbox.some(item => !item.youtubeDone)) return youtubeWork;
+  youtubeWork = (async () => {
+    const account = await api.account().catch(() => undefined);
+    if (!account?.signedIn) return;
+    for (const item of outbox.filter(value => !value.youtubeDone).slice(0, 20)) {
+      try {
+        if (item.track) {
+          const track = await api.youtubeRecording(item.track);
+          if (!track || !/^[\w-]{11}$/.test(track.id)) continue;
+          if (!outbox.includes(item)) continue;
+          await api.setLike(track.id, true);
+        } else if (item.album) {
+          const tracks = item.album.id.startsWith('MPREb') ? [] : (await api.collection(item.album)).tracks.slice(0, 3);
+          if (!outbox.includes(item)) continue;
+          await api.saveYouTubeAlbum(item.album, tracks);
+        }
+        item.youtubeDone = true;
+        persist();
+      } catch { /* L’ajout reste en attente pour ce compte. */ }
+    }
+  })().finally(() => { youtubeWork = undefined; });
+  return youtubeWork;
+}
 
 async function run(operation: 'refresh' | 'add', args = {}): Promise<Status> {
   let start: { job?: number } | null = null;
@@ -33,9 +64,10 @@ async function run(operation: 'refresh' | 'add', args = {}): Promise<Status> {
 }
 
 export function refreshOctaveLibrary(): Promise<void> {
+  void syncYouTubeAdditions();
   if (work) return work;
   work = (async () => {
-    octaveLibrary.set(state => ({ ...state, busy: true, error: undefined, pending: outbox.length }));
+    octaveLibrary.set(state => ({ ...state, busy: true, error: undefined, ...pendingCounts() }));
     try {
       let status = await run('refresh');
       const tracks: Track[] = [];
@@ -44,8 +76,8 @@ export function refreshOctaveLibrary(): Promise<void> {
         if (page?.tracks) tracks.push(...page.tracks);
       }
       await window.nova.invoke('octave:library-index', status.connected ? tracks : []);
-      while (status.connected && outbox.length) {
-        const item = outbox[0];
+      for (const item of outbox.filter(value => !value.octaveDone).slice(0, 20)) {
+        if (!status.connected || !outbox.includes(item)) break;
         if (item.track) {
           const recording = await api.octaveMatch(item.track);
           if (!recording) throw new Error('Ajout conservé : « ' + item.track.title + ' » doit encore être identifié dans Octave.');
@@ -62,12 +94,12 @@ export function refreshOctaveLibrary(): Promise<void> {
           status = await run('add', { albums: [id] });
         }
         if (status.pending) break; // Le SDK garde ses limites et ses conflits ; réessayer plus tard.
-        outbox = outbox.filter(value => value.key !== item.key);
+        item.octaveDone = true;
         persist();
       }
-      octaveLibrary.set({ busy: false, pending: outbox.length, status });
+      octaveLibrary.set({ busy: false, ...pendingCounts(), status });
     } catch (error) {
-      octaveLibrary.set(state => ({ ...state, busy: false, pending: outbox.length, error: error instanceof Error ? error.message : String(error) }));
+      octaveLibrary.set(state => ({ ...state, busy: false, ...pendingCounts(), error: error instanceof Error ? error.message : String(error) }));
     }
   })().finally(() => { work = undefined; });
   return work;
@@ -78,6 +110,12 @@ export function queueOctaveAddition(track?: Track, album?: Collection) {
   const key = track ? 'track:' + track.id : 'album:' + album?.id;
   if (!outbox.some(item => item.key === key)) { outbox.push({ key, track, album }); persist(); }
   void refreshOctaveLibrary();
+}
+
+export function cancelLibraryAddition(track?: Track, album?: Collection) {
+  const key = track ? 'track:' + track.id : 'album:' + album?.id;
+  outbox = outbox.filter(item => item.key !== key);
+  persist();
 }
 
 export function startOctaveLibrary() {

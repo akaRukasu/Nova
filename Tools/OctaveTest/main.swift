@@ -20,6 +20,19 @@ do {
     try require(restoredSmart?.rules.first?.op == .isTrue, "Les règles de playlists intelligentes du PC restent lisibles")
     print("Restauration PC vers iPhone OK — dates, playlists, favoris, historique et récap annuel sans doublons")
 
+    let octaveBackup = Data(#"""
+    {"app":"octave","type":"library-backup","version":2,"data":{"octave:library":{"state":{"playlists":[
+      {"id":"one","name":"Import Octave QA","createdAt":1794000000000,"tracks":[{"id":"42","title":"Studio","artist":{"name":"Artiste QA"},"duration":180,"album":{"id":91,"title":"Album QA"}}]},
+      {"id":"two","name":"import Octave QA","createdAt":1794100000000,"tracks":[{"id":"42","title":"Studio","artist":{"name":"Artiste QA"},"album":{"id":91,"title":"Album QA"}},{"id":43,"title":"Studio (Live)","artist":{"name":"Artiste QA"},"album":{"id":93,"title":"Album live"}}]}
+    ]}}}}
+    """#.utf8)
+    let octaveState = try OctaveBackup.read(octaveBackup)
+    _ = await restoredLibrary.importOctaveBackup(octaveState)
+    _ = await restoredLibrary.importOctaveBackup(octaveState)
+    let merged = await restoredLibrary.playlists.filter { $0.name == "Import Octave QA" }
+    try require(merged.count == 1 && merged[0].tracks.map(\.id) == ["octave:42", "octave:43"], "Les deux imports Octave gardent les versions distinctes sans doublon")
+    try require(merged[0].tracks[0].albumID == "octave:91", "L’identifiant de l’album Octave doit rester disponible pour la lecture")
+
     let catalog = OctaveCatalog.shared
     for query in ["Backseat Personality Disorder", "Aware", "Joseph Falling In Reverse", "Cross Off Mark Morton"] {
         let shelves = try await catalog.search(query, scope: .all)

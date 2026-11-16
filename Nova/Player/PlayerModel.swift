@@ -112,6 +112,7 @@ final class PlayerModel {
         loadDurations()
         restoreSession()
         library.onOctaveAddition = { [weak self] track, album in self?.octaveLibrary.enqueue(track: track, album: album) }
+        library.onLibraryRemoval = { [weak self] track, album in self?.octaveLibrary.cancel(track: track, album: album) }
         attachTimeObserver()
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
             let item = note.object as AnyObject?
@@ -658,8 +659,12 @@ final class PlayerModel {
 
     func toggleLike(_ track: Track) {
         let liked = library.toggleLike(track)
-        guard !track.id.hasPrefix("local:"), account.isSignedIn else { return }
-        Task { try? await client.setLiked(liked, videoID: track.id) }
+        guard !liked, !track.id.hasPrefix("local:"), account.isSignedIn else { return }
+        Task {
+            if let recording = try? await OctaveCatalog.shared.youtubeRecording(track) {
+                try? await client.setLiked(false, videoID: recording.id)
+            }
+        }
     }
 
     func jump(to position: Int) {

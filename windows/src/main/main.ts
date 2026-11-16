@@ -1,6 +1,7 @@
 import { LocalAudioLibrary } from './localAudio.js';
 import { createPhoneBackup } from './libraryBackup.js';
 import { ImportJournal } from '../shared/importJournal.js';
+import { octaveBackupLibrary } from '../shared/octaveBackup.js';
 // Nova pour Windows : processus principal.
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
@@ -8,7 +9,7 @@ import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
+import type { Collection, ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
 import type { HistorySnapshot } from '../shared/historySync.js';
 import { defaultSettings } from '../shared/types.js';
 import { isOctaveId, type OctaveCommand } from '../shared/octave.js';
@@ -22,7 +23,7 @@ import { lyrics } from './lyrics.js';
 import { currentPairing, getRemoteState, pairingLink, setRemoteHandler, setRemoteState, startSyncServer, stopSyncServer, unpair } from './phoneSync.js';
 import { loadMatches, match, savedMatches } from './matcher.js';
 import * as octave from './octave.js';
-import { findYouTubeRecording, syncOctaveListen } from './octaveHistory.js';
+import { findYouTubeRecording, saveYouTubeAlbum, syncOctaveListen } from './octaveHistory.js';
 import { OctavePlayer } from './octavePlayer.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import './evalNode.js';
@@ -479,6 +480,7 @@ app.whenReady().then(async () => {
   handle('account:liked', () => yt.likedSongs());
   handle('account:playlists', () => yt.accountPlaylists());
   handle('account:like', (id: string, liked: boolean) => yt.setLike(id, liked));
+  handle('account:saveAlbum', (album: Collection, tracks: Track[]) => saveYouTubeAlbum(album, tracks));
   handle('account:createPlaylist', (name: string, ids: string[], privacy?: string) => yt.createAccountPlaylist(name, ids, privacy));
   // Page YouTube Music avec le compte de l'utilisateur (activer « Collaborer », accepter une invitation).
   handle('youtube:open', (url: string) => {
@@ -517,7 +519,7 @@ app.whenReady().then(async () => {
   handle('import:match', (wanted) => match(wanted));
   handle('octave:match', (track: Track) => octave.findRecording(track));
   handle('octave:library', (args: object) => octavePlayer.library(args));
-  handle('octave:library-index', (tracks: Track[]) => octave.configureOctaveLibrary(tracks));
+  handle('octave:library-index', (tracks: Track[], source?: 'imported') => octave.configureOctaveLibrary(tracks, source));
   handle('import:cancel', () => { importCancelled = true; });
   handle('ui:ready', () => {
     uiReady = true;
@@ -563,6 +565,14 @@ app.whenReady().then(async () => {
   handle('mini:close', () => mini?.close());
   handle('mini:command', (command: Record<string, unknown>) => sendToUI('remote:command', { ...command, source: 'mini' }));
   setRemoteHandler((command) => sendToUI('remote:command', command));
+  handle('octave:openBackup', async () => {
+    const picked = await dialog.showOpenDialog({ title: 'Ouvrir une sauvegarde Octave', properties: ['openFile'],
+      filters: [{ name: 'Sauvegarde Octave', extensions: ['json'] }] });
+    if (picked.canceled || !picked.filePaths[0]) return;
+    const input = picked.filePaths[0];
+    if ((await fs.stat(input)).size > 300_000_000) throw new Error('La sauvegarde dépasse la taille prise en charge.');
+    return octaveBackupLibrary(JSON.parse((await fs.readFile(input, 'utf8')).replace(/^\uFEFF/, '')));
+  });
   handle('phone:openFile', async () => {
     const picked = await dialog.showOpenDialog(window!, {
       title: 'Ouvrir la bibliothèque exportée depuis l’iPhone',

@@ -4,7 +4,7 @@ import type { Collection, Track } from '../../shared/types';
 import { isOctaveId, octaveCollectionUrl, octaveTrackUrl } from '../../shared/octave';
 import { addToJam, jam } from '../lib/jam';
 import {
-  addToPlaylist, addToShared, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
+  addToPlaylist, addToShared, addTrackToLibrary, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open } from '../lib/router';
@@ -55,7 +55,7 @@ export function playlistSubmenu(tracks: Track[]): MenuItem[] {
 }
 
 export function trackMenu(track: Track, extra: MenuItem[] = []): MenuItem[] {
-  const liked = isLiked(track.id);
+  const liked = isLiked(track);
   const items: MenuItem[] = [];
   const octave = isOctaveId(track.id);
   if (!octave && jam.get().role !== 'none') {
@@ -71,6 +71,7 @@ export function trackMenu(track: Track, extra: MenuItem[] = []): MenuItem[] {
     { label: 'Lancer la radio', icon: 'radio', action: () => player.startRadio(track) },
     { label: '', separator: true },
     { label: liked ? 'Je n’aime plus' : 'J’aime', icon: 'heart', action: () => toggleLike(track) },
+    { label: 'Ajouter à la bibliothèque', icon: 'plus', action: () => addTrackToLibrary(track) },
     { label: 'Ajouter à une playlist', icon: 'plus', submenu: playlistSubmenu([track]) },
   );
   if (track.artistId || track.albumId) items.push({ label: '', separator: true });

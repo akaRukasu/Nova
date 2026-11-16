@@ -15,6 +15,8 @@ final class OctaveLibrarySync {
         var key: String
         var track: Track?
         var album: MusicCollection?
+        var octaveDone: Bool?
+        var youtubeDone: Bool?
     }
     private struct Entry: Decodable {
         var id: String
@@ -30,10 +32,12 @@ final class OctaveLibrarySync {
     }
     private(set) var busy = false
     private(set) var pending = 0
+    private(set) var youtubePending = 0
     private(set) var status: Status?
     private(set) var error: String?
     @ObservationIgnored private weak var player: OctaveWebPlayer?
     @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private var syncingYouTube = false
     @ObservationIgnored private var outbox: [Addition] = []
     private let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Nova/octave-library-outbox.json")
@@ -41,7 +45,8 @@ final class OctaveLibrarySync {
     init() {
         if let data = try? Data(contentsOf: file), let entries = try? JSONDecoder().decode([Addition].self, from: data) {
             outbox = entries
-            pending = entries.count
+            pending = entries.filter { $0.octaveDone != true }.count
+            youtubePending = entries.filter { $0.youtubeDone != true }.count
         }
     }
 
@@ -53,7 +58,7 @@ final class OctaveLibrarySync {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self, !Task.isCancelled else { return }
-                if pending > 0 { await refresh() }
+                if pending > 0 || youtubePending > 0 { await refresh() }
             }
         }
     }
@@ -68,8 +73,17 @@ final class OctaveLibrarySync {
         Task { await refresh() }
     }
 
+    func cancel(track: Track?, album: MusicCollection?) {
+        let key = track.map { "track:" + $0.id } ?? "album:" + (album?.id ?? "")
+        guard outbox.contains(where: { $0.key == key }) else { return }
+        outbox.removeAll { $0.key == key }
+        persist()
+    }
+
     private func persist() {
-        pending = outbox.count
+        outbox.removeAll { $0.octaveDone == true && $0.youtubeDone == true }
+        pending = outbox.filter { $0.octaveDone != true }.count
+        youtubePending = outbox.filter { $0.youtubeDone != true }.count
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(outbox).write(to: file, options: .atomic)
@@ -100,7 +114,42 @@ final class OctaveLibrarySync {
         NSError(domain: "OctaveLibrary", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
+    func syncYouTube() async {
+        guard !syncingYouTube, AuthSession.shared.isSignedIn else { return }
+        syncingYouTube = true
+        defer { syncingYouTube = false }
+        let client = InnerTubeClient()
+        for item in outbox.filter({ $0.youtubeDone != true }).prefix(20) {
+            do {
+                if let track = item.track {
+                    guard let recording = try await OctaveCatalog.shared.youtubeRecording(track),
+                          recording.id.range(of: #"^[\w-]{11}$"#, options: .regularExpression) != nil,
+                          outbox.contains(where: { $0.key == item.key }), AuthSession.shared.isSignedIn else { continue }
+                    try await client.setLiked(true, videoID: recording.id)
+                } else if let album = item.album {
+                    var id = album.id.hasPrefix("MPREb") ? album.id : nil
+                    if id == nil {
+                        let tracks = try await OctaveCatalog.shared.collection(album).tracks
+                        for var track in tracks.prefix(3) {
+                            track.youtubeID = nil // Rechercher aussi l'identifiant de l'album côté YouTube.
+                            if let recording = try await OctaveCatalog.shared.youtubeRecording(track),
+                               let albumID = recording.albumID, albumID.hasPrefix("MPREb"),
+                               OctaveCatalog.normalize(recording.album ?? "") == OctaveCatalog.normalize(album.title) {
+                                id = albumID
+                                break
+                            }
+                        }
+                    }
+                    guard let id, outbox.contains(where: { $0.key == item.key }), AuthSession.shared.isSignedIn else { continue }
+                    try await client.saveAlbum(id)
+                }
+                if let position = outbox.firstIndex(where: { $0.key == item.key }) { outbox[position].youtubeDone = true; persist() }
+            } catch { /* Le compte ou sa correspondance peut redevenir disponible au prochain essai. */ }
+        }
+    }
+
     func refresh() async {
+        Task { await syncYouTube() }
         guard !busy, let player else { return }
         busy = true
         error = nil
@@ -117,7 +166,8 @@ final class OctaveLibrarySync {
             }
             await OctaveCatalog.shared.setLibraryRecordings(state.connected ? tracks : [])
             status = state
-            while state.connected, let item = outbox.first {
+            for item in outbox.filter({ $0.octaveDone != true }).prefix(20) {
+                guard state.connected, outbox.contains(where: { $0.key == item.key }) else { break }
                 if let track = item.track {
                     guard let recording = try await OctaveCatalog.shared.recording(track), let albumID = recording.albumID else {
                         throw failure("Ajout conservé : « \(track.title) » doit encore être identifié dans Octave.")
@@ -137,8 +187,7 @@ final class OctaveLibrarySync {
                 }
                 status = state
                 if state.pending { break }
-                outbox.removeAll { $0.key == item.key }
-                persist()
+                if let position = outbox.firstIndex(where: { $0.key == item.key }) { outbox[position].octaveDone = true; persist() }
             }
         } catch { self.error = error.localizedDescription }
     }

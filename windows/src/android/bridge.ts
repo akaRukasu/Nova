@@ -1,4 +1,5 @@
 import { ImportJournal } from '../shared/importJournal';
+import { octaveBackupLibrary } from '../shared/octaveBackup';
 // Nova pour Android : ce que fait le processus principal sur PC (YouTube Music, disque, compte,
 // import, lecteur), dans l'app Android. L'interface appelle les mêmes canaux que sur Windows.
 import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
@@ -13,7 +14,7 @@ import { lyrics } from '../main/lyrics';
 import { loadMatches, match, savedMatches } from '../main/matcher';
 import * as yt from '../main/yt';
 import * as octave from '../main/octave';
-import { syncOctaveListen, findYouTubeRecording } from '../main/octaveHistory';
+import { syncOctaveListen, findYouTubeRecording, saveYouTubeAlbum } from '../main/octaveHistory';
 import { isOctaveId } from '../shared/octave';
 import { AndroidOctavePlayer } from './octavePlayer';
 
@@ -212,6 +213,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'account:liked': () => yt.likedSongs(),
   'account:playlists': () => yt.accountPlaylists(),
   'account:like': (id, liked) => yt.setLike(id, liked),
+  'account:saveAlbum': (album, tracks) => saveYouTubeAlbum(album, tracks),
   'account:createPlaylist': (name, ids, privacy) => yt.createAccountPlaylist(name, ids, privacy),
   'account:addToPlaylist': (playlistId, ids) => yt.addToAccountPlaylist(playlistId, ids),
   'youtube:open': (url) => native.openPage({ url }),
@@ -231,6 +233,10 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'import:match': (wanted) => match(wanted),
   'octave:match': (track) => octave.findRecording(track),
   'import:cancel': () => { importCancelled = true; },
+  'octave:openBackup': async () => {
+    const [file] = await pickFiles('.json,application/json', false);
+    if (file) return octaveBackupLibrary(JSON.parse(file.text.replace(/^\uFEFF/, '')));
+  },
   'phone:openFile': async () => {
     const [file] = await pickFiles('.json,application/json', false);
     if (!file) return null;
@@ -267,7 +273,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'webplayer:show': (deck) => native.showDeck({ deck }),
   'octave:open': (url) => octavePlayer.open(url),
   'octave:library': (args) => native.octaveCall({ operation: 'library', args }).then(result => JSON.parse(result.value)),
-  'octave:library-index': (tracks) => octave.configureOctaveLibrary(tracks),
+  'octave:library-index': (tracks, source) => octave.configureOctaveLibrary(tracks, source),
   'octave:hide': () => octavePlayer.hide(),
   'octave:stop': () => octavePlayer.stop(),
   'octave:play': (track, request, volume, position) => octavePlayer.play(track, request, volume, position),

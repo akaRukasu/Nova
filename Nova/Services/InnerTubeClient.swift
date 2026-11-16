@@ -231,7 +231,30 @@ struct InnerTubeClient {
     /// « J'aime » synchronisé avec le compte YouTube.
     func setLiked(_ liked: Bool, videoID: String) async throws {
         guard !videoID.hasPrefix("octave:") else { return }
-        _ = try await post(liked ? "like/like" : "like/removelike", body: ["target": ["videoId": videoID]])
+        _ = try await send(liked ? "like/like" : "like/removelike", body: ["target": ["videoId": videoID]], query: [], authenticated: true)
+    }
+
+    func saveAlbum(_ id: String) async throws {
+        guard AuthSession.shared.cookieHeader != nil, id.hasPrefix("MPREb") else { throw NovaError.emptyPage }
+        let json = try await send("browse", body: ["browseId": id], query: [], authenticated: true)
+        let buttons = JSONWalk.collect("toggleButtonRenderer", in: json)
+        for toggle in buttons {
+            let icon = (toggle["defaultIcon"] as? JSONObject)?["iconType"] as? String
+            guard ["BOOKMARK_BORDER", "BOOKMARK", "LIBRARY_ADD"].contains(icon ?? "") else { continue }
+            if toggle["isToggled"] as? Bool == true { return }
+            guard let endpoint = toggle["defaultServiceEndpoint"] as? JSONObject else { continue }
+            if let feedback = JSONWalk.first("feedbackEndpoint", in: endpoint) as? JSONObject,
+               let token = feedback["feedbackToken"] as? String {
+                _ = try await send("feedback", body: ["feedbackTokens": [token]], query: [], authenticated: true)
+                return
+            }
+            if let rating = JSONWalk.first("likeEndpoint", in: endpoint) as? JSONObject,
+               let target = rating["target"] as? JSONObject, target["playlistId"] is String {
+                _ = try await send("like/like", body: ["target": target], query: [], authenticated: true)
+                return
+            }
+        }
+        throw NovaError.emptyPage
     }
 
     func addToWatchHistory(videoID: String) async throws {

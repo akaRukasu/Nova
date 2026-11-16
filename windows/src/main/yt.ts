@@ -546,6 +546,21 @@ export async function setLike(videoId: string, liked: boolean) {
   else await client.interact.removeRating(videoId);
 }
 
+export async function saveAlbum(target: Collection) {
+  if (target.kind !== 'album' || !/^MPREb[\w-]+$/.test(target.id)) throw new Error('Album YouTube Music invalide.');
+  const client = await yt();
+  if (!client.session.logged_in) throw new Error('Connecte YouTube Music pour enregistrer cet album.');
+  const album: Node = await client.music.getAlbum(target.id);
+  const bookmark = album.header?.buttons?.find((button: Node) => button.type === 'ToggleButton'
+    && ['BOOKMARK_BORDER', 'BOOKMARK', 'LIBRARY_ADD'].includes(button.icon_type));
+  if (bookmark?.is_toggled) return;
+  if (!bookmark?.endpoint || !['feedbackEndpoint', 'likeEndpoint'].includes(bookmark.endpoint.name)) {
+    throw new Error('YouTube Music ne propose pas l’ajout de cet album à la bibliothèque.');
+  }
+  const response = await bookmark.endpoint.call(client.actions);
+  if (!response?.success) throw new Error('YouTube Music n’a pas confirmé l’ajout de l’album.');
+}
+
 export async function createAccountPlaylist(name: string, videoIds: string[], privacy = 'PRIVATE'): Promise<string | undefined> {
   const client = await yt();
   const created: any = await client.playlist.create(name, videoIds.slice(0, 200), privacy as any);

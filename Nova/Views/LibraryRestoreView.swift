@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct LibraryRestoreSection: View {
     @Environment(LibraryStore.self) private var library
     @State private var picker = false
+    @State private var octaveBackup = false
     @State private var working = false
     @State private var message: String?
     @State private var errorText: String?
@@ -16,7 +17,9 @@ struct LibraryRestoreSection: View {
                 }
                 .disabled(working || PCSync.shared.isSyncing)
             }
-            Button("Restaurer une sauvegarde Nova", systemImage: "doc.badge.arrow.up") { picker = true }
+            Button("Restaurer une sauvegarde Nova", systemImage: "doc.badge.arrow.up") { octaveBackup = false; picker = true }
+                .disabled(working || PCSync.shared.isSyncing)
+            Button("Ouvrir une sauvegarde Octave", systemImage: "music.note.list") { octaveBackup = true; picker = true }
                 .disabled(working || PCSync.shared.isSyncing)
             if working { ProgressView("Restauration de la bibliothèque…") }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary) }
@@ -32,6 +35,10 @@ struct LibraryRestoreSection: View {
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 guard size <= 300_000_000 else { throw CocoaError(.fileReadTooLarge) }
+                if octaveBackup {
+                    let state = try await Task.detached(priority: .userInitiated) { try OctaveBackup.read(Data(contentsOf: url)) }.value
+                    return library.importOctaveBackup(state).message
+                }
                 return try library.restoreData(Data(contentsOf: url)).message
             }
         }
@@ -46,7 +53,7 @@ struct LibraryRestoreSection: View {
         Task {
             defer { working = false }
             do { message = try await action() }
-            catch is DecodingError { errorText = "Ce fichier n’est pas une sauvegarde Nova compatible. Exporte-le depuis Nova sur le PC." }
+            catch is DecodingError { errorText = octaveBackup ? "Exporte un fichier JSON dans les réglages d’Octave, rubrique Library." : "Ce fichier n’est pas une sauvegarde Nova compatible. Exporte-le depuis Nova sur le PC." }
             catch { errorText = error.localizedDescription }
         }
     }

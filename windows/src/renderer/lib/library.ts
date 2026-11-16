@@ -7,9 +7,10 @@ import { defaultSettings } from '../../shared/types';
 import { preserveArtwork } from '../../shared/artwork';
 import { listeningHistory, mergeListeningHistory, type HistorySnapshot } from '../../shared/historySync';
 import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
-import { api, isAndroid, on } from './api';
+import { api, isAndroid, on, supportsOctave } from './api';
 import { Store } from './store';
-import { queueOctaveAddition, startOctaveLibrary } from './octaveLibrary';
+import { cancelLibraryAddition, queueOctaveAddition, startOctaveLibrary, syncYouTubeAdditions } from './octaveLibrary';
+import type { OctaveLibraryImport } from '../../shared/octaveBackup';
 
 export const library = new Store<LibraryState>({
   recents: [], liked: [], playlists: [], smartPlaylists: [], saved: [], searches: [], stats: {}, settings: defaultSettings,
@@ -42,7 +43,69 @@ export async function loadLibrary() {
   // même si YouTube est lent ou ne répond pas.
   void refreshAccount();
   startOctaveLibrary();
+  indexLibraryRecordings();
   if (isAndroid) void import('./pcHistory').then(module => module.startPCHistory());
+}
+
+function indexLibraryRecordings(extra: Track[] = []) {
+  const state = library.get();
+  const tracks = [...new Map([...(state.added ?? []), ...state.liked, ...state.playlists.flatMap(playlist => playlist.tracks), ...extra]
+    .filter(track => isOctaveId(track.id) && track.albumId).map(track => [track.id, track])).values()];
+  void window.nova.invoke('octave:library-index', tracks, 'imported').catch(() => undefined);
+}
+
+function mergeOctaveTracks(existing: Track[], incoming: Track[]): Track[] {
+  const releaseKey = (track: Track) => [track.title, track.artist, track.album ?? '']
+    .map(value => value.normalize('NFKC').toLocaleLowerCase('fr').replace(/[^\p{L}\p{N}]/gu, '')).join('|');
+  const merged = [...existing];
+  const ids = new Set(existing.flatMap(track => track.youtubeId ? [track.id, track.youtubeId] : [track.id]));
+  const recordings = new Map<string, number[]>();
+  existing.forEach((track, index) => {
+    if (track.id.startsWith('local:') || !track.album) return;
+    const key = releaseKey(track);
+    const list = recordings.get(key) ?? [];
+    list.push(index);
+    recordings.set(key, list);
+  });
+  for (const track of incoming) {
+    if (ids.has(track.id) || (track.youtubeId && ids.has(track.youtubeId))) continue;
+    ids.add(track.id);
+    const same = track.album && (recordings.get(releaseKey(track)) ?? []).find(index => {
+      const candidate = merged[index];
+      return isOctaveId(candidate.id) !== isOctaveId(track.id) && Boolean(candidate.duration && track.duration
+        && Math.abs(candidate.duration - track.duration) <= 5);
+    });
+    if (typeof same === 'number') {
+      const previous = merged[same];
+      merged[same] = isOctaveId(previous.id) ? { ...previous, youtubeId: previous.youtubeId ?? track.id }
+        : preserveArtwork(previous, track);
+      continue;
+    }
+    merged.push(track);
+  }
+  return merged;
+}
+
+export function importOctaveLibrary(incoming: OctaveLibraryImport) {
+  const state = library.get();
+  const playlists = [...state.playlists];
+  const nameKey = (name: string) => name.trim().normalize('NFC').toLocaleLowerCase('fr');
+  const byName = new Map(playlists.map((playlist, index) => [nameKey(playlist.name), index]));
+  const now = Date.now();
+  for (const list of incoming.playlists) {
+    const index = byName.get(nameKey(list.name));
+    if (index !== undefined) {
+      const current = playlists[index];
+      playlists[index] = { ...current, tracks: mergeOctaveTracks(current.tracks, list.tracks) };
+    } else playlists.push({ id: crypto.randomUUID(), name: list.name, tracks: list.tracks, created: list.created ?? now });
+  }
+  const known = new Set(state.saved.map(collection => collection.id));
+  const liked = mergeOctaveTracks(state.liked, incoming.liked);
+  const saved = [...state.saved, ...incoming.saved.filter(collection => !known.has(collection.id) && known.add(collection.id))];
+  const references = [...incoming.liked, ...incoming.playlists.flatMap(list => list.tracks)];
+  update(current => ({ ...current, playlists, liked, saved }));
+  indexLibraryRecordings(references);
+  return { playlists: incoming.playlists.length, tracks: new Set(references.map(track => track.id)).size };
 }
 
 /** Bibliothèque relue au démarrage : un élément abîmé (synchronisation interrompue…) est écarté au lieu de tout bloquer. */
@@ -70,6 +133,7 @@ export async function refreshAccount() {
   const info = await api.account().catch(() => ({ signedIn: false }));
   account.set({ ...info, playlists: account.get().playlists });
   if (!info.signedIn) return;
+  void syncYouTubeAdditions();
   // Likes du compte (les mêmes que sur l'iPhone) fusionnés avec ceux de Nova.
   const [liked, playlists] = await Promise.all([
     api.accountLiked().catch(() => [] as Track[]),
@@ -78,8 +142,7 @@ export async function refreshAccount() {
   account.set((current) => ({ ...current, playlists }));
   if (liked.length) {
     update((state) => {
-      const known = new Set(liked.map((t) => t.id));
-      return { ...state, liked: [...liked, ...state.liked.filter((t) => !known.has(t.id))] };
+      return { ...state, liked: mergeOctaveTracks(state.liked, liked) };
     });
   }
 }
@@ -186,16 +249,33 @@ export function updateArtwork(id: string, artwork: string) {
 
 // MARK: Likes
 
-export const isLiked = (id: string) => library.get().liked.some((t) => t.id === id);
+const sameTrackID = (a: Track, b: Track) => a.id === b.id || a.youtubeId === b.id || b.youtubeId === a.id
+  || (a.youtubeId != null && a.youtubeId === b.youtubeId);
+export const isLiked = (track: Track) => library.get().liked.some(candidate => sameTrackID(candidate, track));
+
+export function addTrackToLibrary(track: Track) {
+  if (library.get().added?.some(candidate => sameTrackID(candidate, track))) return;
+  update(state => ({ ...state, added: [track, ...(state.added ?? [])] }));
+  markAdded([track]);
+  queueOctaveAddition(track);
+  notify('« ' + track.title + ' » ajouté à la bibliothèque');
+}
 
 export function toggleLike(track: Track) {
-  const liked = !isLiked(track.id);
-  if (liked) queueOctaveAddition(track);
+  const matching = library.get().liked.filter(candidate => sameTrackID(candidate, track));
+  const liked = !matching.length;
+  if (liked && supportsOctave) queueOctaveAddition(track);
+  if (!liked) for (const candidate of matching) {
+    if (!library.get().added?.some(added => sameTrackID(added, candidate))) cancelLibraryAddition(candidate);
+  }
   update((state) => ({
     ...state,
-    liked: liked ? [track, ...state.liked] : state.liked.filter((t) => t.id !== track.id),
+    liked: liked ? [track, ...state.liked] : state.liked.filter(candidate => !sameTrackID(candidate, track)),
   }));
-  if (!isOctaveId(track.id) && !track.id.startsWith('local:') && account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  if ((!liked || !supportsOctave) && !track.id.startsWith('local:') && account.get().signedIn) {
+    void api.youtubeRecording(track).then(recording => recording && api.setLike(recording.id, liked))
+      .catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  }
   return liked;
 }
 
@@ -399,6 +479,7 @@ export const isSaved = (id: string) => library.get().saved.some((c) => c.id === 
 export function toggleSaved(collection: Collection) {
   const saved = !isSaved(collection.id);
   if (saved && collection.kind === 'album') queueOctaveAddition(undefined, collection);
+  if (!saved && collection.kind === 'album') cancelLibraryAddition(undefined, collection);
   update((state) => ({ ...state, saved: saved ? [{ ...collection, addedAt: Date.now() }, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
   notify(saved ? `« ${collection.title} » ajouté à la bibliothèque` : `« ${collection.title} » retiré de la bibliothèque`);
 }

@@ -130,9 +130,11 @@ struct RootView: View {
         // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
         .onChange(of: player.library.historyRevision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .onChange(of: player.account.revision) { _, _ in Task { await player.octaveLibrary.syncYouTube() } }
         .task {
             player.octave.warmUp()
             player.octaveLibrary.start(using: player.octave)
+            await player.library.refreshImportedRecordings()
             PCSync.shared.startHeartbeat(library: player.library)
             RemoteControl.shared.watchComputer(player: player)
         }

@@ -4,6 +4,7 @@ import type {
   NearbyJam, Page, PageHeader, Settings, Shelf, Track,
 } from '../../shared/types';
 import type { OctaveCommand, OctaveStart } from '../../shared/octave';
+import type { OctaveLibraryImport } from '../../shared/octaveBackup';
 
 declare global {
   interface Window {
@@ -54,6 +55,7 @@ export const api = {
   accountLiked: () => call<Track[]>('account:liked'),
   accountPlaylists: () => call<Collection[]>('account:playlists'),
   setLike: (id: string, liked: boolean) => call<void>('account:like', id, liked),
+  saveYouTubeAlbum: (album: Collection, tracks: Track[]) => call<void>('account:saveAlbum', album, tracks),
   createAccountPlaylist: (name: string, ids: string[], privacy?: string) => call<string | undefined>('account:createPlaylist', name, ids, privacy),
   openYouTube: (url: string) => call<void>('youtube:open', url),
   addToAccountPlaylist: (playlistId: string, ids: string[]) => call<void>('account:addToPlaylist', playlistId, ids),
@@ -68,6 +70,7 @@ export const api = {
     call<{ name: string; tracks: Track[]; youtubeId?: string; missing: number }[]>('import:run', playlists, toAccount),
   matchTrack: (wanted: ImportedTrack) => call<Track | undefined>('import:match', wanted),
   octaveMatch: (track: Track) => call<Track | undefined>('octave:match', track),
+  openOctaveBackup: () => call<OctaveLibraryImport | undefined>('octave:openBackup'),
   cancelImport: () => call<void>('import:cancel'),
 
   phonePairing: () => call<{ link: string; address: string; paired: boolean; phoneName?: string; lastSync?: number }>('phone:pairing'),
