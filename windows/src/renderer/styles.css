@@ -320,6 +320,7 @@ main {
 .artist-hero-portrait .artwork { outline: 1px solid #ffffff18; outline-offset: -1px; }
 .artist-hero-copy { min-width: 0; flex: 1; }
 .artist-hero h1 { font-size: clamp(34px, 4.5vw, 68px); font-weight: 800; letter-spacing: -.045em; line-height: 1.03; text-wrap: balance; }
+.artist-page .artist-hero h1 { font-size: clamp(34px, 4.5vw, 68px); }
 .artist-hero-copy > p { margin: 12px 0 0; color: #ffffffb8; }
 .artist-hero-copy > .artist-eyebrow { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #fff; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .18em; }
 .artist-hero .row-buttons { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
@@ -351,6 +352,8 @@ main {
   .artist-hero-portrait { display: none; }
   .artist-hero::after { background: linear-gradient(0deg, #161216fa 0%, #161216d0 25%, #16121615 100%); }
   .artist-hero h1 { font-size: clamp(32px, 9vw, 46px); }
+  .artist-page .artist-hero h1 { font-size: clamp(32px, 9vw, 46px); }
+  .artist-hero-copy { flex: none; width: 100%; }
   .artist-hero .row-buttons { margin-top: 19px; gap: 8px; }
   .artist-hero .button { padding-inline: 14px; }
   .artist-top-list { padding: 16px 8px; border-radius: 18px; }

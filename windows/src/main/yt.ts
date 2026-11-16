@@ -81,6 +81,18 @@ function artistsText(artists?: any[], fallback?: string) {
   return fallback ?? '';
 }
 
+function plainSongCredits(node: Node): { artist?: string; album?: string } {
+  if (node.item_type !== 'song') return {};
+  // Sur mobile, YouTube renvoie aussi « Artiste • Album • durée » sans aucun lien.
+  for (const column of (node.flex_columns ?? []).slice(1)) {
+    const parts = text(column.title).split(/\s*[•·]\s*/).map(part => part.trim()).filter(Boolean);
+    if (parts.length < 2 || !/^\d+(?::[0-5]\d)+$/.test(parts.at(-1)!)) continue;
+    const credits = parts.slice(0, -1).filter(part => !/^(?:titre|song|video|vidéo|single|album|ep)$/i.test(part));
+    if (credits.length && !/\b(?:views|lectures|streams)\b/i.test(credits[0])) return {artist: credits[0], album: credits[1]};
+  }
+  return {};
+}
+
 const palette = ['#e5484d', '#f76b15', '#ffb224', '#46a758', '#12a594', '#0090ff', '#6e56cf', '#d6409f', '#8e4ec6', '#3e63dd'];
 function colorFor(title: string) {
   let hash = 0;
@@ -95,6 +107,7 @@ export function trackFrom(node: Node): Track | undefined {
       const id = node.id ?? payload(node.endpoint).videoId ?? payload(node.overlay?.content?.endpoint).videoId;
       if (!id || !node.title) return undefined;
       const art = artwork(node.thumbnail ?? node.thumbnails);
+      const plain = plainSongCredits(node);
       // Les réponses mobiles déplacent parfois les crédits vers la troisième colonne.
       const runs = (node.flex_columns ?? []).slice(1).flatMap((column: Node) => column.title?.runs ?? []);
       const linkedArtists = runs.filter((run: Node) => /^UC/.test(payload(run.endpoint).browseId ?? ''));
@@ -107,8 +120,8 @@ export function trackFrom(node: Node): Track | undefined {
       return {
         id,
         title: node.title,
-        artist: artistsText(performers, node.author?.name),
-        album: album?.name,
+        artist: artistsText(performers, node.author?.name ?? plain.artist),
+        album: album?.name ?? plain.album,
         albumId: album?.id,
         artistId: performers?.[0]?.channel_id,
         duration: node.duration?.seconds || undefined,
