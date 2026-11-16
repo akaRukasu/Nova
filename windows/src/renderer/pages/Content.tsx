@@ -41,7 +41,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
   };
   return (
     <div className="page artist-page">
-      <ArtistHero name={name} artwork={data.header.artwork} details={data.header.subtitle || 'Sa musique, ses albums, son univers.'}>
+      <ArtistHero name={name} artwork={data.header.artwork} details={data.header.subtitle || `${data.tracks.length} titres populaires`}>
             <button className="button" onClick={() => void playAll(false)}><Icon name="play" size={16} /> Lecture</button>
             <button className="button secondary" onClick={() => void playAll(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
             {data.tracks[0] && <button className="button secondary" onClick={() => player.startRadio(data.tracks[0])}><Icon name="radio" size={16} /> Radio</button>}
@@ -53,7 +53,7 @@ export function ArtistPage({ id, title }: { id: string; title: string }) {
       <div className="artist-sections">
         {data.shelves.map((shelf) => <div key={shelf.id} className={shelf.layout === 'list' ? 'artist-top-list' : undefined}>
           <ShelfView shelf={shelf} limit={showAll ? Number.MAX_SAFE_INTEGER : 8} ranked={shelf.layout === 'list'} />
-          {shelf.layout === 'list' && shelf.items.length > 8 && <button className="artist-more" onClick={() => setShowAll(!showAll)}>{showAll ? 'Réduire' : 'Tous les titres populaires'} <Icon name={showAll ? 'up' : 'down'} size={14} /></button>}
+          {shelf.layout === 'list' && shelf.items.length > 8 && <button className="artist-more" onClick={() => setShowAll(!showAll)}>{showAll ? 'Réduire' : 'Tous les titres populaires'} <Icon name="chevronDown" size={14} /></button>}
         </div>)}
         {data.header.description && <details className="artist-about"><summary>À propos de {name}</summary><p>{data.header.description}</p></details>}
       </div>

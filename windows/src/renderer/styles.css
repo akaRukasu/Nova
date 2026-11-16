@@ -327,10 +327,13 @@ main {
 .artist-hero .button.secondary { background: #ffffff16; border: 1px solid #ffffff24; color: #fff; backdrop-filter: blur(16px); transition: background-color 150ms ease, transform 150ms ease; }
 .artist-hero .button.secondary:hover { background: #ffffff2b; }
 .artist-hero .button:active { transform: scale(.97); }
-.artist-sections { display: grid; gap: 28px; }
+.artist-sections { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 28px; }
+.artist-sections > * { min-width: 0; }
 .artist-sections .shelf { margin-bottom: 0; }
 .artist-top-list { border: 1px solid var(--line); border-radius: 20px; padding: 20px; background: var(--surface); }
 .artist-top-list .rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 22px; }
+.artist-top-list .row-album { display: none; }
+.artist-top-list .track-row:has(.rank) { grid-template-columns: 24px 40px minmax(0, 1fr) 32px 48px 32px; gap: 8px; }
 .artist-more { display: flex; align-items: center; gap: 7px; color: var(--accent); min-height: 44px; padding: 8px; font-weight: 600; }
 .artist-about { padding: 22px 24px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); }
 .artist-about summary { font-size: 18px; font-weight: 650; cursor: pointer; min-height: 28px; }
@@ -339,6 +342,10 @@ main {
 .artist-release-row { display: flex; gap: 16px; overflow-x: auto; padding: 4px 4px 12px; }
 .artist-release-row > button { flex: 0 0 176px; }
 .artist-tracks-title { margin: 22px 0 12px; }
+@media (max-width: 1050px) {
+  .artist-top-list .rows { grid-template-columns: minmax(0, 1fr); }
+  .artist-hero-portrait .artwork { width: 128px !important; height: 128px !important; }
+}
 @media (max-width: 600px) {
   .artist-hero { align-items: flex-start; flex-direction: column; justify-content: flex-end; min-height: 420px; padding: 24px; gap: 18px; border-radius: 24px; }
   .artist-hero-portrait { display: none; }
@@ -348,6 +355,7 @@ main {
   .artist-hero .button { padding-inline: 14px; }
   .artist-top-list { padding: 16px 8px; border-radius: 18px; }
   .artist-top-list .rows { grid-template-columns: minmax(0, 1fr); }
+  .artist-top-list .track-row:has(.rank) { grid-template-columns: 24px 40px minmax(0, 1fr) 36px; }
 }
 
 /* MARK: Recherche */

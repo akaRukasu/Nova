@@ -95,13 +95,22 @@ export function trackFrom(node: Node): Track | undefined {
       const id = node.id ?? payload(node.endpoint).videoId ?? payload(node.overlay?.content?.endpoint).videoId;
       if (!id || !node.title) return undefined;
       const art = artwork(node.thumbnail ?? node.thumbnails);
+      // Les réponses mobiles déplacent parfois les crédits vers la troisième colonne.
+      const runs = (node.flex_columns ?? []).slice(1).flatMap((column: Node) => column.title?.runs ?? []);
+      const linkedArtists = runs.filter((run: Node) => /^UC/.test(payload(run.endpoint).browseId ?? ''));
+      const performers = node.artists?.length ? node.artists : node.authors?.length ? node.authors
+        : linkedArtists.map((run: Node) => ({ name: run.text, channel_id: payload(run.endpoint).browseId }));
+      const album = node.album ?? (() => {
+        const run = runs.find((run: Node) => /^MPR/.test(payload(run.endpoint).browseId ?? ''));
+        return run ? { name: run.text, id: payload(run.endpoint).browseId } : undefined;
+      })();
       return {
         id,
         title: node.title,
-        artist: artistsText(node.artists ?? node.authors, node.author?.name),
-        album: node.album?.name,
-        albumId: node.album?.id,
-        artistId: (node.artists ?? node.authors)?.[0]?.channel_id,
+        artist: artistsText(performers, node.author?.name),
+        album: album?.name,
+        albumId: album?.id,
+        artistId: performers?.[0]?.channel_id,
         duration: node.duration?.seconds || undefined,
         artwork: art,
         square: isSquare(art),

@@ -24,6 +24,7 @@ do {
     print("Titre de clip, artiste, invité et durée de la piste audio confirmés")
 
     let additional = [
+        (Track(id: "LiCDZYfAMdo", title: "...Baby One More Time", artist: "First To Eleven", duration: 245), "octave:3189424121"),
         (Track(id: "TmQ5erMKsQU", title: "DA Uzi - Vrai N (Clip officiel)", artist: "DA Uzi", duration: 120), "octave:4359983131"),
         (Track(id: "RUG55VN7SAI", title: "Step Up - Linkin Park", artist: "Linkin Park", duration: 237), "octave:1100610192"),
         (Track(id: "pJbysSbUg74", title: "LVZ - Brisé (CLIP OFFICIEL)", artist: "LVZ", duration: 189), "octave:1231490422"),

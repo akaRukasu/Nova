@@ -117,21 +117,14 @@ export class AndroidOctavePlayer {
     }
     const search = new URL('/search', octaveOrigin);
     search.searchParams.set('q', `${selected.title} ${selected.artist}`);
-    // Chercher dans la page déjà chargée conserve le moteur audio et la connexion.
-    // Une ouverture de l’album reste disponible si les résultats n’exposent pas cette édition.
-    for (const url of [undefined, octaveTrackUrl(selected), search.href]) {
+    // Le routeur Octave conserve le moteur audio et la connexion entre les pages.
+    for (const url of [octaveTrackUrl(selected), search.href]) {
       if (operation !== this.operation) return 'cancelled';
-      if (url) await this.native.octaveNavigate({ url });
-      else {
-        for (let i = 0; i < 8 && operation === this.operation; i++) {
-          if (await this.call('search', { query: `${selected.title} ${selected.artist}` })) break;
-          await wait(80);
-        }
-      }
+      if (!await this.call('navigate', { url })) await this.native.octaveNavigate({ url });
       let selectedAt = 0;
       let retried = false;
       let resumed = false;
-      const deadline = Date.now() + (url ? 8500 : 3200);
+      const deadline = Date.now() + 8500;
       while (operation === this.operation && Date.now() < deadline) {
         const sample = await this.call<Sample>('sample');
         if (operation !== this.operation) return 'cancelled';

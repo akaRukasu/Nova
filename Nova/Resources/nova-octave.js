@@ -205,6 +205,14 @@
   }
 
   const calls = {
+    navigate({url}) {
+      const target = new URL(url, location.origin);
+      if (target.origin !== location.origin || !/^\/(?:album\/\d{1,20}|search|settings)$/.test(target.pathname)) return false;
+      const router = window.next?.router;
+      if (typeof router?.push !== 'function') return false;
+      router.push(target.pathname + target.search);
+      return true;
+    },
     sample({track, pair} = {}) {
       const state = sample();
       if (track && state.playing && !state.fading && !state.blocked) {
