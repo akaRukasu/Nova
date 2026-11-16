@@ -33,6 +33,14 @@ do {
     try require(merged.count == 1 && merged[0].tracks.map(\.id) == ["octave:42", "octave:43"], "Les deux imports Octave gardent les versions distinctes sans doublon")
     try require(merged[0].tracks[0].albumID == "octave:91", "L’identifiant de l’album Octave doit rester disponible pour la lecture")
 
+    let concertDate = ISO8601DateFormatter().date(from: "2027-01-23T19:30:00Z")!
+    let tmConcert = Concert(id: "ticketmaster:1", name: "ULTRA VOMIT", artists: ["Ultra Vomit"], date: concertDate,
+                            venue: "Salle polyvalente de l’Auzelou", city: "Tulle", country: "France")
+    let oaConcert = Concert(id: "openagenda:1", name: "Ultra Vomit à Tulle", artists: ["Ultra Vomit"], date: concertDate,
+                            venue: "Salle de l'Auzelou", city: "Tulle", country: "FR", ticketURL: URL(string: "https://shotgun.live/events/ultra-vomit-a-tulle"), source: "OpenAgenda")
+    let concertList = ConcertsService.combine([tmConcert], [oaConcert], artist: nil)
+    try require(concertList.count == 1 && concertList.first?.ticketURL == oaConcert.ticketURL, "La date de Tulle doit garder une seule fiche avec un lien")
+
     let catalog = OctaveCatalog.shared
     for query in ["Backseat Personality Disorder", "Aware", "Joseph Falling In Reverse", "Cross Off Mark Morton"] {
         let shelves = try await catalog.search(query, scope: .all)

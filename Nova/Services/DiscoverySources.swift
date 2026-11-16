@@ -144,7 +144,7 @@ enum ReleasesService {
     }
 }
 
-// MARK: - Concerts (API Discovery de Ticketmaster, avec la clé gratuite de l'utilisateur)
+// MARK: - Concerts (Ticketmaster et OpenAgenda)
 
 struct Concert: Identifiable, Codable, Hashable {
     let id: String
@@ -158,6 +158,7 @@ struct Concert: Identifiable, Codable, Hashable {
     var longitude: Double?
     var ticketURL: URL?
     var imageURL: URL?
+    var source: String = "Ticketmaster"
 
     var place: String { [venue, city].filter { !$0.isEmpty }.joined(separator: " · ") }
 }
@@ -193,6 +194,24 @@ enum ConcertsService {
     /// Concerts à venir d'un artiste, et/ou autour d'une position.
     static func search(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
                        countryCode: String?, city: String? = nil) async throws -> [Concert] {
+        let artist = artist.flatMap(cleanSearch)
+        let city = city.flatMap(cleanSearch)
+        async let agenda = try? openAgenda(artist: artist, latitude: latitude, longitude: longitude, radiusKm: radiusKm, country: countryCode, city: city)
+        let found: [Concert]
+        do {
+            found = apiKey == nil ? [] : try await discovery(artist: artist, latitude: latitude, longitude: longitude,
+                                                             radiusKm: radiusKm, countryCode: countryCode, city: city)
+        } catch {
+            if let extra = await agenda, !extra.isEmpty { return combine([], extra, artist: artist) }
+            throw error
+        }
+        let extra = await agenda
+        if apiKey == nil && extra == nil { throw URLError(.cannotLoadFromNetwork) }
+        return combine(found, extra ?? [], artist: artist)
+    }
+
+    private static func discovery(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
+                                  countryCode: String?, city: String?) async throws -> [Concert] {
         var query = [
             URLQueryItem(name: "classificationName", value: "music"),
             URLQueryItem(name: "sort", value: "date,asc"),
@@ -200,14 +219,6 @@ enum ConcertsService {
             // Sans « * », l'API ne renvoie que les événements en anglais (presque rien en France).
             URLQueryItem(name: "locale", value: "*"),
         ]
-        if let artist, !artist.isEmpty {
-            // On identifie l'artiste dans le catalogue pour éviter les homonymes et les correspondances floues.
-            if let attractionID = try await attraction(named: artist) {
-                query.append(URLQueryItem(name: "attractionId", value: attractionID))
-            } else {
-                query.append(URLQueryItem(name: "keyword", value: artist))
-            }
-        }
         if let latitude, let longitude {
             query.append(URLQueryItem(name: "geoPoint", value: geohash(latitude: latitude, longitude: longitude)))
             query.append(URLQueryItem(name: "radius", value: "\(radiusKm)"))
@@ -218,13 +229,35 @@ enum ConcertsService {
         } else if let countryCode, artist?.isEmpty ?? true {
             query.append(URLQueryItem(name: "countryCode", value: countryCode))
         }
-        let json = try await get("events.json", query: query)
-        let events = ((json["_embedded"] as? [String: Any])?["events"] as? [[String: Any]]) ?? []
-        return events.compactMap(concert(from:))
+        var variants = [query]
+        if let artist {
+            let attractionIDs = (try? await attractions(named: artist)) ?? []
+            variants = [query.filter { $0.name != "classificationName" } + [URLQueryItem(name: "keyword", value: artist)]]
+            variants += attractionIDs.map { query + [URLQueryItem(name: "attractionId", value: $0)] }
+        }
+        var result: [Concert] = []
+        var failure: Error?
+        var succeeded = false
+        for variant in variants {
+            for page in 0..<10 {
+                do {
+                    let json = try await get("events.json", query: variant + [URLQueryItem(name: "page", value: String(page))])
+                    succeeded = true
+                    let events = ((json["_embedded"] as? [String: Any])?["events"] as? [[String: Any]]) ?? []
+                    result += events.compactMap(concert(from:))
+                    let total = (json["page"] as? [String: Any])?["totalPages"] as? Int ?? 1
+                    if page + 1 >= total { break }
+                } catch {
+                    failure = error
+                    break
+                }
+            }
+        }
+        if !succeeded, let failure { throw failure }
+        return result
     }
 
-    /// Identifiant Ticketmaster de l'artiste dont le nom correspond le mieux.
-    private static func attraction(named name: String) async throws -> String? {
+    private static func attractions(named name: String) async throws -> [String] {
         let json = try await get("attractions.json", query: [
             URLQueryItem(name: "keyword", value: name),
             URLQueryItem(name: "classificationName", value: "music"),
@@ -232,11 +265,129 @@ enum ConcertsService {
             URLQueryItem(name: "size", value: "10"),
         ])
         let attractions = ((json["_embedded"] as? [String: Any])?["attractions"] as? [[String: Any]]) ?? []
-        let wanted = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        let exact = attractions.first {
-            (($0["name"] as? String) ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) == wanted
+        let wanted = concertKey(name)
+        let exact = attractions.filter {
+            concertKey(($0["name"] as? String) ?? "") == wanted
         }
-        return (exact ?? attractions.first)?["id"] as? String
+        return Array(exact.compactMap { $0["id"] as? String }.prefix(2))
+    }
+
+    private static func cleanSearch(_ text: String) -> String? {
+        let value = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        return value.isEmpty ? nil : value
+    }
+
+    private static func concertKey(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
+    }
+
+    private static func safeLink(_ value: String?) -> URL? {
+        guard let value, let url = URL(string: value), url.scheme == "https", url.host != nil,
+              url.user == nil, url.password == nil else { return nil }
+        return url
+    }
+
+    private static func inlineJSON(_ value: Any?) -> Any? {
+        guard let text = value as? String else { return value }
+        return try? JSONSerialization.jsonObject(with: Data(text.utf8))
+    }
+
+    private static func openAgenda(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
+                                   country: String?, city: String?) async throws -> [Concert] {
+        let endpoint = "https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets/evenements-publics-openagenda/records"
+        func phrase(_ value: String) -> String {
+            "\"" + value.replacingOccurrences(of: #"["\\\p{Cc}]"#, with: " ", options: .regularExpression) + "\""
+        }
+        let today = dayFormatter.string(from: Date())
+        var clauses = ["lastdate_begin >= date'\(today)'"]
+        if let artist { clauses.append("search(title_fr, \(phrase(artist)))") }
+        else {
+            let genres = ["concert", "musique", "rock", "metal", "punk", "jazz", "rap", "hip-hop", "electro", "pop", "reggae", "soul"]
+            let filters = [#"search(title_fr, "concert")"#] + genres.map { "search(keywords_fr, \(phrase($0)))" }
+            clauses.append("(" + filters.joined(separator: " or ") + ")")
+        }
+        let location = latitude.flatMap { lat in longitude.map { (lat: lat, lon: $0) } }
+        let radius = max(1, min(500, radiusKm))
+        if let location, (-90...90).contains(location.lat), (-180...180).contains(location.lon) {
+            // OpenAgenda ne reçoit qu'un centre arrondi. Le rayon exact est appliqué sur l'appareil.
+            let lat = (location.lat * 10).rounded() / 10
+            let lon = (location.lon * 10).rounded() / 10
+            clauses.append("within_distance(location_coordinates, geom'POINT(\(lon) \(lat))', \(radius + 10) km)")
+        } else if let city { clauses.append("location_city = \(phrase(city))") }
+        else if artist == nil { clauses.append("location_countrycode = \(phrase(country ?? "FR"))") }
+
+        let select = "uid,title_fr,firstdate_begin,lastdate_begin,timings,status,location_name,location_city,location_countrycode,location_coordinates,registration,canonicalurl,image"
+        let iso = ISO8601DateFormatter()
+        var concerts: [Concert] = []
+        for offset in stride(from: 0, to: 1000, by: 100) {
+            var components = URLComponents(string: endpoint)!
+            components.queryItems = [.init(name: "where", value: clauses.joined(separator: " and ")),
+                .init(name: "select", value: select), .init(name: "order_by", value: "lastdate_begin asc"),
+                .init(name: "limit", value: "100"), .init(name: "offset", value: String(offset))]
+            let response: (Data, URLResponse)
+            do { response = try await URLSession.shared.data(for: URLRequest(url: components.url!, timeoutInterval: 10)) }
+            catch { if concerts.isEmpty { throw error }; break }
+            let code = (response.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if code != 200 {
+                if concerts.isEmpty { throw ImportError.http(code, "OpenAgenda") }
+                break
+            }
+            let page = (try JSONSerialization.jsonObject(with: response.0)) as? [String: Any] ?? [:]
+            let events = page["results"] as? [[String: Any]] ?? []
+            for event in events {
+                guard let uid = event["uid"] as? String, let name = event["title_fr"] as? String,
+                      !name.isEmpty, (inlineJSON(event["status"]) as? [String: Any])?["id"] as? Int != 3 else { continue }
+                let coordinates = event["location_coordinates"] as? [String: Double]
+                if let location, let lat = coordinates?["lat"], let lon = coordinates?["lon"] {
+                    let radians = Double.pi / 180
+                    let a = pow(sin((lat - location.lat) * radians / 2), 2)
+                        + cos(lat * radians) * cos(location.lat * radians) * pow(sin((lon - location.lon) * radians / 2), 2)
+                    if 12_742 * asin(sqrt(min(1, max(0, a)))) > Double(radius) { continue }
+                }
+                let registration = inlineJSON(event["registration"]) as? [[String: Any]] ?? []
+                let url = registration.compactMap { safeLink($0["value"] as? String) }.first ?? safeLink(event["canonicalurl"] as? String)
+                let timings = (inlineJSON(event["timings"]) as? [[String: Any]])?.compactMap { $0["begin"] as? String } ?? []
+                let dates = timings.isEmpty ? [event["firstdate_begin"], event["lastdate_begin"]].compactMap { $0 as? String } : timings
+                for value in Set(dates) {
+                    guard let date = iso.date(from: value), dayFormatter.string(from: date) >= today else { continue }
+                    concerts.append(Concert(id: "openagenda:" + uid + ":" + value, name: name, artists: artist.map { [$0] } ?? [name], date: date,
+                        venue: event["location_name"] as? String ?? "", city: event["location_city"] as? String ?? "",
+                        country: event["location_countrycode"] as? String ?? "", latitude: coordinates?["lat"], longitude: coordinates?["lon"],
+                        ticketURL: url, imageURL: safeLink(event["image"] as? String), source: "OpenAgenda"))
+                }
+            }
+            if events.isEmpty || offset + 100 >= (page["total_count"] as? Int ?? 0) { break }
+        }
+        return concerts
+    }
+
+    static func combine(_ ticketmaster: [Concert], _ openAgenda: [Concert], artist: String?) -> [Concert] {
+        let wanted = concertKey(artist ?? "")
+        var seen = Set<String>()
+        var results: [Concert] = []
+        for concert in ticketmaster + openAgenda where seen.insert(concert.id).inserted {
+            let city = concertKey(concert.city), venue = concertKey(concert.venue), name = concertKey(concert.name)
+            func withoutCity(_ title: String) -> String {
+                let suffix = " a " + city
+                return title.hasSuffix(suffix) ? String(title.dropLast(suffix.count)) : title
+            }
+            let duplicate = results.firstIndex { previous in
+                guard previous.source != concert.source, !city.isEmpty, concertKey(previous.city) == city,
+                      dayFormatter.string(from: previous.date) == dayFormatter.string(from: concert.date),
+                      abs(previous.date.timeIntervalSince(concert.date)) <= 90 * 60 else { return false }
+                let previousVenue = concertKey(previous.venue), previousName = concertKey(previous.name)
+                let sameVenue = !venue.isEmpty && !previousVenue.isEmpty && (venue.contains(previousVenue) || previousVenue.contains(venue)
+                    || venue.split(separator: " ").contains { $0.count > 4 && previousVenue.split(separator: " ").contains($0) })
+                return sameVenue && (withoutCity(name) == withoutCity(previousName)
+                    || (!wanted.isEmpty && name.contains(wanted) && previousName.contains(wanted)))
+            }
+            if let duplicate {
+                if results[duplicate].ticketURL == nil { results[duplicate].ticketURL = concert.ticketURL }
+                if results[duplicate].imageURL == nil { results[duplicate].imageURL = concert.imageURL }
+            } else { results.append(concert) }
+        }
+        return results.sorted { $0.date < $1.date }
     }
 
     private static func get(_ path: String, query: [URLQueryItem]) async throws -> [String: Any] {
@@ -288,13 +439,16 @@ enum ConcertsService {
 
     private static func concert(from event: [String: Any]) -> Concert? {
         guard let id = event["id"] as? String, let name = event["name"] as? String,
-              let start = (event["dates"] as? [String: Any])?["start"] as? [String: Any],
+              let dates = event["dates"] as? [String: Any],
+              (dates["status"] as? [String: Any])?["code"] as? String != "cancelled",
+              let start = dates["start"] as? [String: Any],
               let day = start["localDate"] as? String,
               var date = dayFormatter.date(from: day) else { return nil }
         if let time = start["localTime"] as? String {
             let parts = time.split(separator: ":").compactMap { Int($0) }
             if parts.count >= 2 { date = date.addingTimeInterval(TimeInterval(parts[0] * 3600 + parts[1] * 60)) }
         }
+        if let iso = start["dateTime"] as? String, let timestamp = ISO8601DateFormatter().date(from: iso) { date = timestamp }
         let embedded = event["_embedded"] as? [String: Any] ?? [:]
         let venue = (embedded["venues"] as? [[String: Any]])?.first ?? [:]
         let location = venue["location"] as? [String: Any] ?? [:]

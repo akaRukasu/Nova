@@ -349,7 +349,7 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
     setError(undefined);
     localStorage.setItem('concertCity', city);
     try {
-      setConcerts(await api.concerts({ artist: artistName || undefined, city: city || undefined, key }));
+      setConcerts(await api.concerts({ artist: artistName || undefined, city: city || undefined, key, country: state.settings.region }));
     } catch (e) {
       setError(errorText(e));
       setConcerts([]);
@@ -358,7 +358,7 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
     }
   };
 
-  useEffect(() => { if (initial && key) void run(initial); }, [initial]);
+  useEffect(() => { if (initial) void run(initial); }, [initial]);
 
   const myArtists = [...new Set(state.recents.map((t) => t.artist.split(/,| et | & /)[0].trim()))].slice(0, 12);
   const byMonth = new Map<string, Concert[]>();
@@ -369,11 +369,11 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
   return (
     <div className="page narrow">
       <PageTitle>Concerts</PageTitle>
-      {!key && <p className="error">Ajoute ta clé Ticketmaster gratuite dans les Réglages (developer.ticketmaster.com).</p>}
+      {!key && <p className="muted small">OpenAgenda est disponible. Ajoute une clé Ticketmaster dans Réglages pour élargir la recherche.</p>}
       <form className="import-form" onSubmit={(e) => { e.preventDefault(); void run(); }}>
         <input placeholder="Artiste (vide : tous les concerts)" value={artist} onChange={(e) => setArtist(e.target.value)} />
         <input placeholder="Ville (ex. Paris)" value={city} onChange={(e) => setCity(e.target.value)} />
-        <button className="button" disabled={busy || !key}>Rechercher</button>
+        <button className="button" disabled={busy}>Rechercher</button>
       </form>
       {myArtists.length > 0 && <div className="chips">{myArtists.map((a) => <button key={a} className="chip" onClick={() => { setArtist(a); void run(a); }}>{a}</button>)}</div>}
       {busy && <p className="muted"><span className="spinner" /> Recherche des concerts…</p>}
@@ -388,7 +388,7 @@ export function ConcertsPage({ artist: initial }: { artist?: string }) {
               <div>
                 <strong>{concert.name}</strong>
                 <p className="muted">{concert.date && new Date(concert.date).toLocaleString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', hour: concert.date.includes('T') ? '2-digit' : undefined, minute: concert.date.includes('T') ? '2-digit' : undefined })}</p>
-                <p className="muted">{concert.place} · {concert.city}</p>
+                <p className="muted">{[concert.place, concert.city, concert.source].filter(Boolean).join(' · ')}</p>
               </div>
               {concert.url && <span className="button secondary small">Billets</span>}
             </div>

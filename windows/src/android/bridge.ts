@@ -266,7 +266,7 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   'jam:toHost': (message) => native.jamToHost({ message: JSON.stringify(message) }),
   'jam:stop': () => native.jamStop(),
 
-  'concerts:search': (options) => searchConcerts(options),
+  'concerts:search': (options) => searchConcerts(options, nativeFetch),
   'shell:open': (url) => native.openExternal({ url }),
 
   // Lecteur officiel de YouTube Music (WebView invisible, côté Android).

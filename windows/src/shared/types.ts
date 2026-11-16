@@ -250,6 +250,7 @@ export interface Concert {
   city: string;
   url?: string;
   image?: string;
+  source?: 'Ticketmaster' | 'OpenAgenda';
 }
 
 export interface JamState {

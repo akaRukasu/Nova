@@ -81,7 +81,7 @@ export const api = {
   openPhoneExport: () => call<unknown>('phone:openFile'),
   exportPhoneBackup: (state: LibraryState) => call<string | undefined>('phone:exportBackup', state),
 
-  concerts: (options: { artist?: string; city?: string; key: string }) => call<Concert[]>('concerts:search', options),
+  concerts: (options: { artist?: string; city?: string; key?: string; country?: string }) => call<Concert[]>('concerts:search', options),
 
   jamHost: (name: string) => call<{ port: number; addresses: string[] }>('jam:host', name),
   jamBroadcast: (message: unknown) => call<void>('jam:broadcast', message),

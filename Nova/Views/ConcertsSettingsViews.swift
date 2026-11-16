@@ -43,7 +43,7 @@ struct ConcertsView: View {
         List {
             if apiKey.isEmpty {
                 Section {
-                    Text("Les concerts viennent de Ticketmaster. Crée une clé gratuite sur developer.ticketmaster.com (rubrique « My Apps »), puis colle la « Consumer Key » ici.")
+                    Text("OpenAgenda est disponible. Une clé Ticketmaster gratuite permet de consulter aussi les dates de sa billetterie.")
                         .font(.subheadline)
                     TextField("Clé Ticketmaster", text: $apiKey)
                         .textInputAutocapitalization(.never)
@@ -72,7 +72,6 @@ struct ConcertsView: View {
                 } label: {
                     Label("Rechercher", systemImage: "magnifyingglass")
                 }
-                .disabled(apiKey.isEmpty)
             } header: {
                 Text("Recherche")
             } footer: {
@@ -92,10 +91,9 @@ struct ConcertsView: View {
                             }
                         }
                     }
-                    Button("Concerts de tous mes artistes", systemImage: "person.3") {
+                    Button("Concerts de mes artistes", systemImage: "person.3") {
                         Task { await searchMyArtists() }
                     }
-                    .disabled(apiKey.isEmpty)
                 }
             }
 
@@ -140,7 +138,7 @@ struct ConcertsView: View {
         .onAppear {
             if artist.isEmpty, let initialArtist { artist = initialArtist }
             if city.isEmpty { city = savedCity }
-            guard !apiKey.isEmpty, concerts.isEmpty, !isLoading else { return }
+            guard concerts.isEmpty, !isLoading else { return }
             // À l'ouverture : l'artiste demandé, sinon les concerts de tous tes artistes.
             Task { if initialArtist != nil { await search() } else { await searchMyArtists() } }
         }
@@ -174,10 +172,10 @@ struct ConcertsView: View {
                 Text(concert.name)
                     .font(.body.weight(.medium))
                     .lineLimit(2)
-                Text(concert.place)
+                Text([concert.place, concert.source].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 if let distance = distance(to: concert) {
                     Text("à \(distance) km")
                         .font(.caption)
@@ -221,8 +219,10 @@ struct ConcertsView: View {
     }
 
     private func search() async {
+        guard !isLoading else { return }
         isLoading = true
         errorText = nil
+        concerts = []
         defer { isLoading = false }
         origin = await resolveOrigin()
         do {
@@ -235,7 +235,7 @@ struct ConcertsView: View {
                 let place = useMyLocation ? "autour de toi" : (city.isEmpty ? "" : "à \(city)")
                 errorText = origin == nil && !useMyLocation && !city.isEmpty
                     ? "Lieu « \(city) » introuvable. Vérifie l'orthographe ou active « Autour de moi »."
-                    : "Ticketmaster n'annonce aucun concert \(place) pour cette recherche. Essaie un rayon plus grand."
+                    : "Aucun concert trouvé \(place) dans les agendas consultés. Essaie un rayon plus grand."
             }
         } catch {
             errorText = error.localizedDescription
@@ -243,6 +243,7 @@ struct ConcertsView: View {
     }
 
     private func searchMyArtists() async {
+        guard !isLoading else { return }
         isLoading = true
         errorText = nil
         defer { isLoading = false }
