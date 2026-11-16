@@ -192,6 +192,9 @@ struct ReleasesView: View {
     @State private var filter: Filter = .all
     @State private var opening: Int?
     @State private var previousSeen = Date.distantPast
+    @State private var loadedArtistCount = 0
+    @State private var loadingMore = false
+    @State private var discoveryArtists: [String] = []
 
     enum Filter: String, CaseIterable, Identifiable {
         case all = "Tout"
@@ -209,13 +212,12 @@ struct ReleasesView: View {
         let followed = library.saved.filter { $0.kind == .artist }.map(\.title)
         var plays: [String: Int] = [:]
         for track in library.songs + library.recents {
-            let main = track.artist.components(separatedBy: CharacterSet(charactersIn: ",&")).first?
-                .replacingOccurrences(of: " et ", with: ",").components(separatedBy: ",").first?
-                .trimmingCharacters(in: .whitespaces) ?? track.artist
-            guard !main.isEmpty else { continue }
-            plays[main, default: 0] += max(1, library.stats[track.id]?.playCount ?? 0)
+            let credit = track.artist.components(separatedBy: " · ").first ?? track.artist
+            for name in Set([credit] + TrackMatcher.artistNames(credit)) where !name.isEmpty {
+                plays[name, default: 0] += max(1, library.stats[track.id]?.playCount ?? 0)
+            }
         }
-        let top = plays.sorted { $0.value > $1.value }.prefix(25).map(\.key)
+        let top = plays.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map(\.key)
         var seen = Set<String>()
         return (followed + top).filter { seen.insert($0.lowercased()).inserted }
     }
@@ -256,6 +258,12 @@ struct ReleasesView: View {
                             .buttonStyle(.plain)
                     }
                 }
+            }
+            if !isLoading && loadedArtistCount > 0 && loadedArtistCount < discoveryArtists.count {
+                ProgressView("Recherche d’autres sorties…")
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .task(id: loadedArtistCount) { await loadMore() }
             }
         }
         .listStyle(.insetGrouped)
@@ -356,25 +364,56 @@ struct ReleasesView: View {
 
     private func load(force: Bool = false) async {
         isLoading = true
-        defer { isLoading = false }
+        loadedArtistCount = 0
+        defer { if !Task.isCancelled { isLoading = false } }
         let since = Date().addingTimeInterval(-Double(windowDays) * 86_400)
         let genres = self.genres
         let names = artistNames
-        let key = "releases-\(genres.map(\.id))-\(names.joined(separator: ",").hashValue)-\(windowDays)"
+        discoveryArtists = names
+        let firstNames = Array(names.prefix(40))
+        let key = "releases-v2-\(genres.map(\.id))-\(firstNames.joined(separator: ",").hashValue)-\(windowDays)"
         do {
             try await loadCached(key, freshFor: force ? 0 : 6 * 3600, fetch: {
                 var all: [Release] = []
-                for genre in genres {
+                let discoveryGenres = genres.isEmpty && names.isEmpty ? [ReleaseGenre(id: 0, name: "Tendances")] : genres
+                for genre in discoveryGenres {
+                    try Task.checkCancellation()
                     all += (try? await ReleasesService.releases(genre: genre, since: since)) ?? []
                 }
-                all += (try? await ReleasesService.releases(artistNames: names, since: since)) ?? []
+                all += (try? await ReleasesService.releases(artistNames: firstNames, since: since)) ?? []
                 var seen = Set<Int>()
                 return all.filter { seen.insert($0.id).inserted }
                     .sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
-            }) { releases = $0 }
+            }) { if !Task.isCancelled { releases = $0 } }
+            try Task.checkCancellation()
+            loadedArtistCount = firstNames.count
             errorText = nil
         } catch {
-            errorText = error.localizedDescription
+            if !Task.isCancelled { errorText = error.localizedDescription }
+        }
+    }
+
+    private func loadMore() async {
+        guard !loadingMore, !isLoading else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let offset = loadedArtistCount
+        let names = Array(discoveryArtists.dropFirst(offset).prefix(40))
+        let since = Date().addingTimeInterval(-Double(windowDays) * 86_400)
+        let key = "releases-v2-artists-\(names.joined(separator: ",").hashValue)-\(windowDays)"
+        do {
+            try await loadCached(key, freshFor: 6 * 3600, fetch: {
+                try await ReleasesService.releases(artistNames: names, since: since)
+            }) { batch in
+                guard !Task.isCancelled, loadedArtistCount == offset else { return }
+                var seen = Set<Int>()
+                releases = (releases + batch).filter { seen.insert($0.id).inserted }
+                    .sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
+            }
+            try Task.checkCancellation()
+            if loadedArtistCount == offset { loadedArtistCount += names.count }
+        } catch {
+            if !Task.isCancelled { errorText = error.localizedDescription }
         }
     }
 }

@@ -1,10 +1,45 @@
 import Foundation
 
+final class ReleasePagesProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        guard let url = request.url, url.host == "api.deezer.com" else { return false }
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        return url.path == "/artist/-4242/albums" || query?.first(where: { $0.name == "q" })?.value == "Nova Release QA & Duo"
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        let url = request.url!
+        let artist: [String: Any] = ["id": -4242, "name": "Nova Release QA & Duo"]
+        let json: [String: Any]
+        if url.path == "/search/artist" {
+            json = ["data": [["id": -1, "name": "Autre artiste"], artist]]
+        } else if url.query?.contains("index=100") == true {
+            let today = ISO8601DateFormatter().string(from: Date()).prefix(10)
+            json = ["data": [["id": -4242, "title": "Sortie récente en deuxième page", "artist": artist,
+                              "release_date": String(today), "record_type": "single"]]]
+        } else {
+            let old: [[String: Any]] = (0..<100).map { ["id": $0, "title": "Ancienne sortie", "release_date": "2000-01-01"] }
+            json = ["data": old, "next": "https://api.deezer.com/artist/-4242/albums?limit=100&index=100"]
+        }
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
 func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
     if !value() { throw NSError(domain: "NovaOctaveRegression", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
 }
 
 do {
+    URLProtocol.registerClass(ReleasePagesProtocol.self)
+    let recentReleases = try await ReleasesService.releases(artistNames: ["Nova Release QA & Duo"], since: Date().addingTimeInterval(-30 * 86_400))
+    try require(recentReleases.count == 1 && recentReleases.first?.id == -4242, "Les sorties récentes doivent être cherchées après les 100 premiers disques et chez le bon artiste")
+    try require(recentReleases.first?.type == "single", "Les singles doivent rester présents dans les sorties")
+    URLProtocol.unregisterClass(ReleasePagesProtocol.self)
+    print("Sorties OK — artiste exact, caractère &, pagination complète et singles récents")
     let restoredLibrary = await LibraryStore()
     let backupData = try Data(contentsOf: URL(fileURLWithPath: "Tools/Fixtures/pc-library-backup.json"))
     _ = try await restoredLibrary.restoreData(backupData)

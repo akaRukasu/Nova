@@ -23,12 +23,16 @@ import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ValueCallback;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import com.getcapacitor.annotation.ActivityCallback;
 import java.util.ArrayList;
 import java.util.List;
@@ -148,6 +152,8 @@ public class NovaPlayerPlugin extends Plugin {
     private WebView octave;
     private PluginCall octaveNavigation;
     private boolean octavePanel;
+    private ValueCallback<Uri[]> octaveFiles;
+    private ActivityResultLauncher<Intent> octaveFilePicker;
     static NovaPlayerPlugin instance;
     /** Réseau local : synchronisation et télécommande depuis l'iPhone, Jam. */
     private NovaLink link;
@@ -194,6 +200,21 @@ public class NovaPlayerPlugin extends Plugin {
     @Override
     public void load() {
         instance = this;
+        octaveFilePicker = bridge.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+            ValueCallback<Uri[]> callback = octaveFiles;
+            octaveFiles = null;
+            if (callback == null) return;
+            Uri[] files = WebChromeClient.FileChooserParams.parseResult(result.getResultCode(), result.getData());
+            if (files != null) {
+                for (Uri file : files) {
+                    if (!"content".equals(file.getScheme()) || getContext().getPackageName().equals(file.getAuthority())) {
+                        files = null;
+                        break;
+                    }
+                }
+            }
+            callback.onReceiveValue(octavePanel ? files : null);
+        });
         controlScript = readAsset("nova-ytm.js");
         link = new NovaLink(getContext(), (channel, args) -> {
             JSObject data = new JSObject();
@@ -408,6 +429,21 @@ public class NovaPlayerPlugin extends Plugin {
         String script = readAsset("nova-octave-library.js") + "\n" + readAsset("nova-octave-transition.js") + "\n" + readAsset("nova-octave.js");
         boolean documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
         if (documentStart) WebViewCompat.addDocumentStartJavaScript(view, script, Collections.singleton(OCTAVE));
+        view.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView web, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (octaveFiles != null) octaveFiles.onReceiveValue(null);
+                octaveFiles = null;
+                if (!octavePanel || !octaveOrigin(Uri.parse(web.getUrl()))) return false;
+                octaveFiles = callback;
+                try {
+                    octaveFilePicker.launch(params.createIntent());
+                } catch (android.content.ActivityNotFoundException error) {
+                    octaveFiles = null;
+                    callback.onReceiveValue(null);
+                }
+                return true;
+            }
+        });
         view.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView web, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
@@ -499,6 +535,10 @@ public class NovaPlayerPlugin extends Plugin {
                 view.setImportantForAccessibility(WebView.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
                 octavePanel = true;
                 presentOverlay(view, "Octave", () -> {
+                    if (octaveFiles != null) {
+                        octaveFiles.onReceiveValue(null);
+                        octaveFiles = null;
+                    }
                     octavePanel = false;
                     attachOctaveInBackground();
                 });

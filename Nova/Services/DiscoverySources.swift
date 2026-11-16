@@ -60,7 +60,7 @@ enum ReleasesService {
                 artists.append((id, name))
             }
         }
-        artists = Array(artists.prefix(60))
+        artists = Array(artists.prefix(100))
         var releases = try await albums(of: artists, since: since)
         for index in releases.indices { releases[index].genre = genre.name }
         return releases
@@ -69,18 +69,28 @@ enum ReleasesService {
     /// Sorties d'artistes nommés (artistes suivis ou les plus écoutés).
     static func releases(artistNames: [String], since: Date) async throws -> [Release] {
         var artists: [(Int, String)] = []
-        try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
-            for name in artistNames.prefix(40) {
-                group.addTask {
-                    guard let query = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                          let search = try? await get("https://api.deezer.com/search/artist?q=\(query)&limit=1"),
-                          let artist = (search["data"] as? [[String: Any]])?.first,
-                          let id = artist["id"] as? Int else { return nil }
-                    return (id, artist["name"] as? String ?? name)
+        let names = Array(Set(artistNames)).sorted()
+        for offset in stride(from: 0, to: names.count, by: 6) {
+            try Task.checkCancellation()
+            try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
+                for name in names[offset..<min(offset + 6, names.count)] {
+                    group.addTask {
+                        var url = URLComponents(string: "https://api.deezer.com/search/artist")!
+                        url.queryItems = [URLQueryItem(name: "q", value: name), URLQueryItem(name: "limit", value: "5")]
+                        guard let address = url.url?.absoluteString,
+                              let search = try? await get(address),
+                              let matches = search["data"] as? [[String: Any]],
+                              let artist = matches.first(where: { TrackMatcher.normalize($0["name"] as? String ?? "") == TrackMatcher.normalize(name) }),
+                              let id = artist["id"] as? Int else { return nil }
+                        return (id, artist["name"] as? String ?? name)
+                    }
                 }
+                for try await found in group { if let found { artists.append(found) } }
             }
-            for try await found in group { if let found { artists.append(found) } }
+            try await Task.sleep(for: .milliseconds(700))
         }
+        var seen = Set<Int>()
+        artists = artists.filter { seen.insert($0.0).inserted }
         return try await albums(of: artists, since: since)
     }
 
@@ -97,8 +107,19 @@ enum ReleasesService {
             try await withThrowingTaskGroup(of: [Release].self) { group in
                 for (id, name) in chunk {
                     group.addTask {
-                        guard let json = try? await get("https://api.deezer.com/artist/\(id)/albums?limit=15") else { return [] }
-                        return ((json["data"] as? [[String: Any]]) ?? []).compactMap { item -> Release? in
+                        var albums: [[String: Any]] = []
+                        var address: String? = "https://api.deezer.com/artist/\(id)/albums?limit=100"
+                        var visited = Set<String>()
+                        while let page = address, visited.insert(page).inserted {
+                            try Task.checkCancellation()
+                            let json: [String: Any]
+                            do { json = try await get(page) }
+                            catch { try Task.checkCancellation(); break }
+                            albums += (json["data"] as? [[String: Any]]) ?? []
+                            let next = (json["next"] as? String).flatMap(URL.init(string:))
+                            address = next?.host == "api.deezer.com" ? next?.absoluteString.replacingOccurrences(of: "http://", with: "https://") : nil
+                        }
+                        return albums.compactMap { item -> Release? in
                             guard var release = release(from: item, genre: nil),
                                   let date = release.releaseDate, date >= since, date <= Date().addingTimeInterval(86_400 * 7)
                             else { return nil }
@@ -112,7 +133,7 @@ enum ReleasesService {
                 }
             }
             // Limite de l'API : 50 requêtes par 5 secondes.
-            try? await Task.sleep(for: .milliseconds(700))
+            try await Task.sleep(for: .milliseconds(700))
         }
         return result.sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
     }

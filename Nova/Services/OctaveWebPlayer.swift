@@ -63,6 +63,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
     private var prepared: [String: Any]?
     private var preparing: Task<Void, Error>?
     private(set) var panel = false
+    private var dismissDialog: (() -> Void)?
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -103,6 +104,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     func hideAccount() {
+        dismissDialog?()
         panel = false
         view.removeFromSuperview()
         attach()
@@ -271,6 +273,56 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if allows(navigationAction.request.url) { webView.load(navigationAction.request) }
         return nil
+    }
+
+    private func presentDialog(_ alert: UIAlertController, cancel: @escaping () -> Void) {
+        dismissDialog?()
+        guard panel, allows(view.url), var presenter = view.window?.rootViewController else {
+            cancel()
+            return
+        }
+        while let presented = presenter.presentedViewController { presenter = presented }
+        if presenter.isBeingDismissed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self else { cancel(); return }
+                self.presentDialog(alert, cancel: cancel)
+            }
+            return
+        }
+        dismissDialog = { [weak alert] in
+            alert?.dismiss(animated: false)
+            cancel()
+        }
+        presenter.present(alert, animated: true)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        var completed = false
+        let finish: (Bool) -> Void = { [weak self] accepted in
+            guard !completed else { return }
+            completed = true
+            self?.dismissDialog = nil
+            completionHandler(accepted)
+        }
+        let alert = UIAlertController(title: "Octave", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Annuler", style: .cancel) { _ in finish(false) })
+        alert.addAction(UIAlertAction(title: "Continuer", style: .default) { _ in finish(true) })
+        presentDialog(alert, cancel: { finish(false) })
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        var completed = false
+        let finish: () -> Void = { [weak self] in
+            guard !completed else { return }
+            completed = true
+            self?.dismissDialog = nil
+            completionHandler()
+        }
+        let alert = UIAlertController(title: "Octave", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in finish() })
+        presentDialog(alert, cancel: finish)
     }
 }
 
