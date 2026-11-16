@@ -32,6 +32,11 @@ test('the PC backup uses the iPhone schema, preserves dates and annual recap, an
   assert.ok(!text.includes('private-key') && !text.includes('C:/Users') && !text.includes('localFileName'));
   const fixture=JSON.parse(await fs.readFile(new URL('../../Tools/Fixtures/pc-library-backup.json',import.meta.url),'utf8'));
   assert.deepEqual(JSON.parse(text),fixture,'The same fixture must also be restored by the native iPhone diagnostic');
+  const legacy=structuredClone(state);
+  delete legacy.playlists[0].created;
+  delete legacy.stats[song.id].playCount;
+  assert.equal(createPhoneBackup(legacy,date).library.playlists[0].createdAt,date);
+  assert.equal(createPhoneBackup(legacy,date).library.stats[song.id].playCount,0);
 });
 
 test('the local PC library download requires the pairing token and rejects it after dissociation', async () => {

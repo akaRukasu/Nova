@@ -20,7 +20,7 @@ export function createPhoneBackup(state: LibraryState, exportedAt = Date.now()) 
     library: {
       recents: state.recents.map(track), liked: state.liked.map(track), addedTracks: (state.added ?? []).map(track),
       playlists: state.playlists.map(p => ({ id: uuid(p.id), name: p.name, tracks: p.tracks.map(track),
-        createdAt: p.created, lastPlayedAt: p.lastPlayedAt })),
+        createdAt: Number.isFinite(p.created) ? p.created : exportedAt, lastPlayedAt: p.lastPlayedAt })),
       saved: state.saved.map(c => ({ id: c.id, kind: c.kind, title: c.title, subtitle: c.subtitle ?? '', artworkURL: image(c.artwork) })),
       savedDates: Object.fromEntries(state.saved.filter(c => c.addedAt != null).map(c => [c.id, c.addedAt])),
       searches: state.searches,
@@ -31,12 +31,12 @@ export function createPhoneBackup(state: LibraryState, exportedAt = Date.now()) 
             : r.operator === 'not' ? 'notContains' : r.operator,
           text: r.value, number: Number(r.value) || 0 })) })),
       stats: Object.fromEntries(Object.entries(state.stats).map(([id, s]) => [id, {
-        playCount: s.playCount, lastPlayed: s.lastPlayed, added: s.addedAt,
+        playCount: Number.isFinite(s.playCount) ? Math.max(0, Math.floor(s.playCount)) : 0, lastPlayed: s.lastPlayed, added: s.addedAt,
       }])),
       listeningYears: Object.fromEntries(Object.entries(state.listeningYears ?? {}).map(([year, entries]) =>
         [year, Object.fromEntries(Object.entries(entries).map(([id, e]) => [id, { track: track(e.track), plays: e.plays }]))])),
       historyClearedAt: state.historyChanges?.clearedAt, historyRemoved: state.historyChanges?.removed,
     },
-    shared: (state.shared ?? []).map(c => ({id: c.id, title: c.title, artworkURL: image(c.artwork), isOwner: c.isOwner})),
+    shared: (state.shared ?? []).map(c => ({id: c.id, title: c.title, artworkURL: image(c.artwork), isOwner: !!c.isOwner})),
   };
 }
