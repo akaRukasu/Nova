@@ -386,6 +386,8 @@ struct SettingsView: View {
                 Button("Importer depuis une autre plateforme") { showImport = true }
             }
 
+            LibraryRestoreSection()
+
             Section("Lecture Octave") {
                 Button("Compte et réglages Octave") { player.openOctaveAccount() }
                 Picker("Source des playlists", selection: $playlistSource) {

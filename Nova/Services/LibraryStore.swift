@@ -678,12 +678,84 @@ final class LibraryStore {
         var shared: [SharedPlaylists.Entry]?
     }
 
+    struct RestoreSummary {
+        var playlists: Int
+        var tracks: Int
+        var message: String { "Bibliothèque restaurée : \(playlists) playlists et \(tracks) titres. Les données déjà présentes ont été conservées." }
+    }
+
+    /// Le format portable du PC et de l’iPhone utilise des dates Unix en millisecondes.
+    /// Une restauration fusionne les contenus et prend le maximum des compteurs, sans les additionner.
+    @discardableResult
+    func restoreData(_ data: Data) throws -> RestoreSummary {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let backup = try decoder.decode(ExportEnvelope.self, from: data)
+        guard backup.format == "nova-library", backup.version == 1 else {
+            throw NSError(domain: "NovaBackup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ce fichier n’est pas une sauvegarde Nova compatible."])
+        }
+        let incoming = backup.library
+        var names = Set<String>()
+        var replaced = Set<UUID>()
+        let restored = (incoming.playlists ?? []).filter {
+            names.insert($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()).inserted
+        }.map { source in
+            var playlist = source
+            let previous = playlists.first { $0.id == source.id || $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == source.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            let sources = Set(source.tracks.map { $0.youtubeID ?? $0.id })
+            playlist.tracks = Self.unique(source.tracks + (previous?.tracks ?? []).filter { !sources.contains($0.youtubeID ?? $0.id) })
+            if let previous {
+                replaced.insert(previous.id)
+                playlist.id = previous.id
+                if let last = previous.lastPlayedAt { playlist.lastPlayedAt = max(playlist.lastPlayedAt ?? last, last) }
+            }
+            return playlist
+        }
+        playlists = restored + playlists.filter { !replaced.contains($0.id) }
+        liked = Self.unique((incoming.liked ?? []) + liked)
+        addedTracks = Self.unique((incoming.addedTracks ?? []) + addedTracks)
+        var collections = Set<String>()
+        saved = ((incoming.saved ?? []) + saved).filter { collections.insert($0.id).inserted }
+        var queries = Set<String>()
+        searches = Array(((incoming.searches ?? []) + searches).filter { queries.insert($0).inserted }.prefix(30))
+        var smartNames = Set<String>()
+        smartPlaylists = ((incoming.smartPlaylists ?? []) + smartPlaylists).filter { smartNames.insert($0.name.lowercased()).inserted }
+        for (id, date) in incoming.savedDates ?? [:] { savedDates[id] = min(savedDates[id] ?? date, date) }
+        for (id, value) in incoming.stats ?? [:] {
+            var current = stats[id] ?? TrackStats()
+            current.playCount = max(current.playCount, value.playCount)
+            if let date = value.lastPlayed { current.lastPlayed = max(current.lastPlayed ?? date, date) }
+            if let date = value.added { current.added = min(current.added ?? date, date) }
+            stats[id] = current
+        }
+        for (year, entries) in incoming.listeningYears ?? [:] {
+            var current = listeningYears[year] ?? [:]
+            for (id, entry) in entries {
+                if let known = current[id], known.plays >= entry.plays { continue }
+                current[id] = entry
+            }
+            listeningYears[year] = current
+        }
+        likedIDs = Set(liked.map(\.id))
+        addedIDs = Set(addedTracks.map(\.id))
+        savedIDs = Set(saved.map(\.id))
+        SharedPlaylists.shared.restore(backup.shared ?? [])
+        mergeHistory(HistorySnapshot(clearedAt: incoming.historyClearedAt, removed: incoming.historyRemoved,
+                                    entries: (incoming.recents ?? []).map {
+            .init(track: .init($0), playedAt: (incoming.stats?[$0.id]?.lastPlayed?.timeIntervalSince1970 ?? 0) * 1000)
+        }))
+        save()
+        flush()
+        return RestoreSummary(playlists: playlists.count, tracks: songs.count)
+    }
+
     /// Toute la bibliothèque (playlists, likes, historique, écoutes, albums et artistes suivis),
     /// au format lu par Nova pour Windows. Dates en millisecondes depuis 1970.
     func exportData() -> Data? {
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
-                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears)
+                                addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
+                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         return try? encoder.encode(ExportEnvelope(library: snapshot, shared: SharedPlaylists.shared.entries))
@@ -693,7 +765,8 @@ final class LibraryStore {
     func exportDataInBackground() async -> Data? {
         let envelope = ExportEnvelope(library: Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved,
                                                         searches: searches, smartPlaylists: smartPlaylists, stats: stats,
-                                                        addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears),
+                                                        addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
+                                                        historyClearedAt: historyClearedAt, historyRemoved: historyRemoved),
                                       shared: SharedPlaylists.shared.entries)
         return await Task.detached(priority: .utility) {
             let encoder = JSONEncoder()

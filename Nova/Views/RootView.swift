@@ -81,6 +81,16 @@ struct RootView: View {
             get: { transfer != nil && !transferring },
             set: { if !$0 && !transferring { transfer = nil } }
         )) {
+            Button("Restaurer depuis ce PC") {
+                guard let request = transfer else { return }
+                transferring = true
+                Task {
+                    do { transferMessage = try await PCSync.shared.pair(request, library: player.library, restoring: true) }
+                    catch { transferMessage = error.localizedDescription }
+                    transferring = false
+                    transfer = nil
+                }
+            }
             Button("Associer et envoyer") {
                 guard let request = transfer else { return }
                 transferring = true
@@ -97,7 +107,7 @@ struct RootView: View {
             }
             Button("Annuler", role: .cancel) { transfer = nil }
         } message: {
-            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers \(transfer?.computer ?? "Nova") (PC ou Android), sur ton Wi-Fi (\(transfer?.url.host ?? "")). Ensuite, tes ajouts y seront envoyés automatiquement.")
+            Text("Récupère la bibliothèque de \(transfer?.computer ?? "Nova") sur cet iPhone, ou envoie celle de l’iPhone vers cet appareil. Le transfert utilise ton Wi-Fi. Les données déjà présentes sont conservées sans doublons.")
         }
         .alert("Transfert vers Nova (PC ou Android)", isPresented: Binding(
             get: { transferMessage != nil },

@@ -75,6 +75,7 @@ export const api = {
   phoneNetwork: () => call<{ publicNetworks: string[]; allowed: boolean }>('phone:network'),
   allowPhoneNetwork: () => call<boolean>('phone:allowNetwork'),
   openPhoneExport: () => call<unknown>('phone:openFile'),
+  exportPhoneBackup: (state: LibraryState) => call<string | undefined>('phone:exportBackup', state),
 
   concerts: (options: { artist?: string; city?: string; key: string }) => call<Concert[]>('concerts:search', options),
 

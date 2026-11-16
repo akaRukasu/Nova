@@ -468,7 +468,8 @@ function phoneTrack(raw: any): Track | undefined {
   return {
     id: raw.id, title: raw.title, artist: raw.artist ?? '', album: raw.album ?? undefined, duration: raw.duration ?? undefined,
     artwork, artistId: raw.artistID ?? raw.artistId ?? undefined, albumId: raw.albumID ?? raw.albumId ?? undefined,
-    square: /googleusercontent|ggpht/.test(artwork ?? ''),
+    youtubeId: raw.youtubeID ?? raw.youtubeId ?? undefined,
+    square: raw.id.startsWith('octave:') || /googleusercontent|ggpht/.test(artwork ?? ''),
   };
 }
 
@@ -508,10 +509,20 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
     const replaced = new Set(merged.map((p) => p.id));
     const history = mergeListeningHistory({ ...state, stats }, { version: 1,
       entries: recents.map(track => ({ track, playedAt: phoneDate(raw?.stats?.[track.id]?.lastPlayed) ?? 0 })),
+      clearedAt: raw?.historyClearedAt, removed: raw?.historyRemoved,
     });
+    const listeningYears = structuredClone(state.listeningYears ?? {});
+    for (const [year, entries] of Object.entries<any>(raw?.listeningYears ?? {})) {
+      const current = listeningYears[year] ??= {};
+      for (const [id, value] of Object.entries<any>(entries)) {
+        const track = phoneTrack(value?.track);
+        if (track && value?.plays > (current[id]?.plays ?? 0)) current[id] = { track, plays: value.plays };
+      }
+    }
     const known = new Set(state.saved.map((c) => c.id));
     return {
       ...history,
+      listeningYears,
       liked: [...liked, ...state.liked].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i),
       playlists: [...merged, ...state.playlists.filter((p) => !replaced.has(p.id))],
       added: dedupe([...added, ...(state.added ?? [])]),

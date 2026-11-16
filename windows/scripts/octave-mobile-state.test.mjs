@@ -7,6 +7,41 @@ import { mixVolumes } from '../src/renderer/lib/analysis.ts';
 
 const source = fs.readFileSync(new URL('../../Nova/Resources/nova-octave.js', import.meta.url), 'utf8');
 
+test('Octave welcome and owner notes close without dismissing an account gate; retries still play the row', () => {
+  let welcome = true, note = false, gate = false, doubles = 0, clicks = 0;
+  const skip = {getAttribute: () => 'Skip', click() {welcome = false;}};
+  const close = {getAttribute: () => 'Close', click() {note = false;}};
+  const welcomeDialog = {getClientRects: () => welcome ? [1] : [], querySelectorAll: () => [skip]};
+  const noteDialog = {getClientRects: () => note ? [1] : [], querySelectorAll: () => [close]};
+  const heading = {closest: () => noteDialog, getClientRects: () => note ? [1] : []};
+  const title = {getClientRects: () => [1], click() {clicks++;}, dispatchEvent(e) {if (e.type === 'dblclick') doubles++;}};
+  const row = {querySelector: () => title};
+  const document = {
+    querySelector(selector) {
+      if (selector === '[aria-label="Link Discord to unlock Octave"]') return gate ? {getClientRects: () => [1]} : null;
+      if (selector === '[aria-label="Welcome to Octave"]') return welcome ? welcomeDialog : null;
+      if (selector === '#owner-note-title') return note ? heading : null;
+      if (selector === '[aria-label="Welcome to Octave"], #owner-note-title') return welcome ? welcomeDialog : note ? heading : null;
+      return selector.includes('main [data-track-id="42"]') ? row : null;
+    }, querySelectorAll: () => [],
+  };
+  const window = {requestAnimationFrame: () => 1, cancelAnimationFrame() {}, Audio: class {}};
+  vm.runInNewContext(source, {window, document, navigator:{}, location:{origin:'https://music.octavestreaming.com'},
+    performance, setTimeout, clearTimeout, Map, WeakRef, Promise, MouseEvent:class {constructor(type) {this.type=type;}}});
+  assert.equal(window.novaOctave('sample').blocked, null);
+  assert.equal(welcome, false);
+  note = true;
+  assert.equal(window.novaOctave('sample').blocked, null);
+  assert.equal(note, false);
+  gate = true; welcome = true;
+  assert.equal(window.novaOctave('sample').blocked, 'sign-in');
+  assert.equal(welcome, true);
+  window.novaOctave('select', {id:'42'});
+  window.novaOctave('select', {id:'42', retry:true});
+  assert.equal(doubles, 2);
+  assert.equal(clicks, 0);
+});
+
 test('Android without MediaSession reports the actual track, audio clock and autoplay queue control', () => {
   let queueOpened = false;
   const queue = { getAttribute: () => 'Queue', closest: () => null, click() { queueOpened = true; } };

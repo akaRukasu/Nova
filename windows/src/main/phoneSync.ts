@@ -65,7 +65,8 @@ export function currentPairing(): Pairing {
 }
 
 export async function startSyncServer(dataDir: string, handler: typeof onLibrary,
-  exchangeHistory?: (incoming: HistorySnapshot) => Promise<HistorySnapshot>) {
+  exchangeHistory?: (incoming: HistorySnapshot) => Promise<HistorySnapshot>,
+  exportLibrary?: () => Promise<unknown>) {
   onLibrary = handler;
   pairingFile = path.join(dataDir, 'pairing.json');
   try {
@@ -76,6 +77,15 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
     await savePairing();
   }
   server = http.createServer((request, response) => {
+    if (request.method === 'GET' && request.url === '/library' && exportLibrary) {
+      if (request.headers['x-nova-token'] !== pairing.token) { response.writeHead(403).end(); return; }
+      void exportLibrary().then(snapshot => {
+        const body = JSON.stringify(snapshot);
+        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store',
+          'content-length': Buffer.byteLength(body) }).end(body);
+      }).catch(() => response.writeHead(503).end());
+      return;
+    }
     if (request.method === 'GET' && request.url?.startsWith('/status')) {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ app: 'nova-windows', pcId: pairing.pcId, name: os.hostname() }));

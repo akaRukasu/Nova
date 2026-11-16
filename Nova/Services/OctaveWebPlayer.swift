@@ -41,6 +41,7 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         var fading: Bool?
 
         func matches(_ track: Track) -> Bool {
+            if let id, id == OctaveCatalog.id(track.id) { return true }
             if title.isEmpty { return id != nil && id == OctaveCatalog.id(track.id) }
             return OctaveCatalog.sameRecording(track, Track(id: "sample", title: title, artist: artist, duration: duration))
         }
@@ -152,9 +153,9 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         await view.pauseAllMediaPlayback()
     }
 
-    private func navigate(_ url: URL) async throws {
-        if view.url != url || view.isLoading {
-            if !view.isLoading, await call("navigate", args: ["url": url.absoluteString]) as? Bool == true { return }
+    private func navigate(_ url: URL, force: Bool = false) async throws {
+        if force || view.url != url || view.isLoading {
+            if !force, !view.isLoading, await call("navigate", args: ["url": url.absoluteString]) as? Bool == true { return }
             view.load(URLRequest(url: url))
             for _ in 0..<72 {
                 try Task.checkCancellation()
@@ -192,31 +193,32 @@ final class OctaveWebPlayer: NSObject, WKNavigationDelegate, WKUIDelegate {
         guard let id = OctaveCatalog.id(track.id) else { throw Failure.notFound }
         await view.pauseAllMediaPlayback()
         try await prepare()
-        for url in [OctaveCatalog.trackURL(track), OctaveCatalog.searchURL(track)].compactMap({ $0 }) {
+        let locations = [OctaveCatalog.trackURL(track), OctaveCatalog.trackURL(track), OctaveCatalog.searchURL(track)].compactMap { $0 }
+        for (attempt, url) in locations.enumerated() {
             try Task.checkCancellation()
             guard generation == request else { throw CancellationError() }
-            try await navigate(url)
+            try await navigate(url, force: attempt == 1)
             var sentAt: Date?
-            var retried = false
-            var resumed = false
-            for _ in 0..<45 {
+            var selections = 0
+            var resumedAt = Date.distantPast
+            for _ in 0..<65 {
                 try Task.checkCancellation()
                 guard generation == request else { throw CancellationError() }
                 let state = await sample()
                 if state?.blocked == "sign-in" { throw Failure.connection }
                 if state?.blocked == "interaction" { throw Failure.interaction }
                 let sameTrack = state?.matches(track) == true
-                if let state, sameTrack, state.playing, let elapsed = state.position {
+                if let state, sameTrack, state.playing, let elapsed = state.position, elapsed > 0.05 {
                     if position > 0 || elapsed > 2 { await command("seek", value: position) }
                     return state
                 }
                 let sinceSelection = sentAt.map { Date().timeIntervalSince($0) } ?? 0
-                if sameTrack, state?.playing == false, !resumed, sinceSelection >= 0.9 {
-                    resumed = await command("play")
+                if sameTrack, state?.playing == false, sinceSelection >= 0.9, Date().timeIntervalSince(resumedAt) > 1.5 {
+                    if await command("play") { resumedAt = Date() }
                 }
-                if sentAt == nil || (!retried && !sameTrack && sinceSelection > 1.8) {
+                if sentAt == nil || (selections < 3 && !sameTrack && sinceSelection > 2.4) {
                     if await call("select", args: ["id": id, "retry": sentAt != nil]) as? Bool == true {
-                        retried = sentAt != nil
+                        selections += 1
                         sentAt = Date()
                     }
                 }

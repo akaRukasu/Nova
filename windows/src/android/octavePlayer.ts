@@ -25,9 +25,9 @@ type Playback = {
 };
 const settingsURL = octaveOrigin + '/settings';
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const matches = (track: Track, sample: Sample) => sample.title
+const matches = (track: Track, sample: Sample) => (!!sample.id && octaveCatalogId(track.id) === sample.id) || (sample.title
   ? sameRecordingCredits(track, {id:'sample',title:sample.title,artist:sample.artist})
-  : !!sample.id && octaveCatalogId(track.id) === sample.id;
+  : false);
 
 export class AndroidOctavePlayer {
   settings = octaveAudioDefaults;

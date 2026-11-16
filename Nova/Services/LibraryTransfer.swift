@@ -16,12 +16,13 @@ enum LibraryTransfer {
 
     enum TransferError: LocalizedError {
         case refused(Int)
-        case notLocal
+        case notLocal, updatePC
 
         var errorDescription: String? {
             switch self {
             case .refused(let code): return "Le PC a refusé le transfert (\(code)). Affiche un nouveau QR code dans Nova pour Windows."
             case .notLocal: return "Ce QR code ne vient pas d'un PC de ton réseau local."
+            case .updatePC: return "Mets Nova à jour sur le PC pour restaurer sa bibliothèque sur l’iPhone."
             }
         }
     }
@@ -71,6 +72,23 @@ enum LibraryTransfer {
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
             completionHandler(nil)
         }
+    }
+
+    @MainActor
+    static func receive(_ request: Request, library: LibraryStore) async throws -> String {
+        guard isLocal(request.url), var url = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else { throw TransferError.notLocal }
+        url.path = "/library"
+        url.query = nil
+        guard let endpoint = url.url else { throw TransferError.notLocal }
+        var download = URLRequest(url: endpoint, timeoutInterval: 90)
+        download.setValue(request.token, forHTTPHeaderField: "X-Nova-Token")
+        download.setValue(UIDevice.current.name, forHTTPHeaderField: "X-Nova-Device")
+        let (data, response) = try await URLSession.shared.data(for: download, delegate: LocalTransferDelegate())
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 { throw TransferError.updatePC }
+        guard status == 200 else { throw TransferError.refused(status) }
+        guard response.mimeType == "application/json" else { throw TransferError.updatePC }
+        return try library.restoreData(data).message
     }
 
     @MainActor
@@ -130,12 +148,30 @@ final class PCSync {
     }
 
     /// Association (QR code) puis premier envoi complet.
-    func pair(_ request: LibraryTransfer.Request, library: LibraryStore) async throws -> String {
+    func pair(_ request: LibraryTransfer.Request, library: LibraryStore, restoring: Bool = false) async throws -> String {
         state = State(request: request)
         pairedComputer = request.computer
         persist()
+        let message = restoring ? try await restore(library: library) : try await sync(library: library, force: true) ?? ""
         startHeartbeat(library: library)
-        return try await sync(library: library, force: true) ?? ""
+        return message
+    }
+
+    func restore(library: LibraryStore) async throws -> String {
+        guard var current = state, !isSyncing else { throw LibraryTransfer.TransferError.refused(0) }
+        isSyncing = true
+        defer { isSyncing = false }
+        guard let url = await locate(current.request) else { throw LibraryTransfer.TransferError.refused(0) }
+        current.request.url = url
+        let message = try await LibraryTransfer.receive(current.request, library: library)
+        guard state?.request.token == current.request.token else { return "" }
+        current.lastRevision = library.revision
+        current.lastHistoryRevision = library.historyRevision
+        current.lastSync = Date()
+        state = current
+        lastSync = current.lastSync
+        persist()
+        return message
     }
 
     func unpair() {

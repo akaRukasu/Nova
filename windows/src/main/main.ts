@@ -1,4 +1,5 @@
 import { LocalAudioLibrary } from './localAudio.js';
+import { createPhoneBackup } from './libraryBackup.js';
 import { ImportJournal } from '../shared/importJournal.js';
 // Nova pour Windows : processus principal.
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
@@ -101,6 +102,7 @@ async function writeJSON(name: string, value: unknown) {
 }
 
 const emptyLibrary: LibraryState = { recents: [], liked: [], playlists: [], saved: [], searches: [], stats: {}, settings: defaultSettings };
+let backupLibrary: LibraryState | undefined;
 
 async function loadLibrary(): Promise<LibraryState> {
   const saved = await readJSON<Partial<LibraryState>>('library.json', {});
@@ -458,8 +460,8 @@ app.whenReady().then(async () => {
   handle('stream:error', (id: string) => streamError(id));
 
   // Bibliothèque locale
-  handle('library:load', () => loadLibrary());
-  handle('library:save', (state: LibraryState) => writeJSON('library.json', state));
+  handle('library:load', async () => backupLibrary = await loadLibrary());
+  handle('library:save', (state: LibraryState) => { backupLibrary = state; return writeJSON('library.json', state); });
   handle('settings:apply', async (settings: LibraryState['settings']) => {
     octavePlayer.setAudioSettings(settings.octaveAudio);
     yt.configure({ lang: settings.language, location: settings.region });
@@ -531,13 +533,23 @@ app.whenReady().then(async () => {
     const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
     const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
     return { playlists, tracks };
-  }, exchangeHistory).catch(() => undefined);
+  }, exchangeHistory, async () => createPhoneBackup(backupLibrary ?? await loadLibrary())).catch(() => undefined);
   ipcMain.handle('phone:history-result', (event, id: string, history: HistorySnapshot) => {
     if (event.sender === window?.webContents) pendingHistory.get(id)?.(history);
   });
   handle('phone:pairing', () => ({ ...currentPairing(), ...pairingLink(), token: undefined }));
   handle('phone:unpair', () => unpair());
   handle('phone:network', () => networkStatus());
+  handle('phone:exportBackup', async (state: LibraryState) => {
+    const selected = await dialog.showSaveDialog(window!, {
+      title: 'Sauvegarder la bibliothèque pour l’iPhone',
+      defaultPath: path.join(app.getPath('downloads'), 'Nova-bibliotheque-' + new Date().toISOString().slice(0, 10) + '.json'),
+      filters: [{ name: 'Sauvegarde Nova', extensions: ['json'] }],
+    });
+    if (selected.canceled || !selected.filePath) return undefined;
+    await fs.writeFile(selected.filePath, JSON.stringify(createPhoneBackup(state)));
+    return selected.filePath;
+  });
   handle('phone:allowNetwork', () => allowEverywhere());
   // Télécommande depuis l'iPhone : l'interface publie son état, reçoit les commandes.
   handle('remote:state', (state: unknown) => {

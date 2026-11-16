@@ -5,6 +5,21 @@ func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
 }
 
 do {
+    let restoredLibrary = await LibraryStore()
+    let backupData = try Data(contentsOf: URL(fileURLWithPath: "Tools/Fixtures/pc-library-backup.json"))
+    _ = try await restoredLibrary.restoreData(backupData)
+    _ = try await restoredLibrary.restoreData(backupData)
+    let restoredPlaylists = await restoredLibrary.playlists.filter { $0.name == "Restauration PC QA" }
+    try require(restoredPlaylists.count == 1 && restoredPlaylists[0].tracks.count == 2, "La sauvegarde PC doit se restaurer deux fois sans doublon")
+    let restoredDate = restoredPlaylists[0].createdAt.timeIntervalSince1970
+    try require(abs(restoredDate - 1789999995) < 0.001, "La restauration conserve la date d’ajout du PC")
+    let restoredCount = await restoredLibrary.stats["pc-backup-song"]?.playCount
+    let annualCount = await restoredLibrary.listeningYears["2026"]?["pc-backup-song"]?.plays
+    try require(restoredCount == 7 && annualCount == 7, "La restauration garde les statistiques et le récap annuel sans multiplier les écoutes")
+    let restoredSmart = await restoredLibrary.smartPlaylists.first { $0.name == "Favoris sauvegardés QA" }
+    try require(restoredSmart?.rules.first?.op == .isTrue, "Les règles de playlists intelligentes du PC restent lisibles")
+    print("Restauration PC vers iPhone OK — dates, playlists, favoris, historique et récap annuel sans doublons")
+
     let catalog = OctaveCatalog.shared
     for query in ["Backseat Personality Disorder", "Aware", "Joseph Falling In Reverse", "Cross Off Mark Morton"] {
         let shelves = try await catalog.search(query, scope: .all)

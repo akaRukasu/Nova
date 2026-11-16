@@ -20,6 +20,7 @@ struct ImportView: View {
     var body: some View {
         NavigationStack {
             List {
+                LibraryRestoreSection()
                 Section {
                     serviceButton(.spotify)
                     serviceButton(.deezer)

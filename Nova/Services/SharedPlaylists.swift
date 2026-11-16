@@ -37,6 +37,12 @@ final class SharedPlaylists {
         if let data = try? JSONEncoder().encode(entries) { UserDefaults.standard.set(data, forKey: "sharedPlaylists") }
     }
 
+    func restore(_ incoming: [Entry]) {
+        var ids = Set<String>()
+        entries = (incoming + entries).filter { ids.insert($0.id).inserted }
+        persist()
+    }
+
     /// Nouvelle playlist partagée sur le compte YouTube.
     func create(title: String, tracks: [Track] = []) async throws -> Entry {
         let id = try await client.createAccountPlaylist(title: title, videoIDs: tracks.map(\.id))

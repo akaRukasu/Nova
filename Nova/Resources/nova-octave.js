@@ -64,8 +64,23 @@
   const row = id => /^\d{1,20}$/.test(id) ? document.querySelector('main [data-track-id="' + id + '"]') : null;
   const buttons = label => [...document.querySelectorAll('button[aria-label]')].filter(button => button.getAttribute('aria-label') === label);
   const slider = label => [...document.querySelectorAll('input[aria-label]')].find(input => input.getAttribute('aria-label') === label && visible(input));
-  const blocked = () => visible(document.querySelector('[aria-label="Link Discord to unlock Octave"]')) ? 'sign-in'
-    : visible(document.querySelector('[aria-label="Welcome to Octave"], #owner-note-title')) ? 'interaction' : null;
+  function dismissNotices() {
+    const welcome = document.querySelector('[aria-label="Welcome to Octave"]');
+    const title = document.querySelector('#owner-note-title');
+    const note = title?.closest('[role="dialog"], [aria-labelledby="owner-note-title"]') ?? title?.parentElement;
+    for (const notice of [welcome, note]) {
+      if (!visible(notice)) continue;
+      const close = [...notice.querySelectorAll('button')].find(button => !button.disabled &&
+        /^(?:skip|close(?: (?:note|dialog))?|dismiss|got it|fermer|compris)$/i.test((button.getAttribute('aria-label') || button.textContent).trim()));
+      if (close) { close.click(); return true; }
+    }
+    return false;
+  }
+  const blocked = () => {
+    if (visible(document.querySelector('[aria-label="Link Discord to unlock Octave"]'))) return 'sign-in';
+    if (!visible(document.querySelector('[aria-label="Welcome to Octave"], #owner-note-title'))) return null;
+    return dismissNotices() ? null : 'interaction';
+  };
 
   function sample() {
     const engine = window.__octaveEngine;
@@ -128,7 +143,8 @@
   }
 
   function settings(options) {
-    if (blocked()) return blocked();
+    const gate = blocked();
+    if (gate) return gate;
     if (location.pathname !== '/settings') return false;
     const controls = [...document.querySelectorAll('main button')];
     const quality = controls.find(button => button.textContent.trim() === ({low: 'Low', high: 'High', lossless: 'Lossless'})[options.quality]);
@@ -201,6 +217,12 @@
     if (!label) return false;
     const button = buttons(label).find(control => !control.closest('main') && visible(control));
     if (button && !button.disabled) { button.click(); return true; }
+    if (type === 'play') {
+      const audio = window.__octaveEngine?.active;
+      if (audio && audio.paused && !audio.ended) {
+        try { Promise.resolve(audio.play()).catch(() => {}); return true; } catch {}
+      }
+    }
     return false;
   }
 
@@ -226,12 +248,13 @@
       if (!updatingSettings) void applyLiveSettings();
       return true;
     },
-    select({id, retry}) {
+    select({id}) {
       const track = row(id);
       const title = track?.querySelector('[data-cell="title"]') ?? track;
       if (!visible(title)) return false;
-      if (retry) title.click();
-      else title.dispatchEvent(new MouseEvent('dblclick', {bubbles: true, cancelable: true, detail: 2}));
+      // Un premier événement peut arriver avant l’hydratation de la page sur WebKit.
+      // Une nouvelle tentative doit relancer la lecture, pas seulement sélectionner la ligne.
+      title.dispatchEvent(new MouseEvent('dblclick', {bubbles: true, cancelable: true, detail: 2}));
       return true;
     },
     queue({id}) {

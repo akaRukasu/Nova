@@ -157,6 +157,7 @@ export function PhoneTransfer() {
   const [result, setResult] = useState<string>();
   const [network, setNetwork] = useState<{ publicNetworks: string[]; allowed: boolean }>();
   const [allowing, setAllowing] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
   useEffect(() => { if (!isAndroid) void api.phoneNetwork().then(setNetwork).catch(() => undefined); }, []);
 
   const allowNetwork = async () => {
@@ -203,7 +204,7 @@ export function PhoneTransfer() {
     {isAndroid && <PCHistoryTransfer />}
     <section className="phone-transfer">
       <div>
-        <h3>Depuis l’iPhone</h3>
+        <h3>Bibliothèque iPhone ↔ PC</h3>
         {paired ? (
           <p className="muted">
             <b className="success">Associé à {sync.phoneName ?? pairing?.phoneName ?? 'ton iPhone'}.</b> Les nouveaux titres, playlists et likes arrivent tout seuls
@@ -220,6 +221,14 @@ export function PhoneTransfer() {
           {!isAndroid && <button className="button secondary" onClick={() => void refresh().then(found =>
             navigator.clipboard.writeText(found.link)).then(() => setResult('Lien d’association copié. Colle-le dans Nova sur Android.')).catch(error => setError(errorText(error)))}>Copier le lien pour Android</button>}
           <button className="button secondary" onClick={() => void openFile()}>Ouvrir un export de l’iPhone</button>
+          {!isAndroid && <button className="button secondary" disabled={backingUp} onClick={async () => {
+            setBackingUp(true); setError(undefined);
+            try {
+              const path = await api.exportPhoneBackup(library.get());
+              if (path) setResult('Sauvegarde enregistrée : ' + path + '. Sur l’iPhone : Importer → Restaurer une sauvegarde Nova.');
+            } catch (e) { setError(errorText(e)); }
+            finally { setBackingUp(false); }
+          }}>{backingUp ? 'Sauvegarde…' : 'Exporter une sauvegarde pour l’iPhone'}</button>}
           {paired && <button className="button secondary danger" onClick={() => void api.unpairPhone().then(refresh).then(() => setQr(undefined))}>Dissocier</button>}
         </div>
         {network && !network.allowed && (network.publicNetworks.length > 0 ? (
@@ -233,6 +242,8 @@ export function PhoneTransfer() {
             <button className="link" disabled={allowing} onClick={() => void allowNetwork()}>Autoriser Nova sur tous les réseaux</button></p>
         ))}
         {qr && <p className="muted small">Scanne avec l’appareil photo de l’iPhone, puis confirme dans Nova.{isAndroid ? '' : ' Si Windows le demande, autorise Nova sur le réseau privé.'} ({pairing?.address})</p>}
+        {!isAndroid && <p className="muted small">Après une réinstallation sur l’iPhone, scanne ce QR code et choisis « Restaurer depuis ce PC » dans Nova.
+          Tu peux aussi transférer le fichier de sauvegarde par Fichiers ou iCloud Drive. Playlists, likes, historique, statistiques et récap annuel sont conservés.</p>}
         {result && <p className="success">{result}</p>}
         {error && <p className="error">{error}</p>}
       </div>
