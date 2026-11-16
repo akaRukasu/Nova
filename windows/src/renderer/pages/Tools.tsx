@@ -175,6 +175,11 @@ export function PhoneTransfer() {
     return found;
   };
   useEffect(() => { void refresh().catch(() => undefined); }, [sync.lastSync]);
+  useEffect(() => {
+    if (!qr) return;
+    const timer = setInterval(() => void refresh().catch(() => undefined), 3000);
+    return () => clearInterval(timer);
+  }, [qr]);
 
   const show = async () => {
     setError(undefined);

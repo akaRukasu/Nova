@@ -79,8 +79,12 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
   server = http.createServer((request, response) => {
     if (request.method === 'GET' && request.url === '/library' && exportLibrary) {
       if (request.headers['x-nova-token'] !== pairing.token) { response.writeHead(403).end(); return; }
-      void exportLibrary().then(snapshot => {
+      const token = pairing.token;
+      void exportLibrary().then(async snapshot => {
+        if (pairing.token !== token) { response.writeHead(403).end(); return; }
         const body = JSON.stringify(snapshot);
+        pairing = { ...pairing, paired: true, phoneName: String(request.headers['x-nova-device'] ?? 'iPhone'), lastSync: Date.now() };
+        await savePairing().catch(() => undefined);
         response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store',
           'content-length': Buffer.byteLength(body) }).end(body);
       }).catch(() => response.writeHead(503).end());

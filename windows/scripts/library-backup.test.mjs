@@ -50,6 +50,7 @@ test('the local PC library download requires the pairing token and rejects it af
     const response=await fetch(endpoint,{headers:{'X-Nova-Token':token}});
     assert.equal(response.headers.get('cache-control'),'no-store');
     assert.deepEqual(await response.json(),JSON.parse(JSON.stringify(createPhoneBackup(state,date))));
+    assert.equal(currentPairing().paired,true);
     await unpair();
     assert.equal((await fetch(endpoint,{headers:{'X-Nova-Token':token}})).status,403);
   } finally {
