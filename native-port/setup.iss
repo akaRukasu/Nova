@@ -1,7 +1,7 @@
 [Setup]
 AppId=NovaCord.Native.Test
 AppName=Voxcord
-AppVersion=0.5.0
+AppVersion=0.5.1
 DefaultDirName={localappdata}\Programs\Voxcord
 DefaultGroupName=Voxcord
 UsePreviousGroup=no
