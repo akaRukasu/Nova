@@ -2,7 +2,7 @@ name: Voxcord Native
 
 on:
   push:
-    branches: [codex/native-port-yapfast]
+    branches: [codex/native-port-yapfast, voxcord/native-device-suite]
     paths: ["native-port/**", ".github/workflows/native-port.yml"]
   workflow_dispatch:
 

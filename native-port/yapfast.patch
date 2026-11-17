@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index ec907bf..735b616 100644
+index ec907bf..67788c2 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -11546,7 +11546,7 @@ checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
@@ -7,22 +7,116 @@ index ec907bf..735b616 100644
  [[package]]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.5.1"
++version = "0.6.0"
  dependencies = [
   "anyhow",
   "arboard",
 diff --git a/Cargo.toml b/Cargo.toml
-index 74940f9..b1dedf5 100644
+index 74940f9..422924d 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,6 +1,6 @@
  [package]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.5.1"
++version = "0.6.0"
  edition = "2024"
  rust-version = "1.97"
  publish = false
+diff --git a/crates/yapfast-core/src/camera.rs b/crates/yapfast-core/src/camera.rs
+index 34829ab..f7ffa00 100644
+--- a/crates/yapfast-core/src/camera.rs
++++ b/crates/yapfast-core/src/camera.rs
+@@ -39,6 +39,67 @@ pub type Sink = Box<dyn FnMut(&I420<'_>) + Send>;
+ /// The largest picture a camera gives, and how many a second: width,
+ /// height, frames.
+ pub type Size = (u32, u32, u32);
++const FIRST_FRAME_WAIT: Duration = Duration::from_secs(3);
++
++/// A settings preview owns its capture off the UI thread. Dropping it stops
++/// the preview without waiting for a camera driver on the UI thread.
++pub struct Preview {
++    pub feed: crate::picture::Feed,
++    pub error: std::sync::mpsc::Receiver<String>,
++    stop: Arc<AtomicBool>,
++}
++
++impl Preview {
++    pub fn start(id: Option<String>, size: (u32, u32)) -> Result<Self> {
++        let feed = crate::picture::Feed::new();
++        feed.show_at(Some(size));
++        let preview = feed.clone();
++        let (failed, error) = std::sync::mpsc::channel();
++        let stop = Arc::new(AtomicBool::new(false));
++        let cancelled = stop.clone();
++        std::thread::Builder::new().name("voxcord-camera-preview".into()).spawn(move || {
++            let mut reason = "La caméra a démarré sans envoyer d’image.".to_owned();
++            for size in [(WIDTH, HEIGHT, FPS), (640, 480, 30), (320, 240, 15)] {
++                if cancelled.load(Ordering::Acquire) { return; }
++                let (first, arrived) = std::sync::mpsc::sync_channel(1);
++                let mut paint = preview.sink();
++                let mut first = Some(first);
++                let sink: Sink = Box::new(move |picture| {
++                    paint(picture);
++                    if let Some(first) = first.take() { let _ = first.try_send(()); }
++                });
++                let camera = match Camera::open_at(id.as_deref(), size, sink) {
++                    Ok(camera) => camera,
++                    Err(error) => {
++                        reason = error.to_string();
++                        continue;
++                    }
++                };
++                let deadline = Instant::now() + FIRST_FRAME_WAIT;
++                while !cancelled.load(Ordering::Acquire) && Instant::now() < deadline {
++                    if arrived.recv_timeout(Duration::from_millis(80)).is_ok() {
++                        while !cancelled.load(Ordering::Acquire) {
++                            std::thread::sleep(Duration::from_millis(80));
++                        }
++                        drop(camera);
++                        return;
++                    }
++                }
++                drop(camera);
++            }
++            if !cancelled.load(Ordering::Acquire) {
++                let _ = failed.send(format!("{reason} Vérifie le périphérique et les autorisations caméra de Windows."));
++            }
++        })?;
++        Ok(Self { feed, error, stop })
++    }
++}
++
++impl Drop for Preview {
++    fn drop(&mut self) {
++        self.stop.store(true, Ordering::Release);
++    }
++}
+ 
+ fn test_pattern() -> bool {
+     std::env::var_os("YAPFAST_CAMERA_TEST_PATTERN").is_some_and(|value| value != "0")
+@@ -206,8 +267,8 @@ impl Camera {
+             Some(id) => devices.iter().find(|device| device.id == id),
+             None => devices.first(),
+         };
+-        let Some(device) = device.or_else(|| devices.first()) else {
+-            bail!("No camera found. Connect one and try again.");
++        let Some(device) = device else {
++            bail!("La caméra sélectionnée est introuvable. Actualise la liste ou choisis une autre caméra.");
+         };
+         if device.id == TEST_PATTERN {
+             let delay = std::env::var("YAPFAST_CAMERA_TEST_DELAY_MS").ok();
+@@ -238,7 +299,9 @@ impl Camera {
+         })
+         .await??;
+         // The sink lasts as long as the camera, so this ends with a picture.
+-        let _ = came.await;
++        tokio::time::timeout(Duration::from_secs(8), came)
++            .await
++            .map_err(|_| anyhow::anyhow!("La caméra n’envoie aucune image."))??;
+         Ok(camera)
+     }
+ 
 diff --git a/crates/yapfast-core/src/discord_video.rs b/crates/yapfast-core/src/discord_video.rs
 index 44b95db..9f72350 100644
 --- a/crates/yapfast-core/src/discord_video.rs
@@ -108,10 +202,18 @@ index ca80252..2ff3f92 100644
      let mut starting: Starting = None;
      let mut watch: Option<Watch> = None;
 diff --git a/crates/yapfast-core/src/lib.rs b/crates/yapfast-core/src/lib.rs
-index adc81d1..4923770 100644
+index adc81d1..fbfd7a8 100644
 --- a/crates/yapfast-core/src/lib.rs
 +++ b/crates/yapfast-core/src/lib.rs
-@@ -97,7 +97,7 @@ pub fn init_tls() -> anyhow::Result<()> {
+@@ -60,6 +60,7 @@ mod matrix_video;
+ mod matrix_voice;
+ pub mod mention;
+ pub mod meter;
++pub mod microphone_test;
+ pub mod network;
+ pub mod noise;
+ pub mod picture;
+@@ -97,7 +98,7 @@ pub fn init_tls() -> anyhow::Result<()> {
  
  /// Where Yapfast keeps its sessions and local settings unless given --data-dir.
  pub fn default_directory() -> anyhow::Result<std::path::PathBuf> {
@@ -120,6 +222,87 @@ index adc81d1..4923770 100644
          .map(|dirs| dirs.data_local_dir().to_owned())
          .context("could not find an application data directory; pass --data-dir")
  }
+diff --git a/crates/yapfast-core/src/microphone_test.rs b/crates/yapfast-core/src/microphone_test.rs
+new file mode 100644
+index 0000000..952520b
+--- /dev/null
++++ b/crates/yapfast-core/src/microphone_test.rs
+@@ -0,0 +1,75 @@
++//! Records a short microphone sample in memory, then plays it locally.
++use std::{
++    sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc},
++    time::Duration,
++};
++
++use anyhow::{Context, Result};
++
++use crate::audio_io::{Input, Output, RATE};
++
++const CHUNK: usize = RATE as usize / 50;
++const SAMPLE_CHUNKS: usize = 150;
++
++pub enum Status {
++    Recording,
++    Playing,
++    Finished,
++    Failed(String),
++}
++
++pub struct Test {
++    pub status: mpsc::Receiver<Status>,
++    stop: Arc<AtomicBool>,
++}
++
++impl Test {
++    pub fn start(microphone: Option<String>, speaker: Option<String>) -> Result<Self> {
++        let stop = Arc::new(AtomicBool::new(false));
++        let cancelled = stop.clone();
++        let (progress, status) = mpsc::channel();
++        std::thread::Builder::new().name("voxcord-microphone-test".into()).spawn(move || {
++            let result = sample(microphone.as_deref(), speaker.as_deref(), &cancelled, &progress);
++            if !cancelled.load(Ordering::Acquire) {
++                let _ = progress.send(match result {
++                    Ok(()) => Status::Finished,
++                    Err(error) => Status::Failed(format!("{error:#}")),
++                });
++            }
++        })?;
++        Ok(Self { status, stop })
++    }
++}
++
++impl Drop for Test {
++    fn drop(&mut self) {
++        self.stop.store(true, Ordering::Release);
++    }
++}
++
++fn sample(
++    microphone: Option<&str>,
++    speaker: Option<&str>,
++    stop: &AtomicBool,
++    status: &mpsc::Sender<Status>,
++) -> Result<()> {
++    let chunk = Duration::from_millis(20);
++    let mut input = Input::<i16>::open(microphone, "Voxcord — test micro", RATE, 1, chunk)
++        .context("Impossible d’ouvrir le microphone sélectionné")?;
++    let _ = status.send(Status::Recording);
++    let mut recording = vec![0; SAMPLE_CHUNKS * CHUNK];
++    for frame in recording.chunks_exact_mut(CHUNK) {
++        if stop.load(Ordering::Acquire) { return Ok(()); }
++        input.read(frame).context("Le microphone n’a pas fourni de son")?;
++    }
++    drop(input);
++    if stop.load(Ordering::Acquire) { return Ok(()); }
++    let mut output = Output::<i16>::open(speaker, "Voxcord — retour micro", RATE, 1, Some(chunk * 3))
++        .context("Impossible d’ouvrir la sortie audio sélectionnée")?;
++    let _ = status.send(Status::Playing);
++    for frame in recording.chunks_exact(CHUNK) {
++        if stop.load(Ordering::Acquire) { return Ok(()); }
++        output.write(frame).context("La sortie audio a interrompu le test")?;
++    }
++    output.drain().context("La sortie audio a interrompu le test")
++}
 diff --git a/crates/yapfast-core/src/stream_worker.rs b/crates/yapfast-core/src/stream_worker.rs
 index f749b6e..cea6fee 100644
 --- a/crates/yapfast-core/src/stream_worker.rs
@@ -1879,7 +2062,7 @@ z8(>D~Jm4%$cHk~xBS^dFEwnqoC1_X$kR|%uxzIhuYY#rm3(f<1)@Juv0?Gdec2i78
 T6X^z*00000NkvXXu0mjfm^tMj
 
 diff --git a/packaging/windows/yapfast.rc b/packaging/windows/yapfast.rc
-index 33bfbcc..0198106 100644
+index 33bfbcc..b31036b 100644
 --- a/packaging/windows/yapfast.rc
 +++ b/packaging/windows/yapfast.rc
 @@ -1,3 +1,24 @@
@@ -1887,8 +2070,8 @@ index 33bfbcc..0198106 100644
 -// window loads by its number (src/icon.rs). scripts/make-windows-icon draws it.
  1 ICON "yapfast.ico"
 +1 VERSIONINFO
-+FILEVERSION 0,5,1,0
-+PRODUCTVERSION 0,5,1,0
++FILEVERSION 0,6,0,0
++PRODUCTVERSION 0,6,0,0
 +FILEOS 0x40004
 +FILETYPE 1
 +BEGIN
@@ -1896,11 +2079,11 @@ index 33bfbcc..0198106 100644
 +  BEGIN
 +    BLOCK "040904b0"
 +    BEGIN
-+      VALUE "FileVersion", "0.5.1.0\0"
++      VALUE "FileVersion", "0.6.0.0\0"
 +      VALUE "InternalName", "Voxcord\0"
 +      VALUE "FileDescription", "Voxcord - Native Discord client\0"
 +      VALUE "ProductName", "Voxcord\0"
-+      VALUE "ProductVersion", "0.5.1\0"
++      VALUE "ProductVersion", "0.6.0\0"
 +      VALUE "OriginalFilename", "voxcord.exe\0"
 +    END
 +  END
@@ -2195,7 +2378,7 @@ index fca515f..c8ff968 100644
                  AppendMenuW(menu, MF_STRING, DISCONNECT, w!("Disconnect"));
              }
 diff --git a/src/ui.rs b/src/ui.rs
-index ee2e4e0..b4d132e 100644
+index ee2e4e0..a2c2a5f 100644
 --- a/src/ui.rs
 +++ b/src/ui.rs
 @@ -995,6 +995,8 @@ struct Layout {
@@ -2228,7 +2411,17 @@ index ee2e4e0..b4d132e 100644
          // Before the first frame, which the event loop draws. A window made
          // again, after closing to the tray, keeps the theme this way too.
          let (id, chosen) = theme::chosen(self.theme.as_deref(), &self.custom_themes);
-@@ -1702,6 +1709,7 @@ struct Adapter {
+@@ -1694,7 +1701,8 @@ struct Adapter {
+     /// Reads the microphone while the input menu shows its level.
+     meter: Option<InputMeter>,
+     /// Films with the chosen camera while voice settings try it.
+-    camera_test: Option<(yapfast_core::camera::Camera, yapfast_core::picture::Feed)>,
++    camera_test: Option<yapfast_core::camera::Preview>,
++    microphone_test: Option<yapfast_core::microphone_test::Test>,
+     /// Films for a preview call with the camera on.
+     preview_camera: Option<yapfast_core::camera::Camera>,
+     /// Whose camera picture each place in the call's grid holds.
+@@ -1702,6 +1710,7 @@ struct Adapter {
      /// The soundboard's sounds as its rows show them, and the pictures'
      /// revision then, so the rows are made again only when either changes.
      soundboard_shown: Option<(Arc<[voice::SoundGroup]>, u64)>,
@@ -2236,7 +2429,11 @@ index ee2e4e0..b4d132e 100644
      /// The same for the entrance sounds Settings offers; the servers it
      /// offers them for, "All servers" first as none; and the soundboard
      /// volume shown, so the slider moves only when Discord's does.
-@@ -1927,6 +1935,7 @@ impl Adapter {
+@@ -1924,9 +1933,11 @@ impl Adapter {
+                 dialog: None,
+                 meter: None,
+                 camera_test: None,
++                microphone_test: None,
                  preview_camera: None,
                  frame_ids: vec![],
                  soundboard_shown: None,
@@ -2244,7 +2441,7 @@ index ee2e4e0..b4d132e 100644
                  entrance_shown: None,
                  entrance_servers: vec![],
                  soundboard_volume_shown: None,
-@@ -2300,7 +2309,7 @@ impl Adapter {
+@@ -2300,7 +2311,7 @@ impl Adapter {
                      // Only while Yapfast isn't in front: there the lists show what's new.
                      if !FOCUSED.get()
                          && !alert.call
@@ -2340,7 +2537,7 @@ index 5b5f9f1..cdab5a1 100644
          link.set_sent(rate(stream.sent_kbps).into());
          link.set_target(rate(stream.target_kbps).into());
 diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
-index 597fb2e..89bff2d 100644
+index 597fb2e..f8cb136 100644
 --- a/src/ui/callbacks.rs
 +++ b/src/ui/callbacks.rs
 @@ -1330,7 +1330,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
@@ -2362,7 +2559,27 @@ index 597fb2e..89bff2d 100644
          layout.sound_set = chosen(&SoundSet::ALL, window.get_sound_set());
          layout.sound_volume = Some(window.get_sound_volume().clamp(0, 200) as u8);
          layout.adjust_each_sound = window.get_adjust_each_sound();
-@@ -2596,6 +2599,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2371,12 +2374,13 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+                 frames.set_row_data(index, frame);
+             }
+         }
+-        if let Some(frame) = adapter
+-            .camera_test
+-            .as_ref()
+-            .and_then(|(_, feed)| feed.take(pictures::frame))
+-        {
+-            window.set_camera_preview(frame);
++        if let Some(preview) = &adapter.camera_test {
++            if let Ok(error) = preview.error.try_recv() {
++                window.set_camera_note(error.into());
++            }
++            if let Some(frame) = preview.feed.take(pictures::frame) {
++                window.set_camera_preview(frame);
++            }
+         }
+         if let Some(frame) = voice
+             .watching
+@@ -2596,6 +2600,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
      });
      let state = adapter.clone();
      let weak = window.as_weak();
@@ -2378,7 +2595,74 @@ index 597fb2e..89bff2d 100644
      window.on_play_soundboard(move |id| {
          let Some(window) = weak.upgrade() else { return };
          state.borrow_mut().action(
-@@ -2785,7 +2797,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2753,8 +2766,10 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         if let Some(id) = id {
+             let mut adapter = state.borrow_mut();
+             adapter.action(&window, Action::Voice(voice::Command::Camera(id)));
+-            if adapter.camera_test.is_some() {
++            if window.get_camera_testing() {
+                 adapter.camera_test = None;
++                window.set_camera_preview(slint::Image::default());
++                window.set_camera_note(SharedString::default());
+                 start_camera_test(&mut adapter, &window);
+             }
+         }
+@@ -2771,6 +2786,54 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         }
+     });
+     let state = adapter.clone();
++    let weak = window.as_weak();
++    window.on_test_microphone(move |on| {
++        let Some(window) = weak.upgrade() else { return };
++        let Ok(mut adapter) = state.try_borrow_mut() else { return };
++        adapter.microphone_test.take();
++        window.set_microphone_testing(false);
++        if !on { return; }
++        let voice = &adapter.app.state.voice;
++        if voice.active() {
++            window.set_microphone_test_note("Quitte l’appel avant le test micro.".into());
++            return;
++        }
++        match yapfast_core::microphone_test::Test::start(voice.microphone.clone(), voice.speaker.clone()) {
++            Ok(test) => {
++                adapter.microphone_test = Some(test);
++                window.set_microphone_test_note("Ouverture du microphone…".into());
++                window.set_microphone_testing(true);
++            }
++            Err(error) => window.set_microphone_test_note(error.to_string().into()),
++        }
++    });
++    let state = adapter.clone();
++    let weak = window.as_weak();
++    window.on_microphone_test_tick(move || {
++        use yapfast_core::microphone_test::Status;
++        let Some(window) = weak.upgrade() else { return };
++        let mut adapter = state.borrow_mut();
++        if adapter.app.state.voice.active() {
++            adapter.microphone_test.take();
++            window.set_microphone_testing(false);
++            window.set_microphone_test_note("Test arrêté : appel actif.".into());
++            return;
++        }
++        let status = adapter.microphone_test.as_ref().and_then(|test| test.status.try_iter().last());
++        let (note, done) = match status {
++            Some(Status::Recording) => ("Parle pendant trois secondes…".into(), false),
++            Some(Status::Playing) => ("Écoute ta voix sur la sortie sélectionnée…".into(), false),
++            Some(Status::Finished) => ("Test terminé.".into(), true),
++            Some(Status::Failed(error)) => (error.into(), true),
++            None => return,
++        };
++        window.set_microphone_test_note(note);
++        if done {
++            adapter.microphone_test.take();
++            window.set_microphone_testing(false);
++        }
++    });
++    let state = adapter.clone();
+     window.on_metering(move |on| {
+         let mut adapter = state.borrow_mut();
+         let microphone = adapter.app.state.voice.microphone.clone();
+@@ -2785,7 +2848,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              window.set_meter_note(SharedString::from(if !meter::AVAILABLE {
                  "The level meter isn't available on this system yet."
              } else if meter.failed() {
@@ -2387,7 +2671,7 @@ index 597fb2e..89bff2d 100644
              } else {
                  ""
              }));
-@@ -2810,7 +2822,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2810,7 +2873,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                      if !yapfast_core::discord_audio::AVAILABLE {
                          "Discord voice and its level aren't available on this system yet."
                      } else if meter.failed() {
@@ -2396,7 +2680,21 @@ index 597fb2e..89bff2d 100644
                      } else {
                          ""
                      },
-@@ -2972,7 +2984,7 @@ const PIP_HEIGHT: f32 = 180.0;
+@@ -2917,11 +2980,9 @@ fn composer_caret(
+ /// about 400 by 225 points.
+ fn start_camera_test(adapter: &mut Adapter, window: &YapfastWindow) {
+     let scale = window.window().scale_factor();
+-    let feed = yapfast_core::picture::Feed::new();
+-    feed.show_at(Some(((400.0 * scale) as u32, (225.0 * scale) as u32)));
+     let camera = adapter.app.state.voice.camera.clone();
+-    match yapfast_core::camera::Camera::open(camera.as_deref(), Box::new(feed.sink())) {
+-        Ok(camera) => adapter.camera_test = Some((camera, feed)),
++    match yapfast_core::camera::Preview::start(camera, ((400.0 * scale) as u32, (225.0 * scale) as u32)) {
++        Ok(preview) => adapter.camera_test = Some(preview),
+         Err(error) => window.set_camera_note(error.to_string().into()),
+     }
+ }
+@@ -2972,7 +3033,7 @@ const PIP_HEIGHT: f32 = 180.0;
  /// Opens a web page in the browser. Only web pages open: a message can't
  /// start other programs.
  /// The web address a link in a message leads to: a masked link's, behind
@@ -2463,7 +2761,7 @@ index a9b8e03..6f0606f 100644
      if adapter.placement_due.running() {
          adapter.placement_due.stop();
 diff --git a/src/ui/refresh.rs b/src/ui/refresh.rs
-index c3040a1..23a6c38 100644
+index c3040a1..4bc07e3 100644
 --- a/src/ui/refresh.rs
 +++ b/src/ui/refresh.rs
 @@ -451,7 +451,7 @@ impl Adapter {
@@ -2574,7 +2872,60 @@ index c3040a1..23a6c38 100644
          self.models.entrance_rows.set_vec(rows);
      }
  
-@@ -4375,8 +4375,8 @@ fn permission_names(bits: u64) -> String {
+@@ -4069,6 +4069,7 @@ pub(super) fn rail_rows(
+             let (unread, mentions) = marks(server);
+             rows.push(ServerRow {
+                 call: in_call(server),
++                voice_summary: server_voice_summary(server, rooms_by_id),
+                 ..server_row(server, selected(server), unread, mentions)
+             });
+             continue;
+@@ -4131,6 +4132,7 @@ pub(super) fn rail_rows(
+                     last: index == last,
+                     tint,
+                     call: in_call(server),
++                    voice_summary: server_voice_summary(server, rooms_by_id),
+                     ..server_row(server, selected(server), unread, mentions)
+                 });
+             }
+@@ -4139,6 +4141,36 @@ pub(super) fn rail_rows(
+     rows
+ }
+ 
++fn server_voice_summary(
++    server: &yapfast_core::chat::ChatServer,
++    rooms_by_id: &HashMap<&str, &yapfast_core::chat::ChatRoom>,
++) -> SharedString {
++    if !server.discord || server.unavailable { return SharedString::default(); }
++    let mut lines = Vec::new();
++    let mut participants = 0;
++    let mut shown = 0;
++    for room in server.channels.iter().filter_map(|id| rooms_by_id.get(id.as_str())) {
++        if !room.voice || room.locked || room.people.is_empty() { continue; }
++        participants += room.people.len();
++        if lines.len() >= 4 || shown >= 10 { continue; }
++        let names: Vec<_> = room.people.iter().take((10 - shown).min(3)).map(|person| {
++            let name = person.name.chars().take(32).collect::<String>();
++            match (person.video, person.streaming) {
++                (true, true) => format!("{name} (caméra, live)"),
++                (true, false) => format!("{name} (caméra)"),
++                (false, true) => format!("{name} (live)"),
++                _ => name,
++            }
++        }).collect();
++        shown += names.len();
++        let channel = room.name.chars().take(38).collect::<String>();
++        lines.push(format!("#{channel} : {}", names.join(", ")));
++    }
++    if lines.is_empty() { return SharedString::default(); }
++    if participants > shown { lines.push(format!("+{} en vocal", participants - shown)); }
++    format!("\n{}", lines.join("\n")).into()
++}
++
+ /// The voice channel of the call going on, if there is one.
+ /// A server voice channel someone is in, as the friends list names it.
+ pub(super) struct VoicePlace<'a> {
+@@ -4375,8 +4407,8 @@ fn permission_names(bits: u64) -> String {
      let more = (bits & !named).count_ones();
      let more = match (more, names.is_empty()) {
          (0, _) => None,
@@ -2585,7 +2936,7 @@ index c3040a1..23a6c38 100644
          (1, false) => Some("1 more permission".to_owned()),
          (count, false) => Some(format!("{count} more permissions")),
      };
-@@ -4761,14 +4761,21 @@ fn sound_rows(
+@@ -4761,14 +4793,21 @@ fn sound_rows(
      groups: &[voice::SoundGroup],
      pictures: &mut HashMap<String, slint::Image>,
      state: &AppState,
@@ -3101,10 +3452,37 @@ index 490d006..381ba2f 100644
      in property <string> role-name;
      in property <color> role-color;
 diff --git a/ui/rail.slint b/ui/rail.slint
-index 64b36e5..9aa0e1d 100644
+index 64b36e5..35c57bb 100644
 --- a/ui/rail.slint
 +++ b/ui/rail.slint
-@@ -1072,7 +1072,7 @@ export component RoomList inherits Rectangle {
+@@ -9,6 +9,8 @@ export struct FolderServer { initial: string, picture-url: string }
+ 
+ export struct ServerRow {
+     id: string, name: string, initial: string, picture: image, selected: bool, unread: bool, discord: bool,
++    /// Occupied visible voice channels and the people already known in them.
++    voice-summary: string,
+     /// A Discord server out of reach in an outage, shown as last known.
+     unavailable: bool,
+     /// Mentions waiting in its channels, such as "3" or "99+"; empty for none.
+@@ -765,7 +767,7 @@ export component ServerRail inherits Rectangle {
+                     initial: server.initial; picture-url: server.picture-url;
+                     label: server.name + (server.discord && root.matrix-build ? ", Discord" : "")
+                         + (server.badge != "" ? ", " + server.badge + " unread" : ", unread");
+-                    tip: server.discord && root.matrix-build ? server.name + " (Discord)" : server.name;
++                    tip: (server.discord && root.matrix-build ? server.name + " (Discord)" : server.name) + server.voice-summary;
+                     unread: true; badge: server.badge; discord: server.discord;
+                     clicked => { root.open-dm(server.id); }
+                     context-menu(x, y) => { root.open-server-menu(server.id, x, y); }
+@@ -776,7 +778,7 @@ export component ServerRail inherits Rectangle {
+                     label: server.name + (server.discord && root.matrix-build ? ", Discord" : "") + (server.unavailable ? ", unavailable" : "")
+                         + (server.call ? ", in a call" : "")
+                         + (server.badge != "" ? ", " + server.badge + " mentions" : server.unread ? ", unread" : "");
+-                    tip: server.unavailable ? server.name + " (unavailable in a Discord outage)" : server.discord && root.matrix-build ? server.name + " (Discord)" : server.name;
++                    tip: (server.unavailable ? server.name + " (unavailable in a Discord outage)" : server.discord && root.matrix-build ? server.name + " (Discord)" : server.name) + server.voice-summary;
+                     selected: server.selected; unread: server.unread; badge: server.badge; discord: server.discord;
+                     call: server.call;
+                     opacity: server.unavailable ? 0.5 : 1;
+@@ -1072,7 +1074,7 @@ export component RoomList inherits Rectangle {
                      }
                  }
                  // Discord reports who is in every voice channel; Matrix
@@ -3137,10 +3515,21 @@ index 142c80c..719dc8e 100644
      address: string,
      /// What the main button does, such as "Authorize"; empty for none.
 diff --git a/ui/settings.slint b/ui/settings.slint
-index 1712fa1..bf6f56f 100644
+index 1712fa1..25dc4ed 100644
 --- a/ui/settings.slint
 +++ b/ui/settings.slint
-@@ -467,7 +467,7 @@ export component VoiceSettings inherits VerticalLayout {
+@@ -444,6 +444,10 @@ export component VoiceSettings inherits VerticalLayout {
+     in-out property <bool> camera-testing;
+     in property <image> camera-preview;
+     in property <string> camera-note;
++    in property <bool> microphone-testing;
++    in property <bool> call-active;
++    in property <string> microphone-test-note;
++    callback test-microphone(bool);
+     in-out property <bool> unmute-on-join;
+     in-out property <bool> level-voice;
+     /// What suppresses noise in Discord calls: 0 DeepFilterNet, 1 RNNoise, 2
+@@ -467,7 +471,7 @@ export component VoiceSettings inherits VerticalLayout {
      in-out property <bool> talk-recording;
      /// How long the microphone keeps sending after the key comes up, in ms.
      in-out property <int> talk-delay: 20;
@@ -3149,7 +3538,44 @@ index 1712fa1..bf6f56f 100644
      in property <string> talk-note;
      /// Discord is linked, so its calls' noise suppression shows.
      in property <bool> discord;
-@@ -672,8 +672,8 @@ export component VoiceSettings inherits VerticalLayout {
+@@ -531,6 +535,19 @@ export component VoiceSettings inherits VerticalLayout {
+         }
+     }
+     if root.microphones.length == 0 && root.speakers.length == 0: Label { text: "No audio devices found. Connect one, then refresh."; }
++    HorizontalLayout {
++        spacing: 12px;
++        ActionButton {
++            text: root.microphone-testing ? "Arrêter le test micro" : "Tester le micro";
++            enabled: root.microphone-testing || (!root.call-active && root.microphones.length > 0 && root.speakers.length > 0);
++            small: true;
++            clicked => { root.test-microphone(!root.microphone-testing); }
++        }
++        Label {
++            text: root.call-active ? "Disponible hors appel." : root.microphone-test-note != "" ? root.microphone-test-note : "Enregistre trois secondes, puis réécoute-les sur la sortie choisie.";
++            horizontal-stretch: 1;
++        }
++    }
+     HorizontalLayout {
+         spacing: 16px;
+         VerticalLayout {
+@@ -551,14 +568,14 @@ export component VoiceSettings inherits VerticalLayout {
+                     alignment: center; spacing: 10px; padding: 12px;
+                     Image { height: 30px; source: @image-url("icons/video.svg"); image-fit: contain; colorize: #b5b8c1; }
+                     Text {
+-                        text: root.camera-note != "" ? root.camera-note : root.camera-testing ? "Starting your camera..." : "Your camera is off.";
++                        text: root.camera-note != "" ? root.camera-note : root.camera-testing ? "Ouverture de la caméra…" : "La caméra est arrêtée.";
+                         color: #b5b8c1; font-size: 14px; horizontal-alignment: center; wrap: word-wrap;
+                     }
+                 }
+             }
+             HorizontalLayout {
+                 ActionButton {
+-                    text: root.camera-testing ? "Stop video" : "Test video"; small: true; enabled: root.cameras.length > 0;
++                    text: root.camera-testing ? "Arrêter l’aperçu" : "Tester la caméra"; small: true; enabled: root.camera-testing || root.cameras.length > 0;
+                     clicked => { root.camera-testing = !root.camera-testing; }
+                 }
+                 Rectangle { horizontal-stretch: 1; }
+@@ -672,8 +689,8 @@ export component VoiceSettings inherits VerticalLayout {
              chosen => { root.preferences-changed(); }
          }
          Label {
@@ -3160,7 +3586,7 @@ index 1712fa1..bf6f56f 100644
          }
      }
      if root.input-mode == 1: VerticalLayout {
-@@ -726,7 +726,7 @@ export component VoiceSettings inherits VerticalLayout {
+@@ -726,7 +743,7 @@ export component VoiceSettings inherits VerticalLayout {
          }
          Label {
              text: root.gate-meter-note != "" ? root.gate-meter-note
@@ -3169,7 +3595,7 @@ index 1712fa1..bf6f56f 100644
          }
      }
  }
-@@ -858,7 +858,7 @@ component ThemeColourRow inherits HorizontalLayout {
+@@ -858,7 +875,7 @@ component ThemeColourRow inherits HorizontalLayout {
      }
  }
  
@@ -3178,7 +3604,7 @@ index 1712fa1..bf6f56f 100644
  // person's own. A click shows one at once. New theme opens the editor, whose
  // changes show at once too; Save keeps them, Cancel restores the theme from
  // before.
-@@ -885,7 +885,7 @@ export component AppearanceSettings inherits VerticalLayout {
+@@ -885,7 +902,7 @@ export component AppearanceSettings inherits VerticalLayout {
      callback save-theme();
      callback cancel-theme();
      callback delete-theme();
@@ -3187,7 +3613,7 @@ index 1712fa1..bf6f56f 100644
      /// draw its own.
      in-out property <bool> system-title-bar;
      in property <bool> title-bar-choice;
-@@ -921,7 +921,7 @@ export component AppearanceSettings inherits VerticalLayout {
+@@ -921,7 +938,7 @@ export component AppearanceSettings inherits VerticalLayout {
      }
      if !root.editor && root.title-bar-choice: SettingsSwitch {
          text: "Use the system title bar";
@@ -3196,7 +3622,7 @@ index 1712fa1..bf6f56f 100644
          checked <=> root.system-title-bar;
          toggled => { root.title-bar-toggled(); }
      }
-@@ -997,7 +997,7 @@ export component MessageSettings inherits VerticalLayout {
+@@ -997,7 +1014,7 @@ export component MessageSettings inherits VerticalLayout {
      in-out property <int> text-size;
      in-out property <bool> link-previews;
      in-out property <bool> share-typing;
@@ -3205,7 +3631,7 @@ index 1712fa1..bf6f56f 100644
      in-out property <int> animate;
      in-out property <bool> reply-ping;
      in-out property <bool> strip-tracking;
-@@ -1054,7 +1054,7 @@ export component MessageSettings inherits VerticalLayout {
+@@ -1054,7 +1071,7 @@ export component MessageSettings inherits VerticalLayout {
          spacing: 8px;
          SettingsHeading { text: "PLAY GIFS, EMOJI AND STICKERS"; }
          Choices {
@@ -3214,7 +3640,7 @@ index 1712fa1..bf6f56f 100644
              current <=> root.animate;
              chosen => { root.preferences-changed(); }
          }
-@@ -1100,7 +1100,7 @@ export component NotificationSettings inherits VerticalLayout {
+@@ -1100,7 +1117,7 @@ export component NotificationSettings inherits VerticalLayout {
      SettingsTitle { text: "Notifications"; }
      SettingsSwitch {
          text: "Show desktop notifications";
@@ -3223,7 +3649,7 @@ index 1712fa1..bf6f56f 100644
              + (root.matrix && root.discord ? "Each Discord server's notification settings and your Matrix notification rules decide"
                  : root.matrix ? "Your Matrix notification rules decide" : "Each Discord server's notification settings decide")
              + " which: usually DMs and mentions. Clicking one opens the conversation.";
-@@ -1116,13 +1116,13 @@ export component NotificationSettings inherits VerticalLayout {
+@@ -1116,13 +1133,13 @@ export component NotificationSettings inherits VerticalLayout {
      }
      SettingsSwitch {
          text: "Flash the taskbar";
@@ -3239,7 +3665,7 @@ index 1712fa1..bf6f56f 100644
  // them, and how loud they are, all together or each on its own.
  export component SoundSettings inherits VerticalLayout {
      /// The set, in the order the choices show.
-@@ -1139,7 +1139,7 @@ export component SoundSettings inherits VerticalLayout {
+@@ -1139,7 +1156,7 @@ export component SoundSettings inherits VerticalLayout {
      property <[string]> names: ["Someone joins the call", "Someone leaves the call", "Muting", "Unmuting", "Deafening", "Undeafening", "A message", "A mention", "Someone starts watching a stream", "Someone stops watching a stream", "Someone starts streaming", "Someone stops streaming"];
      spacing: 16px;
      SettingsTitle { text: "Sounds"; }
@@ -3248,7 +3674,7 @@ index 1712fa1..bf6f56f 100644
      VerticalLayout {
          spacing: 8px;
          SettingsHeading { text: "SOUND SET"; }
-@@ -1174,7 +1174,7 @@ export component SoundSettings inherits VerticalLayout {
+@@ -1174,7 +1191,7 @@ export component SoundSettings inherits VerticalLayout {
      }
  }
  
@@ -3257,7 +3683,7 @@ index 1712fa1..bf6f56f 100644
  // picks a renderer once per process, so a change to that waits for a
  // restart, which this offers; encoding changes from the next stream.
  export component AdvancedSettings inherits VerticalLayout {
-@@ -1195,12 +1195,12 @@ export component AdvancedSettings inherits VerticalLayout {
+@@ -1195,12 +1212,12 @@ export component AdvancedSettings inherits VerticalLayout {
  
      if root.autostart-available: SettingsSwitch {
          text: "Start when you sign in";
@@ -3272,7 +3698,7 @@ index 1712fa1..bf6f56f 100644
          description: "discord:// links from other apps and shortcuts open here instead of Discord. Turning it off gives them back to the app that had them.";
          checked <=> root.discord-links;
          toggled => { root.preferences-changed(); }
-@@ -1208,37 +1208,37 @@ export component AdvancedSettings inherits VerticalLayout {
+@@ -1208,37 +1225,37 @@ export component AdvancedSettings inherits VerticalLayout {
      SettingsSwitch {
          text: "Close to tray";
          description: root.tray-available
@@ -3317,7 +3743,7 @@ index 1712fa1..bf6f56f 100644
          checked <=> root.gpu-encoding;
          toggled => { root.preferences-changed(); }
      }
-@@ -1260,7 +1260,7 @@ export component DiscordLinkSettings inherits VerticalLayout {
+@@ -1260,7 +1277,7 @@ export component DiscordLinkSettings inherits VerticalLayout {
      callback open-discord-captcha;
      spacing: 16px;
      SettingsTitle { text: "Discord"; }
@@ -3326,7 +3752,7 @@ index 1712fa1..bf6f56f 100644
      DiscordLinkPanel {
          phase: root.link-phase; code: root.link-code; name: root.link-name; note: root.link-note;
          begin => { root.link-discord(); }
-@@ -1289,7 +1289,7 @@ export component GameActivitySettings inherits VerticalLayout {
+@@ -1289,7 +1306,7 @@ export component GameActivitySettings inherits VerticalLayout {
      SettingsTitle { text: "Game activity"; }
      SettingsSwitch {
          text: "Share the game you play";
@@ -3335,7 +3761,7 @@ index 1712fa1..bf6f56f 100644
          checked: root.shown;
          controlled: true;
          enabled: root.linked;
-@@ -1297,7 +1297,7 @@ export component GameActivitySettings inherits VerticalLayout {
+@@ -1297,7 +1314,7 @@ export component GameActivitySettings inherits VerticalLayout {
          toggled(shown) => { root.toggled(shown); }
      }
      SettingsHeading { text: "CUSTOM GAMES"; }
@@ -3344,7 +3770,7 @@ index 1712fa1..bf6f56f 100644
      for game[index] in root.executables: VerticalLayout {
          spacing: 4px;
          HorizontalLayout {
-@@ -1349,7 +1349,7 @@ export component DiscordSettings inherits VerticalLayout {
+@@ -1349,7 +1366,7 @@ export component DiscordSettings inherits VerticalLayout {
      SettingsTitle { text: "Discord"; }
      if root.matrix-build: HorizontalLayout {
          spacing: 12px;
@@ -3353,7 +3779,7 @@ index 1712fa1..bf6f56f 100644
          ActionButton {
              text: "Unlink Discord"; icon: @image-url("icons/log-out.svg"); danger: true;
              clicked => { root.unlink-discord(); }
-@@ -1363,13 +1363,13 @@ export component DiscordSettings inherits VerticalLayout {
+@@ -1363,13 +1380,13 @@ export component DiscordSettings inherits VerticalLayout {
      }
      SettingsSwitch {
          text: "Mark messages read on Discord";
@@ -3504,7 +3930,7 @@ index 84be8a2..6487d47 100644
          ListView {
              vertical-stretch: 1;
 diff --git a/ui/yapfast.slint b/ui/yapfast.slint
-index 2b2e644..60391b9 100644
+index 2b2e644..89a2918 100644
 --- a/ui/yapfast.slint
 +++ b/ui/yapfast.slint
 @@ -18,7 +18,7 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
@@ -3619,7 +4045,16 @@ index 2b2e644..60391b9 100644
      /// claim them, outside the preview.
      in-out property <bool> discord-links;
      in property <bool> discord-links-available;
-@@ -1201,7 +1201,7 @@ export component YapfastWindow inherits Window {
+@@ -1144,6 +1144,8 @@ export component YapfastWindow inherits Window {
+     in-out property <bool> camera-testing;
+     in-out property <image> camera-preview;
+     in property <string> camera-note;
++    in property <bool> microphone-testing;
++    in property <string> microphone-test-note;
+     in-out property <int> microphone-index;
+     in-out property <int> speaker-index;
+     /// The microphone level from 0 to 1, refreshed by meter-tick while the input menu is open.
+@@ -1201,7 +1203,7 @@ export component YapfastWindow inherits Window {
      /// While sharing, share what the share menu lists at this index in place
      /// of what's shared, as go-live counts them.
      callback switch-live(int);
@@ -3628,7 +4063,16 @@ index 2b2e644..60391b9 100644
      /// and the cameras: asked for as the share menu opens, which shows once
      /// they're in, with the first picked. The screens' pictures come after.
      in property <bool> share-lists;
-@@ -1331,11 +1331,11 @@ export component YapfastWindow inherits Window {
+@@ -1284,6 +1286,8 @@ export component YapfastWindow inherits Window {
+     callback select-camera(int);
+     /// Film to try the camera, or stop.
+     callback test-camera(bool);
++    callback test-microphone(bool);
++    callback microphone-test-tick;
+     callback gate-meter-tick;
+     callback reply(string);
+     callback edit(string);
+@@ -1331,11 +1335,11 @@ export component YapfastWindow inherits Window {
      callback close-image();
      callback cancel-compose;
      callback dismiss-notice;
@@ -3642,7 +4086,7 @@ index 2b2e644..60391b9 100644
      // also leaves the conversation 420px.
      in-out property <length> aside-width: 420px;
      out property <length> aside-shown: max(320px, min(800px, root.aside-width));
-@@ -1408,7 +1408,7 @@ export component YapfastWindow inherits Window {
+@@ -1408,7 +1412,7 @@ export component YapfastWindow inherits Window {
      property <int> sign-in-focus;
      public function focus-sign-in() { root.sign-in-focus += 1; }
      public function timeline-at-end() -> bool { return root.follow-latest; }
@@ -3651,7 +4095,7 @@ index 2b2e644..60391b9 100644
      in property <bool> window-focused;
      // The newest message was read since the "New" divider was placed, so the bar
      // that jumps back to it is gone.
-@@ -1565,7 +1565,7 @@ export component YapfastWindow inherits Window {
+@@ -1565,7 +1569,7 @@ export component YapfastWindow inherits Window {
      property <bool> is-editing: root.compose-label == "Editing your message";
      property <color> voice-color: root.voice-tone == 1 ? Theme.live : root.voice-tone == 2 ? Theme.danger : Theme.accent;
  
@@ -3660,7 +4104,17 @@ index 2b2e644..60391b9 100644
      // microphone on, once connected.
      changed voice-ready => {
          if !root.voice-ready { return; }
-@@ -1645,6 +1645,7 @@ export component YapfastWindow inherits Window {
+@@ -1594,6 +1598,9 @@ export component YapfastWindow inherits Window {
+     // The camera films for the preview only while the voice settings show it.
+     property <bool> camera-filming: root.settings-open && root.settings-section == 1 && root.camera-testing;
+     changed camera-filming => { root.camera-preview = @image-url(""); root.test-camera(self.camera-filming); }
++    property <bool> media-settings-visible: root.settings-open && root.settings-section == 1;
++    changed media-settings-visible => { if !self.media-settings-visible && root.microphone-testing { root.test-microphone(false); } }
++    Timer { interval: 100ms; running: root.microphone-testing; triggered => { root.microphone-test-tick(); } }
+     changed gate-metered => { root.gate-level = -100; root.gate-sending = false; root.gate-meter-note = ""; root.gate-metering(self.gate-metered); }
+     Timer { interval: 50ms; running: root.gate-metered; triggered => { root.gate-meter-tick(); } }
+     Timer { interval: 33ms; running: root.sharing || root.watching || root.video-active || root.camera-filming || (root.call-video && (root.grid-shown || root.pip-shown)); triggered => { root.stream-tick(); } }
+@@ -1645,6 +1652,7 @@ export component YapfastWindow inherits Window {
          root.soundboard-opened();
          soundboard-menu.show();
      }
@@ -3668,7 +4122,7 @@ index 2b2e644..60391b9 100644
      soundboard-menu := PopupWindow {
          x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
          y: max(8px, root.menu-y - self.height - 6px);
-@@ -1652,6 +1653,8 @@ export component YapfastWindow inherits Window {
+@@ -1652,6 +1660,8 @@ export component YapfastWindow inherits Window {
          close-policy: PopupClosePolicy.close-on-click-outside;
          board := Soundboard {
              rows: root.soundboard-rows; note: root.soundboard-note; emoji-font: root.emoji-font;
@@ -3677,7 +4131,17 @@ index 2b2e644..60391b9 100644
              play(id) => { root.play-soundboard(id); }
              preview(id) => { root.preview-soundboard(id); }
              favorite(id, on) => { root.favorite-soundboard(id, on); }
-@@ -3737,7 +3740,7 @@ export component YapfastWindow inherits Window {
+@@ -3527,6 +3537,9 @@ export component YapfastWindow inherits Window {
+             speakers: root.speakers; speaker-index <=> root.speaker-index;
+             cameras: root.cameras; camera-index <=> root.camera-index;
+             camera-testing <=> root.camera-testing; camera-preview: root.camera-preview; camera-note: root.camera-note;
++            microphone-testing: root.microphone-testing; microphone-test-note: root.microphone-test-note;
++            call-active: root.voice-active;
++            test-microphone(on) => { root.test-microphone(on); }
+             unmute-on-join <=> root.unmute-on-join; level-voice <=> root.level-voice;
+             noise-suppression <=> root.noise-suppression; noise-strength <=> root.noise-strength; dereverb <=> root.dereverb; discord: root.discord-linked;
+             sensitivity <=> root.sensitivity; gate-level: root.gate-level; gate-sending: root.gate-sending; gate-meter-note: root.gate-meter-note;
+@@ -3737,7 +3750,7 @@ export component YapfastWindow inherits Window {
              close => { root.close-add-people(); }
          }
      }
@@ -3686,7 +4150,7 @@ index 2b2e644..60391b9 100644
      // their card over it; Escape or a click outside closes it.
      role-motion := PopupMotion { open: root.role-open; }
      if role-motion.shown: Rectangle {
-@@ -4195,10 +4198,10 @@ export component YapfastWindow inherits Window {
+@@ -4195,10 +4208,10 @@ export component YapfastWindow inherits Window {
          cancel => { root.cancel-mfa(); }
      }
      // The title bar and the edges that resize the window, above all but the
@@ -3699,6 +4163,26 @@ index 2b2e644..60391b9 100644
          focused: root.window-focused; maximized: root.window-maximized;
          move-window => { root.move-window(); }
          minimize-window => { root.minimize-window(); }
+@@ -4209,14 +4222,14 @@ export component YapfastWindow inherits Window {
+         resize-window(direction) => { root.resize-window(direction); }
+     }
+     if Tip.text != "": Rectangle {
+-        property <length> w: tip-text.preferred-width + 20px;
+-        property <length> h: 32px;
+-        x: Tip.side == 1 ? Tip.x + 10px : max(8px, min(root.width - self.w - 8px, Tip.x - self.w / 2));
+-        y: Tip.side == 1 ? Tip.y - self.h / 2 : Tip.side == 0 ? max(4px, Tip.y - self.h - 6px) : Tip.y + 6px;
++        property <length> w: min(340px, tip-text.preferred-width + 20px);
++        property <length> h: max(32px, tip-text.preferred-height + 14px);
++        x: max(8px, min(root.width - self.w - 8px, Tip.side == 1 ? Tip.x + 10px : Tip.x - self.w / 2));
++        y: max(4px, min(root.height - self.h - 4px, Tip.side == 1 ? Tip.y - self.h / 2 : Tip.side == 0 ? Tip.y - self.h - 6px : Tip.y + 6px));
+         width: self.w; height: self.h;
+         border-radius: 6px; background: Theme.tooltip;
+         drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 3px;
+-        tip-text := Text { text: Tip.text; color: Theme.text; font-size: 14px; font-weight: 700; }
++        tip-text := Text { x: 10px; y: 7px; width: parent.width - 20px; height: parent.height - 14px; text: Tip.text; color: Theme.text; font-size: 14px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+     }
+     if Autoscroll.shown: AutoscrollMarker {}
+ }
 diff --git a/vendor/webrtc-sys/build.rs b/vendor/webrtc-sys/build.rs
 index f791c9f..f5e849d 100644
 --- a/vendor/webrtc-sys/build.rs
