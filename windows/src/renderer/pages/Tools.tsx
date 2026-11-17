@@ -12,6 +12,7 @@ import { player } from '../lib/player';
 import { pairPCHistory, pcHistory, syncPCHistory, unpairPCHistory } from '../lib/pcHistory';
 import QRCode from 'qrcode';
 import { ImportJournal } from '../components/ImportJournal';
+import { ExternalApps } from '../components/ExternalApps';
 import { useStore } from '../lib/store';
 import { Artwork } from '../components/Artwork';
 import { ask } from '../components/menus';
@@ -579,6 +580,7 @@ export function SettingsPage() {
   return (
     <div className="page narrow settings">
       <PageTitle>Réglages</PageTitle>
+      {!isAndroid && <ExternalApps />}
       <section>
         <h3>Compte YouTube</h3>
         {user.signedIn ? (

@@ -28,6 +28,7 @@ function publish() {
     queue: state.queue.slice(state.index + 1, state.index + 51).map(forPhone),
     playing: state.playing,
     loading: state.loading,
+    ad: state.ad,
     source: state.source,
     ...playbackOptions(library.get().settings, state.source),
     liked: track ? isLiked(track) : false,

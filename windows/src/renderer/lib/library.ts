@@ -12,6 +12,7 @@ import { Store } from './store';
 import { cancelLibraryAddition, queueOctaveAddition, startOctaveLibrary, syncYouTubeAdditions } from './octaveLibrary';
 import type { OctaveLibraryImport } from '../../shared/octaveBackup';
 import { applyLibraryRemovals, mergeLibraryChanges, restoreLibraryTracks } from '../../shared/libraryChanges';
+import { localPlaybackSelector } from '../../shared/localPlayback';
 
 export const library = new Store<LibraryState>({
   recents: [], liked: [], playlists: [], smartPlaylists: [], saved: [], searches: [], stats: {}, settings: defaultSettings,
@@ -42,7 +43,10 @@ export function notify(message: string) {
 }
 
 export async function loadLibrary() {
-  library.set(applyLibraryRemovals(sanitize(await api.loadLibrary())));
+  const [saved, ids] = await Promise.all([api.loadLibrary(), isAndroid ? [] :
+    window.nova.invoke<string[]>('audio:available').catch(() => [])]);
+  addLocalAudioIds(ids);
+  library.set(applyLibraryRemovals(sanitize(saved)));
   applyTheme(library.get().settings.theme);
   // Le compte YouTube (likes, playlists) arrive après coup : l'interface s'affiche sans l'attendre,
   // même si YouTube est lent ou ne répond pas.
@@ -688,6 +692,21 @@ export function songs(state = library.get()): Track[] {
     .sort((a, b) => a.title.localeCompare(b.title, 'fr'));
   songsCache = { source: state.playlists, liked: state.liked, added: state.added, songs: result };
   return result;
+}
+
+const localAudioIds = new Set<string>();
+let localPlaybackCache: { songs: Track[]; pick: (track: Track) => Track } | undefined;
+function addLocalAudioIds(ids: string[]) {
+  for (const id of ids) localAudioIds.add(id);
+  localPlaybackCache = undefined;
+}
+if (!isAndroid) on('audio:available', addLocalAudioIds);
+
+export function preferLocalAudio(track: Track): Track {
+  if (isAndroid || !localAudioIds.size || track.id.startsWith('local:')) return track;
+  const tracks = songs();
+  if (localPlaybackCache?.songs !== tracks) localPlaybackCache = { songs: tracks, pick: localPlaybackSelector(tracks, localAudioIds) };
+  return localPlaybackCache.pick(track);
 }
 
 export function shuffle<T>(items: T[]): T[] {

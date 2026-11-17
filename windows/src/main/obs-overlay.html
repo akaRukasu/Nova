@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova · Now Playing</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; overflow: hidden; background: transparent; }
+    body { color: #fff; font: 500 16px "Segoe UI", system-ui, sans-serif; }
+    .track { width: calc(100% - 16px); max-width: 624px; margin: 8px; display: grid; align-items: center;
+      grid-template-columns: 80px minmax(0,1fr); gap: 16px; padding: 10px; border-radius: 19px;
+      border: 1px solid #ffe3eb24; background: linear-gradient(120deg, #2a1726, #18141f 80%); }
+    [hidden] { display: none !important; }
+    img { width: 80px; height: 80px; border-radius: 11px; object-fit: cover; background: #433045; }
+    h1, p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+    h1 { font-size: 23px; line-height: 1.2; font-weight: 700; letter-spacing: -.025em; }
+    p { color: #e0cbd9; margin-top: 4px; }
+    .progress { height: 4px; margin-top: 12px; background: #fff2; border-radius: 4px; overflow: hidden; }
+    .progress span { display: block; height: 100%; width: 0; background: #ff527d; transition: width 240ms linear; }
+  </style>
+</head>
+<body>
+  <article class="track" hidden>
+    <img alt="">
+    <div><h1></h1><p></p><div class="progress" aria-hidden="true"><span></span></div></div>
+  </article>
+  <script>
+    const card = document.querySelector('.track');
+    const image = card.querySelector('img');
+    const title = card.querySelector('h1');
+    const artist = card.querySelector('p');
+    const progress = card.querySelector('.progress');
+    const bar = progress.querySelector('span');
+    async function refresh() {
+      try {
+        const response = await fetch('/now-playing', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+        if (!response.ok) throw new Error();
+        const { track, playing, position, duration } = await response.json();
+        card.hidden = !track || !playing;
+        if (!card.hidden) {
+          if (image.src !== track.artwork) image.src = track.artwork;
+          title.textContent = track.title;
+          artist.textContent = [track.artist, track.album && track.album !== track.title ? track.album : ''].filter(Boolean).join(' · ');
+          progress.hidden = !duration;
+          bar.style.width = (duration ? Math.min(100, Math.max(0, position / duration * 100)) : 0) + '%';
+        }
+      } catch { card.hidden = true; }
+      setTimeout(refresh, 750);
+    }
+    refresh();
+  </script>
+</body>
+</html>

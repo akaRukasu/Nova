@@ -36,6 +36,7 @@ type Playback = {
   handoffAt?: number;
   seekUntil?: number;
   queueVersion?: number;
+  localNext?: boolean;
   next?: { track: Track; source: Track };
 };
 
@@ -514,6 +515,8 @@ export class OctavePlayer {
     const playback = this.playback;
     const contents = this.view?.webContents;
     if (playback?.request !== request || !contents) return;
+    playback.localNext = track?.id.startsWith('local:') === true;
+    if (playback.localNext) { track = undefined; reset = true; }
     const version = (playback.queueVersion ?? 0) + 1;
     playback.queueVersion = version;
     const ready = () => this.playback === playback && playback.queueVersion === version && !this.panelVisible && !contents.isDestroyed()
@@ -589,7 +592,8 @@ export class OctavePlayer {
     if (!playback || this.observing) return;
     this.observing = true;
     try {
-      const track = !this.panelVisible && this.audioSettings.transition === 'automix' ? octaveCatalogId(playback.source.id) : undefined;
+      const track = !this.panelVisible && !playback.localNext && this.audioSettings.transition === 'automix'
+        ? octaveCatalogId(playback.source.id) : undefined;
       const sample = await this.read(contents, undefined, track ? { track, pair: playback.queueVersion ?? 0 } : undefined);
       if (this.playback !== playback || contents.isDestroyed() || !sample) return;
       if (sample.blocked === 'sign-in') {
@@ -611,6 +615,12 @@ export class OctavePlayer {
       }
       if (playback.handoffAt != null && now - playback.handoffAt > 3500) playback.handoffAt = undefined;
       const switched = playback.handoffAt != null;
+      if (playback.localNext && (sample.ended || switched || (!sample.playing && !sample.buffering
+        && playback.playing && playback.duration > 0 && playback.duration - playback.position < 1))) {
+        void this.stop();
+        this.status({ request: playback.request, time: playback.duration, duration: playback.duration, playing: false, ended: true });
+        return;
+      }
       if (sample.playing && switched && (plannedMatches || (sample.title && !currentMatches))) {
         playback.next = undefined;
         playback.handoffAt = undefined;

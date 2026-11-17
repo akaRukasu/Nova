@@ -1,13 +1,23 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, stat, writeFile, open, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rename, stat, writeFile, open, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { parseFile } from 'music-metadata';
 import type { Track } from '../shared/types.js';
 
 export class LocalAudioLibrary {
-  constructor(private readonly directory: () => string) {}
+  constructor(private readonly directory: () => string, private readonly onImport?: (ids: string[]) => void) {}
+
+  async availableIDs(): Promise<string[]> {
+    const entries = await readdir(this.directory(), { withFileTypes: true }).catch(() => []);
+    const names = new Set(entries.filter(entry => entry.isFile()).map(entry => entry.name));
+    return [...new Set([...names].flatMap(name => {
+      const match = /^([a-f0-9]{64})\.([a-z0-9]{1,8})$/.exec(name);
+      if (!match || ['json', 'cover', 'tmp'].includes(match[2]) || !names.has(match[1] + '.json')) return [];
+      return ['local:' + match[1]];
+    }))];
+  }
 
   async receive(filename: string, chunks: AsyncIterable<Uint8Array>) {
     if (!/^[a-f0-9]{64}\.[a-z0-9]{1,8}$/.test(filename)) throw new Error('Nom de fichier invalide.');
@@ -67,6 +77,7 @@ export class LocalAudioLibrary {
         errors.push(path.basename(file) + ' — ' + (error instanceof Error ? error.message : String(error)));
       }
     }
+    if (tracks.length) this.onImport?.(tracks.map(track => track.id));
     return { tracks, errors };
   }
 

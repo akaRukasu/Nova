@@ -10,7 +10,7 @@ import {
 import { api, isAndroid, on, supportsOctave } from './api';
 import { createChain, eqBands } from './equalizer';
 import { after, cancel, every, type Timer } from './timers';
-import { library, notify, recordPlay, shuffle as shuffled, songs, updateArtwork } from './library';
+import { library, notify, preferLocalAudio, recordPlay, shuffle as shuffled, songs, updateArtwork } from './library';
 import { localContinuation } from '../../shared/localContinuation';
 import { Store } from './store';
 import { WebDeck } from './webDeck';
@@ -176,6 +176,7 @@ class Engine {
 
   play(tracks: Track[], start = 0, shuffle = false, source?: PlaybackSource, position = 0, paused = false, playlistId?: string, allowPopularFallback = false) {
     if (!tracks.length) return;
+    if (!isAndroid && !this.followingJam) tracks = tracks.map(preferLocalAudio);
     this.playlistId = playlistId;
     this.preferredSource = source ?? (supportsOctave ? 'octave' : undefined);
     this.allowPopularFallback = allowPopularFallback;
@@ -335,6 +336,7 @@ class Engine {
   }
 
   playNext(track: Track) {
+    if (!this.followingJam) track = preferLocalAudio(track);
     const { queue, index } = playerState.get();
     if (!queue.length) return this.play([track]);
     const rest = queue.filter((t, i) => i <= index || t.id !== track.id);
@@ -345,6 +347,7 @@ class Engine {
 
   enqueue(tracks: Track[], position?: number) {
     if (!tracks.length) return;
+    if (!isAndroid && !this.followingJam) tracks = tracks.map(preferLocalAudio);
     if (!playerState.get().queue.length) return this.play(tracks);
     const { queue, index } = playerState.get();
     const at = position == null ? queue.length : Math.min(queue.length, Math.max(index + 1, position));
@@ -542,8 +545,15 @@ class Engine {
   }
 
   private load(startAt = 0, paused = false, sourceOverride?: PlaybackSource) {
-    const track = currentTrack();
-    if (!track) return;
+    const selected = currentTrack();
+    if (!selected) return;
+    const track = this.followingJam ? selected : preferLocalAudio(selected);
+    if (track !== selected) {
+      const { queue, index } = playerState.get();
+      const updated = [...queue];
+      updated[index] = track;
+      set({ queue: updated });
+    }
     const request = ++this.loadRequest;
     this.youtubeTrack = undefined;
     if (!isAndroid && !paused) void api.claimMediaShortcuts().catch(() => undefined);
@@ -678,7 +688,7 @@ class Engine {
     if (!current || this.followingJam || this.usingOctave) return;
     if (current.id.startsWith('local:')) {
       const fresh = library.get().settings.autoplayRadio && playerState.get().repeat !== 'one'
-        ? localContinuation(current, songs(), playerState.get().queue) : [];
+        ? localContinuation(current, songs().map(preferLocalAudio), playerState.get().queue) : [];
       if (fresh.length) {
         set({ queue: [...playerState.get().queue, ...fresh], autoplayQueue: fresh });
         if (thenAdvance) this.next(false);
@@ -698,7 +708,7 @@ class Engine {
     const radio = await api.radio(recording.id).catch(() => [] as Track[]);
     if (request !== this.loadRequest) return;
     const known = new Set(playerState.get().queue.map((t) => t.id));
-    const fresh = radio.filter((t) => !known.has(t.id));
+    const fresh = radio.map(preferLocalAudio).filter(t => !known.has(t.id) && !!known.add(t.id));
     if (!fresh.length) return;
     set({ queue: [...playerState.get().queue, ...fresh] });
     if (thenAdvance && currentTrack()?.id === current.id) this.next(false);

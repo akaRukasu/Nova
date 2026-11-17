@@ -4,7 +4,7 @@ import { ImportJournal } from '../shared/importJournal.js';
 import { octaveBackupLibrary } from '../shared/octaveBackup.js';
 import { popularPage } from './popular.js';
 // Nova pour Windows : processus principal.
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, safeStorage, screen, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, safeStorage, screen, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Collection, ImportedPlaylist, ImportProgress, LibraryState, Track } from '../shared/types.js';
 import type { HistorySnapshot } from '../shared/historySync.js';
+import type { ExternalAppsSettings, ExternalAppsStatus } from '../shared/externalApps.js';
 import { defaultSettings } from '../shared/types.js';
 import { isOctaveId, type OctaveCommand } from '../shared/octave.js';
 import { searchConcerts } from './concerts.js';
@@ -26,6 +27,9 @@ import { loadMatches, match, savedMatches } from './matcher.js';
 import * as octave from './octave.js';
 import { findYouTubeRecording, saveYouTubeAlbum, syncOctaveListen } from './octaveHistory.js';
 import { OctavePlayer } from './octavePlayer.js';
+import { DiscordPresence } from './discordPresence.js';
+import { NowPlaying } from './nowPlaying.js';
+import { idlePlayback, publicArtwork, publishedPlayback } from './publishedPlayback.js';
 import { handleStreams, invalidate, prefetch, registerScheme, setQuality, streamError } from './streams.js';
 import './evalNode.js';
 import * as yt from './yt.js';
@@ -188,7 +192,69 @@ async function logout() {
 
 // MARK: - Import
 
-const localAudio = new LocalAudioLibrary(() => file('LocalAudio'));
+const localAudio = new LocalAudioLibrary(() => file('LocalAudio'), ids => sendToUI('audio:available', ids));
+
+const discordPresence = new DiscordPresence();
+const defaultExternalApps: ExternalAppsSettings = { nowPlaying: false, discord: false, discordId: '1572317655073816628' };
+let externalApps = defaultExternalApps;
+let nowPlaying: NowPlaying | undefined;
+let pendingPlayback: ReturnType<typeof setTimeout> | undefined;
+let changeExternalApps = Promise.resolve();
+
+function validatedExternalApps(value: Partial<ExternalAppsSettings> | null): ExternalAppsSettings {
+  const id = typeof value?.discordId === 'string' ? value.discordId.trim() : defaultExternalApps.discordId;
+  return { nowPlaying: value?.nowPlaying === true, discord: value?.discord === true,
+    discordId: /^\d{17,20}$/.test(id) ? id : '' };
+}
+
+async function renderPlayingCover(track: NonNullable<ReturnType<typeof publishedPlayback>['track']>, signal: AbortSignal) {
+  let data: Buffer;
+  if (track.artwork === 'nova-stream://cover/' + track.id.slice(6) && /^local:[a-f0-9]{64}$/.test(track.id)) {
+    const response = await localAudio.response(track.id, null, true);
+    if (!response.ok) return;
+    data = Buffer.from(await response.arrayBuffer());
+  } else {
+    const url = publicArtwork(track.artwork);
+    if (!url) return;
+    const response = await fetch(url, { redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) });
+    if (!response.ok || !response.headers.get('content-type')?.startsWith('image/') || !response.body) return;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 5_000_000) return;
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => undefined); }
+    data = Buffer.concat(chunks);
+  }
+  if (signal.aborted) return;
+  const image = nativeImage.createFromBuffer(data);
+  if (!image.isEmpty()) return image.resize({ width: 400, height: 400 }).toPNG();
+}
+
+async function configureExternalApps() {
+  discordPresence.configure(externalApps.discord, externalApps.discordId);
+  if (!nowPlaying) return;
+  if (externalApps.nowPlaying) await nowPlaying.start();
+  else await nowPlaying.stop();
+}
+
+function externalAppsStatus(): ExternalAppsStatus {
+  return { settings: externalApps, obsURL: nowPlaying?.origin ? nowPlaying.origin + '/obs' : undefined,
+    port: nowPlaying?.port, error: externalApps.nowPlaying ? nowPlaying?.error : undefined,
+    discordStatus: discordPresence.status };
+}
+
+function publishExternalPlayback(state: unknown) {
+  const snapshot = publishedPlayback(state);
+  nowPlaying?.publish(snapshot);
+  discordPresence.publish(snapshot);
+}
 const importJournal = new ImportJournal(
   () => readJSON('import-journal.json', []),
   entries => writeJSON('import-journal.json', entries),
@@ -440,6 +506,35 @@ app.whenReady().then(async () => {
   octave.configureOctaveRecordings(await readJSON('octave-recordings-v1.json', {}), entries => writeJSON('octave-recordings-v1.json', entries));
   const cookie = await loadCookie();
   await configureYouTube(cookie);
+  externalApps = validatedExternalApps(await readJSON('external-apps.json', defaultExternalApps));
+  nowPlaying = new NowPlaying(file('Now Playing'), await fs.readFile(path.join(here, 'obs-overlay.html')),
+    nativeImage.createFromPath(path.join(app.getAppPath(), 'build/icon.png')).resize({ width: 400, height: 400 }).toPNG(),
+    renderPlayingCover);
+  await configureExternalApps();
+  const externalHandler = (channel: string, action: (...args: any[]) => unknown) => {
+    ipcMain.handle(channel, (event, ...args) => {
+      if (event.sender !== window?.webContents || event.senderFrame !== event.sender.mainFrame) return;
+      return action(...args);
+    });
+  };
+  externalHandler('external:status', externalAppsStatus);
+  externalHandler('external:settings', (value: Partial<ExternalAppsSettings>) => {
+    const next = validatedExternalApps(value);
+    const update = changeExternalApps.then(async () => {
+      await writeJSON('external-apps.json', next);
+      externalApps = next;
+      await configureExternalApps();
+      return externalAppsStatus();
+    });
+    changeExternalApps = update.then(() => undefined, () => undefined);
+    return update;
+  });
+  externalHandler('external:open-folder', async () => {
+    if (!nowPlaying?.origin) return;
+    await fs.mkdir(nowPlaying.directory, { recursive: true });
+    const error = await shell.openPath(nowPlaying.directory);
+    if (error) throw new Error('Impossible d’ouvrir le dossier PlayingNow.');
+  });
 
   // Octave alimente le catalogue Windows. Les identifiants enregistrés avant ce changement restent lisibles.
   handle('yt:search', octave.search);
@@ -515,6 +610,7 @@ app.whenReady().then(async () => {
     return result.canceled ? { tracks: [], errors: [] } : localAudio.import(result.filePaths);
   });
   handle('audio:url', (id: string) => 'nova-stream://audio/' + encodeURIComponent(id));
+  handle('audio:available', () => localAudio.availableIDs());
   handle('import:journal', () => importJournal.load());
   handle('import:resolve', (id: string, track: Track) => importJournal.resolve(id, track));
   handle('import:run', (playlists: ImportedPlaylist[], toAccount: boolean) => runImport(playlists, toAccount));
@@ -558,9 +654,12 @@ app.whenReady().then(async () => {
   });
   handle('phone:allowNetwork', () => allowEverywhere());
   // Télécommande depuis l'iPhone : l'interface publie son état, reçoit les commandes.
-  handle('remote:state', (state: unknown) => {
+  ipcMain.handle('remote:state', (event, state: unknown) => {
+    if (event.sender !== window?.webContents) return;
     setRemoteState(state);
     if (mini && !mini.isDestroyed()) mini.webContents.send('mini:state', state);
+    clearTimeout(pendingPlayback);
+    pendingPlayback = setTimeout(() => publishExternalPlayback(state), 60);
   });
   // Mini lecteur : petite fenêtre toujours au premier plan ; la lecture continue dans la fenêtre principale (cachée).
   handle('mini:open', () => openMini());
@@ -621,7 +720,17 @@ app.whenReady().then(async () => {
   octavePlayer.warmUp();
 });
 
-app.on('before-quit', () => {
+let externalStopped = false;
+app.on('before-quit', event => {
+  if (!externalStopped && nowPlaying?.origin) {
+    event.preventDefault();
+    clearTimeout(pendingPlayback);
+    discordPresence.close();
+    void nowPlaying.stop().finally(() => { externalStopped = true; app.quit(); });
+    return;
+  }
+  clearTimeout(pendingPlayback);
+  discordPresence.close();
   octavePlayer.destroy();
   destroyWebPlayers();
 });
