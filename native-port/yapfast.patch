@@ -4963,7 +4963,7 @@ index e0a7808..8874448 100644
      let discoverable = server.is_some_and(|server| server.community)
 diff --git a/src/ui/personal.rs b/src/ui/personal.rs
 new file mode 100644
-index 0000000..754b875
+index 0000000..fa91f7f
 --- /dev/null
 +++ b/src/ui/personal.rs
 @@ -0,0 +1,585 @@
@@ -5061,7 +5061,7 @@ index 0000000..754b875
 +                    let Request::Shortcut(action) = request else {
 +                        unreachable!()
 +                    };
-+                    let window = adapter.borrow().weak.upgrade();
++                    let window = adapter.borrow().window.upgrade();
 +                    if let Some(window) = window {
 +                        match action {
 +                            Action::ToggleMute => window.invoke_toggle_mute(),
