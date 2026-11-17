@@ -4,11 +4,12 @@ import { isOctaveId } from '../../shared/octave';
 import { api, on } from './api';
 import { isLiked, library, notify, playbackOptions, toggleLike, togglePlaybackOption } from './library';
 import { currentTrack, player, playerState, timeState } from './player';
+import { trackArtwork } from '../components/Artwork';
 
 /** Titre au format de l'iPhone (artworkURL, artistID…). */
 const forPhone = (t: Track) => ({
   id: t.id, title: t.title, artist: t.artist, album: t.album, duration: t.duration,
-  artworkURL: t.artwork, artistID: t.artistId, albumID: t.albumId,
+  artworkURL: trackArtwork(t, 400), artistID: t.artistId, albumID: t.albumId,
 });
 
 const fromPhone = (raw: any): Track | undefined => {

@@ -234,7 +234,11 @@ async function renderPlayingCover(track: NonNullable<ReturnType<typeof published
   }
   if (signal.aborted) return;
   const image = nativeImage.createFromBuffer(data);
-  if (!image.isEmpty()) return image.resize({ width: 400, height: 400 }).toPNG();
+  if (image.isEmpty()) return;
+  const { width, height } = image.getSize();
+  const side = Math.min(width, height);
+  return image.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side })
+    .resize({ width: 400, height: 400 }).toPNG();
 }
 
 async function configureExternalApps() {
@@ -314,33 +318,58 @@ async function createWindow() {
 // MARK: - Mini lecteur
 
 let mini: BrowserWindow | null = null;
+let miniLayout: 'compact' | 'artwork' = 'compact';
+const miniSizes = { compact: { width: 432, height: 176 }, artwork: { width: 384, height: 568 } };
+const miniSize = () => miniSizes[miniLayout];
+const saveMini = () => writeJSON('mini-player.json', { layout: miniLayout, sizes: miniSizes });
+
+function resizeMini() {
+  if (!mini || mini.isDestroyed()) return;
+  const bounds = mini.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  const size = miniSize();
+  const width = Math.min(size.width, area.width - 24), height = Math.min(size.height, area.height - 24);
+  mini.setMinimumSize(360, miniLayout === 'artwork' ? 432 : 164);
+  mini.setBounds({ width, height,
+    x: Math.max(area.x, Math.min(bounds.x + bounds.width - width, area.x + area.width - width)),
+    y: Math.max(area.y, Math.min(bounds.y + bounds.height - height, area.y + area.height - height)),
+  });
+}
 
 function openMini() {
   if (!window || window.isDestroyed()) return;
   if (mini && !mini.isDestroyed()) return mini.show();
-  const dark = nativeTheme.shouldUseDarkColors;
-  const width = 428;
-  const height = 142;
+  const area = screen.getDisplayMatching(window.getBounds()).workArea;
+  const size = miniSize();
+  const width = Math.min(size.width, area.width - 24);
+  const height = Math.min(size.height, area.height - 24);
   mini = new BrowserWindow({
     width,
     height,
     frame: false,
-    resizable: false,
+    resizable: true,
+    minWidth: 360,
+    minHeight: miniLayout === 'artwork' ? 432 : 164,
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
     title: 'Nova',
-    backgroundColor: dark ? '#1c1c1e' : '#f5f5f7',
+    backgroundColor: '#121318',
     icon: path.join(here, '../../build/icon.png'),
     webPreferences: { preload: path.join(here, '../preload/preload.cjs'), contextIsolation: true, sandbox: true, spellcheck: false },
   });
   mini.setAlwaysOnTop(true, 'floating');
   // En bas à droite de l'écran où se trouvait Nova.
-  const area = screen.getDisplayMatching(window.getBounds()).workArea;
   mini.setPosition(area.x + area.width - width - 20, area.y + area.height - height - 20);
   const current = mini;
+  current.on('resized', () => {
+    const { width, height } = current.getBounds();
+    miniSizes[miniLayout] = { width, height };
+    void saveMini().catch(() => log('Mini lecteur : taille non enregistrée.'));
+  });
   current.webContents.on('did-finish-load', async () => {
     current.webContents.send('mini:state', getRemoteState());
+    current.webContents.send('mini:layout', miniLayout);
     current.webContents.send('mini:theme', (await loadLibrary()).settings.theme);
   });
   current.on('closed', () => {
@@ -507,6 +536,15 @@ app.whenReady().then(async () => {
   const cookie = await loadCookie();
   await configureYouTube(cookie);
   externalApps = validatedExternalApps(await readJSON('external-apps.json', defaultExternalApps));
+  const savedMini = await readJSON<{ layout?: string; sizes?: Partial<typeof miniSizes> }>('mini-player.json', {});
+  miniLayout = savedMini.layout === 'artwork' ? 'artwork' : 'compact';
+  for (const layout of ['compact', 'artwork'] as const) {
+    const size = savedMini.sizes?.[layout];
+    if (size && Number.isFinite(size.width) && Number.isFinite(size.height)) miniSizes[layout] = {
+      width: Math.max(360, Math.min(2000, Math.round(size.width))),
+      height: Math.max(layout === 'artwork' ? 432 : 164, Math.min(1400, Math.round(size.height))),
+    };
+  }
   nowPlaying = new NowPlaying(file('Now Playing'), await fs.readFile(path.join(here, 'obs-overlay.html')),
     nativeImage.createFromPath(path.join(app.getAppPath(), 'build/icon.png')).resize({ width: 400, height: 400 }).toPNG(),
     renderPlayingCover);
@@ -664,6 +702,16 @@ app.whenReady().then(async () => {
   // Mini lecteur : petite fenêtre toujours au premier plan ; la lecture continue dans la fenêtre principale (cachée).
   handle('mini:open', () => openMini());
   handle('mini:close', () => mini?.close());
+  ipcMain.handle('mini:layout', async (event, layout?: string) => {
+    if (event.sender !== mini?.webContents) return;
+    if (layout === 'compact' || layout === 'artwork') {
+      miniLayout = layout;
+      resizeMini();
+      mini?.webContents.send('mini:layout', miniLayout);
+      await saveMini();
+    }
+    return miniLayout;
+  });
   handle('mini:command', (command: Record<string, unknown>) => sendToUI('remote:command', { ...command, source: 'mini' }));
   setRemoteHandler((command) => sendToUI('remote:command', command));
   handle('octave:openBackup', async () => {

@@ -7,23 +7,32 @@
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; overflow: hidden; background: transparent; }
-    body { color: #fff; font: 500 16px "Segoe UI", system-ui, sans-serif; }
-    .track { width: calc(100% - 16px); max-width: 624px; margin: 8px; display: grid; align-items: center;
-      grid-template-columns: 80px minmax(0,1fr); gap: 16px; padding: 10px; border-radius: 19px;
-      border: 1px solid #ffe3eb24; background: linear-gradient(120deg, #2a1726, #18141f 80%); }
+    body { color: #fff; font: 500 12px "Segoe UI", system-ui, sans-serif; }
+    .track { --accent: 210 210 218; --tint: 44 44 50; --shade: 22 22 26;
+      width: calc(100% - 12px); max-width: 388px; margin: 6px; display: grid; align-items: center;
+      grid-template-columns: 64px minmax(0,1fr); gap: 12px; padding: 9px; border-radius: 16px;
+      border: 1px solid rgb(var(--accent) / .2);
+      background: linear-gradient(115deg, rgb(var(--tint)), rgb(var(--shade)) 90%);
+      transition: background 400ms ease, border-color 400ms ease; }
     [hidden] { display: none !important; }
-    img { width: 80px; height: 80px; border-radius: 11px; object-fit: cover; background: #433045; }
+    img { width: 64px; height: 64px; border-radius: 9px; object-fit: cover; background: #242429; }
     h1, p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
-    h1 { font-size: 23px; line-height: 1.2; font-weight: 700; letter-spacing: -.025em; }
-    p { color: #e0cbd9; margin-top: 4px; }
-    .progress { height: 4px; margin-top: 12px; background: #fff2; border-radius: 4px; overflow: hidden; }
-    .progress span { display: block; height: 100%; width: 0; background: #ff527d; transition: width 240ms linear; }
+    h1 { font-size: 17px; line-height: 20px; font-weight: 700; letter-spacing: -.02em; }
+    p { color: #ffffffbd; line-height: 16px; margin-top: 2px; }
+    .timeline { margin-top: 6px; }
+    .times { display: flex; justify-content: space-between; color: #ffffff9c; font-size: 10px;
+      line-height: 12px; font-variant-numeric: tabular-nums; }
+    .progress { height: 3px; margin-top: 4px; background: #ffffff1a; border-radius: 4px; overflow: hidden; }
+    .progress span { display: block; height: 100%; width: 0; background: rgb(var(--accent)); transition: width 240ms linear; }
   </style>
 </head>
 <body>
   <article class="track" hidden>
     <img alt="">
-    <div><h1></h1><p></p><div class="progress" aria-hidden="true"><span></span></div></div>
+    <div><h1></h1><p></p><div class="timeline">
+      <div class="times"><span class="elapsed" aria-label="Temps écoulé">0:00</span><span class="duration" aria-label="Durée totale">0:00</span></div>
+      <div class="progress" aria-hidden="true"><span></span></div>
+    </div></div>
   </article>
   <script>
     const card = document.querySelector('.track');
@@ -32,6 +41,46 @@
     const artist = card.querySelector('p');
     const progress = card.querySelector('.progress');
     const bar = progress.querySelector('span');
+    const timeline = card.querySelector('.timeline');
+    const elapsed = card.querySelector('.elapsed');
+    const total = card.querySelector('.duration');
+    const formatTime = value => {
+      const seconds = Math.max(0, Math.floor(Number(value) || 0));
+      return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+    };
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 24;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0, 24, 24);
+        const pixels = context.getImageData(0, 0, 24, 24).data;
+        const bins = new Map();
+        const average = [0, 0, 0];
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i + 3] < 128) continue;
+          const rgb = Array.from(pixels.slice(i, i + 3));
+          const key = rgb.map(channel => channel >> 4).join(',');
+          const bin = bins.get(key) || { count: 0, rgb: [0, 0, 0] };
+          rgb.forEach((channel, index) => { average[index] += channel; bin.rgb[index] += channel; });
+          bin.count++; count++; bins.set(key, bin);
+        }
+        if (!count) return;
+        let best = -1, accent = [200, 200, 208];
+        for (const bin of bins.values()) {
+          const rgb = bin.rgb.map(channel => channel / bin.count);
+          const max = Math.max(...rgb), min = Math.min(...rgb);
+          const score = bin.count * (.2 + (max - min) / Math.max(1, max)) * Math.min(1, max / 70);
+          if (score > best) { best = score; accent = rgb; }
+        }
+        if (Math.max(...accent) < 20) accent = [190, 190, 198];
+        const boost = Math.max(1, 210 / Math.max(1, ...accent));
+        card.style.setProperty('--accent', accent.map(channel => Math.round(Math.min(255, channel * boost))).join(' '));
+        card.style.setProperty('--tint', average.map(channel => Math.round(channel / count * .28 + 14)).join(' '));
+        card.style.setProperty('--shade', average.map(channel => Math.round(channel / count * .1 + 12)).join(' '));
+      } catch { /* Une pochette absente garde le thème neutre. */ }
+    };
     async function refresh() {
       try {
         const response = await fetch('/now-playing', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
@@ -41,8 +90,10 @@
         if (!card.hidden) {
           if (image.src !== track.artwork) image.src = track.artwork;
           title.textContent = track.title;
-          artist.textContent = [track.artist, track.album && track.album !== track.title ? track.album : ''].filter(Boolean).join(' · ');
-          progress.hidden = !duration;
+          artist.textContent = track.artist;
+          timeline.hidden = !duration;
+          elapsed.textContent = formatTime(Math.min(position, duration || position));
+          total.textContent = formatTime(duration);
           bar.style.width = (duration ? Math.min(100, Math.max(0, position / duration * 100)) : 0) + '%';
         }
       } catch { card.hidden = true; }
