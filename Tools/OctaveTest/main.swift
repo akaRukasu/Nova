@@ -77,6 +77,13 @@ do {
     let readded = await restoredLibrary.isInLibrary(playlistOnly.id)
     try require(readded, "Un réajout explicite doit rester présent après synchronisation")
     print("Suppression depuis une playlist, sauvegarde obsolète et réajout confirmés")
+    let localSeed = Track(id: "local:qa", title: "Un", artist: "Artiste QA", album: "Album QA")
+    let localNext = Track(id: "local:qa-next", title: "Deux", artist: "Artiste QA", album: "Album QA")
+    let otherLocal = Track(id: "local:other", title: "Autre", artist: "Autre artiste")
+    let localQueue = LocalContinuation.tracks(after: localSeed, library: [otherLocal, localSeed, localNext], queue: [localSeed])
+    try require(localQueue.map(\.id) == [localNext.id, otherLocal.id], "Autoplay local prépare la suite de l'album sans répéter le titre en cours")
+    try require(LocalContinuation.tracks(after: localSeed, library: [localSeed], queue: [localSeed]).isEmpty,
+                "Une bibliothèque sans prochain titre ne doit pas faire boucler le fichier local")
 
     let octaveBackup = Data(#"""
     {"app":"octave","type":"library-backup","version":2,"data":{"octave:library":{"state":{"playlists":[

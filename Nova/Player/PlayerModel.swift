@@ -779,7 +779,8 @@ final class PlayerModel {
             return
         }
         // AutoMix : même en passant au suivant à la main, les deux titres se fondent brièvement.
-        if PlaybackSettings.transition != .off, isPlaying, !isLoading, !crossfadeStarting,
+        if PlaybackSettings.transition != .off, isPlaying, !endHandled, !isLoading, !crossfadeStarting,
+           current?.id.hasPrefix("local:") != true, !queue[index + 1].id.hasPrefix("local:"),
            player.currentItem != nil, JamSession.shared.role != .guest || !JamSession.shared.listenAlong {
             finishTransition()
             beginTransition(PlaybackSettings.transition == .automix ? 3 : min(PlaybackSettings.crossfadeSeconds, 3))
@@ -1255,7 +1256,16 @@ final class PlayerModel {
     }
 
     private func extendWithRadio(from seed: Track, thenAdvance: Bool = false) {
-        guard !seed.id.hasPrefix("local:") else { return }
+        if seed.id.hasPrefix("local:") {
+            let fresh = PlaybackSettings.autoplayRadio && repeatMode != .one
+                ? LocalContinuation.tracks(after: seed, library: library.songs, queue: queue) : []
+            if !fresh.isEmpty {
+                queue.append(contentsOf: fresh)
+                saveSession()
+                if thenAdvance { next() } else { prefetchNext() }
+            } else if thenAdvance { pause() }
+            return
+        }
         Task { [weak self] in
             guard let self, let radio = try? await self.client.radio(for: seed.id) else { return }
             let known = Set(self.queue.map(\.id))
@@ -1275,6 +1285,7 @@ final class PlayerModel {
         let seconds = time.seconds
         if seconds.isFinite, player.currentItem != nil { currentTime = seconds }
         let canMix = isPlaying && !isLoading && fadingOut == nil && pendingMix == nil && repeatMode != .one && hasNext
+            && current?.id.hasPrefix("local:") != true && !queue[index + 1].id.hasPrefix("local:")
             && (JamSession.shared.role != .guest || !JamSession.shared.listenAlong)
         // AutoMix calé sur le tempo : les deux titres sont analysés, le suivant part sur un temps du titre en cours.
         if canMix, PlaybackSettings.transition != .off { refreshMixPlan() }
@@ -1302,7 +1313,7 @@ final class PlayerModel {
                 updateNowPlaying()
             }
             // AVPlayer peut attendre la « seconde moitié » qui n'existe pas : on passe au suivant nous-mêmes.
-            if isPlaying, !endHandled, currentTime >= expected - 0.4 {
+            if current?.id.hasPrefix("local:") != true, isPlaying, !endHandled, currentTime >= expected - 0.4 {
                 endHandled = true
                 trackDidEnd()
             }

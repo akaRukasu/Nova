@@ -10,7 +10,8 @@ import {
 import { api, isAndroid, on, supportsOctave } from './api';
 import { createChain, eqBands } from './equalizer';
 import { after, cancel, every, type Timer } from './timers';
-import { library, notify, recordPlay, shuffle as shuffled, updateArtwork } from './library';
+import { library, notify, recordPlay, shuffle as shuffled, songs, updateArtwork } from './library';
+import { localContinuation } from '../../shared/localContinuation';
 import { Store } from './store';
 import { WebDeck } from './webDeck';
 
@@ -433,7 +434,7 @@ class Engine {
     }
     // AutoMix : même au passage manuel, les deux titres se fondent brièvement.
     const transition = library.get().settings.transition;
-    if (manual && !(isAndroid && (queue[index]?.id.startsWith('local:') || queue[index + 1]?.id.startsWith('local:'))) && transition !== 'off' && playerState.get().playing && !this.followingJam && !this.usingOctave
+    if (manual && !queue[index]?.id.startsWith('local:') && !queue[index + 1]?.id.startsWith('local:') && transition !== 'off' && playerState.get().playing && !this.followingJam && !this.usingOctave
       && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id)) {
       return this.beginTransition(3);
     }
@@ -647,11 +648,11 @@ class Engine {
     this.prefetchTimer = setTimeout(() => {
       const { queue, index } = playerState.get();
       const next = queue[index + 1];
-      if (next && !isOctaveId(next.id)) void api.prefetch(next.id);
+      if (next && !isOctaveId(next.id) && !next.id.startsWith('local:')) void api.prefetch(next.id);
       // AutoMix (lecture directe) : le titre en cours et le suivant sont analysés en arrière-plan.
-      if (!isOctaveId(track.id) && library.get().settings.transition !== 'off') {
+      if (!isOctaveId(track.id) && !track.id.startsWith('local:') && library.get().settings.transition !== 'off') {
         this.analyzeFile(track.id);
-        if (next && !isOctaveId(next.id)) setTimeout(() => this.analyzeFile(next.id), 10_000);
+        if (next && !isOctaveId(next.id) && !next.id.startsWith('local:')) setTimeout(() => this.analyzeFile(next.id), 10_000);
       }
     }, 15_000);
   }
@@ -674,7 +675,19 @@ class Engine {
 
   private async extendWithRadio(thenAdvance = false) {
     const current = currentTrack();
-    if (!current || current.id.startsWith('local:') || this.followingJam || this.usingOctave) return;
+    if (!current || this.followingJam || this.usingOctave) return;
+    if (current.id.startsWith('local:')) {
+      const fresh = library.get().settings.autoplayRadio && playerState.get().repeat !== 'one'
+        ? localContinuation(current, songs(), playerState.get().queue) : [];
+      if (fresh.length) {
+        set({ queue: [...playerState.get().queue, ...fresh], autoplayQueue: fresh });
+        if (thenAdvance) this.next(false);
+      } else if (thenAdvance) {
+        this.pause();
+        this.updateMediaSession();
+      }
+      return;
+    }
     if (thenAdvance && !library.get().settings.autoplayRadio) {
       this.pause();
       this.seek(0);
@@ -701,7 +714,7 @@ class Engine {
     if (expected > 0 && Math.abs(timeState.get().duration - expected) > 0.5) setTime({ duration: expected });
     const settings = library.get().settings;
     const { queue, index, repeat, playing } = playerState.get();
-    const canMix = !(isAndroid && (queue[index]?.id.startsWith('local:') || queue[index + 1]?.id.startsWith('local:'))) && playing && !this.fadeTimer && !this.pending && !this.startingFade && repeat !== 'one' && index + 1 < queue.length
+    const canMix = !queue[index]?.id.startsWith('local:') && !queue[index + 1]?.id.startsWith('local:') && playing && !this.fadeTimer && !this.pending && !this.startingFade && repeat !== 'one' && index + 1 < queue.length
       && !isOctaveId(queue[index].id) && !isOctaveId(queue[index + 1].id) && !this.followingJam
       && !(this.deck as WebDeck).ad && expected > 30;
     // AutoMix : transition préparée d'après l'analyse des deux titres (tempo, temps, fin), calée sur un temps.
@@ -728,7 +741,7 @@ class Engine {
       if (end > fade * 3 && time >= end - fade && time < end - 0.5) return this.beginTransition(fade);
     }
     // Flux plus long que le titre (durée annoncée fausse) : on passe au suivant nous-mêmes.
-    if (expected > 0 && playing && !this.endHandled && time >= expected - 0.3) this.trackEnded();
+    if (!currentTrack()?.id.startsWith('local:') && expected > 0 && playing && !this.endHandled && time >= expected - 0.3) this.trackEnded();
   }
 
   private trackEnded() {
