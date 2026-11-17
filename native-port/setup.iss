@@ -12,11 +12,10 @@ OutputBaseFilename=Voxcord-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile={#SourceDir}\voxcord.ico
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
-
-SetupIconFile={#SourceDir}\voxcord.ico
 
 [InstallDelete]
 Type: files; Name: "{app}\yapfast.exe"

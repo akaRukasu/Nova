@@ -1541,6 +1541,40 @@ index 94c8830..c72138e 100644
  
  /// Whether Yapfast starts when the person signs in.
  pub fn enabled() -> bool {
+diff --git a/src/notify.rs b/src/notify.rs
+index 72ac076..9c11d62 100644
+--- a/src/notify.rs
++++ b/src/notify.rs
+@@ -123,7 +123,7 @@ mod linux {
+             }
+             let actions = ["default", "Open"];
+             let request = (
+-                "Yapfast",
++                "Voxcord",
+                 0u32,
+                 "",
+                 alert.title.as_str(),
+diff --git a/src/protocol.rs b/src/protocol.rs
+index b628602..52993a2 100644
+--- a/src/protocol.rs
++++ b/src/protocol.rs
+@@ -202,7 +202,7 @@ mod windows {
+     /// with or without `--open-link`, as earlier builds registered it.
+     fn is_ours(command: &str) -> bool {
+         let command = command.to_ascii_lowercase();
+-        command.contains("yapfast.exe") && command.contains("%1")
++        (command.contains("voxcord.exe") || command.contains("yapfast.exe")) && command.contains("%1")
+     }
+ 
+     fn set_string(key: &str, name: Option<&str>, value: &str) -> io::Result<()> {
+@@ -315,6 +315,7 @@ mod windows {
+ 
+         #[test]
+         fn recognises_its_own_registered_command() {
++            assert!(is_ours(r#""C:\Apps\Voxcord\voxcord.exe" --open-link "%1""#));
+             assert!(is_ours(r#""C:\Apps\Yapfast\yapfast.exe" --open-link "%1""#));
+             assert!(is_ours(r#""C:\Apps\Yapfast\yapfast.exe" "%1""#));
+             assert!(!is_ours(r#""C:\Apps\Discord\Discord.exe" "%1""#));
 diff --git a/src/tray.rs b/src/tray.rs
 index fca515f..23f4e2c 100644
 --- a/src/tray.rs
