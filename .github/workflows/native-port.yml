@@ -13,6 +13,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 70
+    env:
+      XWIN_SDK_VERSION: "10.0.22621"
+      XWIN_ARCH: x86_64
     steps:
       - uses: actions/checkout@v5
         with:
@@ -32,7 +35,7 @@ jobs:
             ~/.cache/cargo-xwin
             engine/.local/windows/skia-static-production/build.json
             engine/.local/windows/skia-static-production/prepared
-          key: native-skia-${{ hashFiles('engine/nix/flake.lock', 'engine/nix/prepare-windows-skia.py', 'engine/nix/prepare-skia-native.py', 'engine/nix/skia-windows-builder/**') }}
+          key: native-skia-22621-${{ hashFiles('engine/nix/flake.lock', 'engine/nix/prepare-windows-skia.py', 'engine/nix/prepare-skia-native.py', 'engine/nix/skia-windows-builder/**') }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
