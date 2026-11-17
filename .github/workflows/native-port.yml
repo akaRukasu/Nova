@@ -134,9 +134,9 @@ jobs:
           VOXCORD_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           git -C engine config core.autocrlf false
-          git -C engine checkout-index --all --force
-          git -C engine apply --index ../native-port/yapfast.patch
+          git -C engine apply --cached ../native-port/yapfast.patch
           if ($LASTEXITCODE -ne 0) { throw "Could not prepare the corresponding source" }
+          git -C engine checkout-index --all --force
           python native-port/complete-source.py engine package
           if ($LASTEXITCODE -ne 0) { throw "Could not complete the source package" }
       - uses: actions/upload-artifact@v4
