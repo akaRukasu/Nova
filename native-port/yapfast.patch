@@ -258,7 +258,7 @@ index d709450..d9bd66d 100644
                              self.watching.want(wants);
                              self.watching.ask(connection).await?;
 diff --git a/crates/yapfast-discord/src/call_video.rs b/crates/yapfast-discord/src/call_video.rs
-index 98067c0..6d61b51 100644
+index 98067c0..6e509ec 100644
 --- a/crates/yapfast-discord/src/call_video.rs
 +++ b/crates/yapfast-discord/src/call_video.rs
 @@ -239,8 +239,8 @@ impl Receiving {
@@ -343,7 +343,7 @@ index 98067c0..6d61b51 100644
              let Some(assembler) = incoming.assembler.as_mut() else {
                  continue;
              };
-@@ -384,6 +421,55 @@ impl Receiving {
+@@ -384,6 +421,73 @@ impl Receiving {
  mod tests {
      use super::*;
  
@@ -361,7 +361,7 @@ index 98067c0..6d61b51 100644
 +        receiving.want(HashMap::from([(7, (100, 921600))]));
 +        receiving.incoming.get_mut(&101).unwrap().assembler = Some(Assembler::new(Codec::H264));
 +        let mut packetizer = Packetizer::new(101, Codec::H264);
-+        let packets = packetizer.packets(&[0x65, 1, 2, 3], 3000, true);
++        let packets = packetizer.packets(&[0, 0, 0, 1, 0x65, 1, 2, 3], 3000, true);
 +        let packet = rtp::parse(&packets[0]).unwrap();
 +        assert!(receiving.incoming.get_mut(&101).unwrap().assembler.as_mut().unwrap().push(&packet).frame.is_some());
 +        camera(&mut receiving, "8", 201);
@@ -369,7 +369,7 @@ index 98067c0..6d61b51 100644
 +        camera(&mut receiving, "7", 101); // server repeats its announcement
 +        assert!(!receiving.incoming[&101].assembler.as_ref().unwrap().needs_keyframe());
 +        assert!(receiving.incoming[&201].assembler.is_none());
-+        let packets = packetizer.packets(&[0x41, 4, 5, 6], 6000, false);
++        let packets = packetizer.packets(&[0, 0, 0, 1, 0x41, 4, 5, 6], 6000, false);
 +        let packet = rtp::parse(&packets[0]).unwrap();
 +        let pushed = receiving.incoming.get_mut(&101).unwrap().assembler.as_mut().unwrap().push(&packet);
 +        assert!(pushed.frame.is_some(), "the first camera still decodes delta frames");
@@ -394,6 +394,24 @@ index 98067c0..6d61b51 100644
 +        camera(&mut receiving, "7", 301);
 +        assert!(!receiving.incoming.contains_key(&101));
 +        assert!(receiving.incoming.contains_key(&201));
++    }
++
++    #[test]
++    fn decoder_recovery_only_waits_for_the_failed_camera() {
++        let (frames, _) = channel::sync_channel(4);
++        let mut receiving = Receiving::new(frames);
++        for (user, ssrc) in [("7", 101), ("8", 201), ("9", 301)] {
++            camera(&mut receiving, user, ssrc);
++            let mut assembler = Assembler::new(Codec::H264);
++            let mut packetizer = Packetizer::new(ssrc, Codec::H264);
++            let packets = packetizer.packets(&[0, 0, 0, 1, 0x65, 1, 2, 3], 3000, true);
++            assert!(assembler.push(&rtp::parse(&packets[0]).unwrap()).frame.is_some());
++            receiving.incoming.get_mut(&ssrc).unwrap().assembler = Some(assembler);
++        }
++        receiving.need_keyframe(8);
++        assert!(!receiving.incoming[&101].assembler.as_ref().unwrap().needs_keyframe());
++        assert!(receiving.incoming[&201].assembler.as_ref().unwrap().needs_keyframe());
++        assert!(!receiving.incoming[&301].assembler.as_ref().unwrap().needs_keyframe());
 +    }
 +
      #[test]
@@ -1529,7 +1547,7 @@ index bb309c1..df354c6 100644
          )
          skia_location = os.environ.get("SKIA_BINARIES_URL")
 diff --git a/src/autostart.rs b/src/autostart.rs
-index 94c8830..c72138e 100644
+index 94c8830..fbc2556 100644
 --- a/src/autostart.rs
 +++ b/src/autostart.rs
 @@ -11,7 +11,7 @@ pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
@@ -1541,6 +1559,64 @@ index 94c8830..c72138e 100644
  
  /// Whether Yapfast starts when the person signs in.
  pub fn enabled() -> bool {
+@@ -230,9 +230,10 @@ mod windows {
+         r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+ 
+     pub fn enabled() -> bool {
+-        let run = query(RUN, RRF_RT_REG_SZ);
++        let name = if query(RUN, RRF_RT_REG_SZ).is_some() { super::NAME } else { "NovaCord Native" };
++        let run = query_as(RUN, RRF_RT_REG_SZ, name);
+         // Its first byte is odd while Task Manager has the entry turned off.
+-        let off = query(APPROVED, RRF_RT_REG_BINARY)
++        let off = query_as(APPROVED, RRF_RT_REG_BINARY, name)
+             .is_some_and(|approved| approved.first().is_some_and(|byte| byte & 1 == 1));
+         run.is_some() && !off
+     }
+@@ -259,20 +260,28 @@ mod windows {
+         };
+         checked(status)?;
+         // Turning it on here turns it on in Task Manager too.
+-        delete(APPROVED)
++        delete(APPROVED)?;
++        delete_as(RUN, "NovaCord Native")?;
++        delete_as(APPROVED, "NovaCord Native")
+     }
+ 
+     pub fn remove() -> io::Result<()> {
+         delete(RUN)?;
+-        delete(APPROVED)
++        delete(APPROVED)?;
++        delete_as(RUN, "NovaCord Native")?;
++        delete_as(APPROVED, "NovaCord Native")
+     }
+ 
+     fn delete(key: &str) -> io::Result<()> {
++        delete_as(key, super::NAME)
++    }
++
++    fn delete_as(key: &str, name: &str) -> io::Result<()> {
+         let status = unsafe {
+             RegDeleteKeyValueW(
+                 HKEY_CURRENT_USER,
+                 wide(key).as_ptr(),
+-                wide(super::NAME).as_ptr(),
++                wide(name).as_ptr(),
+             )
+         };
+         match status {
+@@ -283,7 +292,11 @@ mod windows {
+ 
+     /// The entry's value under `key`, if it has one of the `kind` asked for.
+     fn query(key: &str, kind: u32) -> Option<Vec<u8>> {
+-        let (key, name) = (wide(key), wide(super::NAME));
++        query_as(key, kind, super::NAME)
++    }
++
++    fn query_as(key: &str, kind: u32, name: &str) -> Option<Vec<u8>> {
++        let (key, name) = (wide(key), wide(name));
+         let mut size = 0u32;
+         let status = unsafe {
+             RegGetValueW(
 diff --git a/src/notify.rs b/src/notify.rs
 index 72ac076..9c11d62 100644
 --- a/src/notify.rs
@@ -1555,7 +1631,7 @@ index 72ac076..9c11d62 100644
                  "",
                  alert.title.as_str(),
 diff --git a/src/protocol.rs b/src/protocol.rs
-index b628602..52993a2 100644
+index b628602..bbc7129 100644
 --- a/src/protocol.rs
 +++ b/src/protocol.rs
 @@ -202,7 +202,7 @@ mod windows {
@@ -1567,10 +1643,11 @@ index b628602..52993a2 100644
      }
  
      fn set_string(key: &str, name: Option<&str>, value: &str) -> io::Result<()> {
-@@ -315,6 +315,7 @@ mod windows {
+@@ -315,6 +315,8 @@ mod windows {
  
          #[test]
          fn recognises_its_own_registered_command() {
++            assert!(is_ours(r#""C:\Apps\Voxcord\voxcord.exe" --open-link "%1""#));
 +            assert!(is_ours(r#""C:\Apps\Voxcord\voxcord.exe" --open-link "%1""#));
              assert!(is_ours(r#""C:\Apps\Yapfast\yapfast.exe" --open-link "%1""#));
              assert!(is_ours(r#""C:\Apps\Yapfast\yapfast.exe" "%1""#));

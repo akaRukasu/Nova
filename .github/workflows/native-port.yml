@@ -80,8 +80,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Camera regressions failed" }
           & ./media-tests/yapfast_discord.exe rtp::tests --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "RTP regressions failed" }
-          & ./media-tests/yapfast_core.exe screen_ --test-threads=1
+          & ./media-tests/yapfast_core.exe stream_worker::tests::screen_ --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Screen regressions failed" }
+          & ./media-tests/yapfast_core.exe stream_worker::tests::fits_frames_with_even_sizes --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Screen scaling regression failed" }
+          & ./media-tests/yapfast_core.exe stream_worker::tests::aims_for_discords_bitrates --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Screen bandwidth regression failed" }
       - name: Package the installer and test the installed binary
         shell: pwsh
         run: |
@@ -97,6 +101,8 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP "Voxcord"
           $setup = Start-Process ./Voxcord-Setup.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$target`"" -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Setup failed: $($setup.ExitCode)" }
+          $version = (Get-Item (Join-Path $target "voxcord.exe")).VersionInfo
+          if ($version.ProductName -ne "Voxcord") { throw "Wrong product metadata" }
           $test = Start-Process (Join-Path $target "voxcord.exe") -ArgumentList "--smoke-test" -PassThru
           if (!$test.WaitForExit(30000)) { Stop-Process -Id $test.Id; throw "Native smoke test timed out" }
           if ($test.ExitCode -ne 0) { throw "Native smoke test failed: $($test.ExitCode)" }
@@ -110,11 +116,25 @@ jobs:
               if ($window.MainWindowHandle -ne 0) { break }
             }
             if ($window.MainWindowHandle -eq 0) { throw "Native client did not open a window" }
+            if ($window.MainWindowTitle -notmatch "Voxcord") { throw "Wrong native window title: $($window.MainWindowTitle)" }
+            try {
+              Add-Type -AssemblyName System.Drawing
+              Add-Type -AssemblyName System.Windows.Forms
+              $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+              $image = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+              $graphics = [System.Drawing.Graphics]::FromImage($image)
+              try {
+                $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+                $image.Save((Join-Path $PWD "Voxcord-native-startup.png"))
+              } finally { $graphics.Dispose(); $image.Dispose() }
+            } catch { Write-Warning "Startup screenshot unavailable: $_" }
           } finally {
             if (!$window.HasExited) { Stop-Process -Id $window.Id }
           }
       - uses: actions/upload-artifact@v4
         with:
           name: Voxcord-Windows-Setup
-          path: Voxcord-Setup.exe
+          path: |
+            Voxcord-Setup.exe
+            Voxcord-native-startup.png
           if-no-files-found: error
