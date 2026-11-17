@@ -79,8 +79,8 @@ export function PlayShuffle({ tracks, playlist = false, playlistId }: { tracks: 
   };
   return (
     <div className="play-shuffle">
-      <button className="button" disabled={!tracks.length} onClick={() => play(false)}><Icon name="play" size={16} /> Lecture</button>
-      <button className="button secondary" disabled={!tracks.length} onClick={() => play(true)}><Icon name="shuffle" size={16} /> Aléatoire</button>
+      <button className="button play-action" disabled={!tracks.length} onClick={() => play(false)}><Icon name="play" size={16} /><span className="button-label">Lecture</span></button>
+      <button className="button secondary shuffle-action" aria-label="Lecture aléatoire" disabled={!tracks.length} onClick={() => play(true)}><Icon name="shuffle" size={16} /><span className="button-label">Aléatoire</span></button>
     </div>
   );
 }

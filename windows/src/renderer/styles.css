@@ -231,7 +231,11 @@ main {
   display: grid; place-items: center; background: var(--accent); color: #fff; opacity: 0; transform: translateY(4px);
   transition: 0.15s; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
-.card-art:hover .card-play { opacity: 1; transform: none; }
+.card:hover .card-play, .card:focus-within .card-play,
+.library-cover:hover .card-play, .library-cover:focus-within .card-play { opacity: 1; transform: none; }
+.card-play:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.card-play:hover { filter: brightness(1.12); }
+.card-play:active { scale: .94; }
 .card-title { font-weight: 600; font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card-subtitle { font-size: 12px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .card.round .card-title, .card.round .card-subtitle { text-align: center; }
@@ -1022,7 +1026,10 @@ html.android .command-button { display: none; }
 
 .library-group-card { width: 176px; text-align: left; display: grid; gap: 5px; border-radius: 14px; }
 .library-group-card:hover .card-title { text-decoration: underline; }
-.library-group-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.library-group-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.library-cover { position: relative; width: 100%; }
+.library-cover .card-art { display: block; width: 100%; }
+.library-card-title { text-align: inherit; }
 .library-group-card .card-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library-scroll-sentinel { height: 1px; }
 .library-artist-grid .library-group-card { text-align: center; }
@@ -1059,7 +1066,7 @@ html.android .command-button { display: none; }
   .recap-hero-cover { display: none; }
   .recap-metrics { grid-template-columns: repeat(2,1fr); }
   .library-group-card { width: 100%; }
-  .library-group-card > .artwork { width: 100% !important; height: auto !important; aspect-ratio: 1; }
+  .library-group-card .library-cover .artwork { width: 100% !important; height: auto !important; aspect-ratio: 1; }
 }
 .album-hero { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; gap: 34px; padding: 32px; margin: 8px 0 28px; border-radius: 28px; border: 1px solid #ffffff18; background: var(--elevated); box-shadow: 0 16px 42px #0002; }
 .album-hero-backdrop { position: absolute; inset: 0; z-index: -2; pointer-events: none; filter: blur(48px); opacity: .22; transform: scale(1.2); }
@@ -1082,4 +1089,16 @@ html.android .command-button { display: none; }
   .album-hero h1 { font-size: 28px; }
   .album-hero .row-buttons { justify-content: center; gap: 9px; margin-top: 22px; }
   .album-hero .button { min-height: 46px; }
+}
+html.android:not(.tv) .album-hero .play-shuffle { width: 100%; flex-wrap: nowrap; gap: 12px; margin: 0; }
+html.android:not(.tv) .album-hero .play-action {
+  flex: 1; min-height: 54px; border-radius: 999px; padding: 10px 24px; gap: 12px; color: #fff;
+  background: linear-gradient(135deg, #ff426c, #ed2453); box-shadow: 0 6px 18px #ed24532e; font-size: 16px; font-weight: 650;
+}
+html.android:not(.tv) .album-hero .play-action svg { width: 30px; height: 30px; padding: 7px; border-radius: 50%; background: #ffffff24; }
+html.android:not(.tv) .album-hero .shuffle-action { flex: none; width: 54px; min-height: 54px; padding: 0; border-radius: 50%; }
+html.android:not(.tv) .album-hero .shuffle-action svg { width: 20px; height: 20px; }
+html.android:not(.tv) .album-hero .shuffle-action .button-label { display: none; }
+@media (hover: none), (pointer: coarse) {
+  .card-play { opacity: 1; transform: none; width: 44px; height: 44px; }
 }

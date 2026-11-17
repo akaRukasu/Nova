@@ -139,20 +139,10 @@ struct CollectionView: View {
                         artwork: header.artworkURL.map { [$0] } ?? collection.artworkURLs,
                         details: [isAlbum ? "ALBUM" : "PLAYLIST", header.secondSubtitle, tracks.isEmpty ? "" : summary].filter { !$0.isEmpty }.joined(separator: " · "),
                         onArtist: header.artistID.map { id in { router.open(.collection(MusicCollection(id: id, kind: .artist, title: header.artist ?? "Artiste"))) } }) {
-                HStack(spacing: 10) {
-                    Button { player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) } label: {
-                        Label("Lecture", systemImage: "play.fill").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glassProminent).tint(Color.novaAccent)
-                    Button { player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) } label: {
-                        Image(systemName: "shuffle").frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
-                    Button { library.toggleSaved(savable) } label: {
-                        Image(systemName: library.isSaved(collection.id) ? "checkmark" : "plus").frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.glass).accessibilityLabel(library.isSaved(collection.id) ? "Retirer de la bibliothèque" : "Ajouter à la bibliothèque")
-                }
+                AlbumPlaybackActions(
+                    play: { player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) },
+                    shuffle: { player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) },
+                    isSaved: library.isSaved(collection.id), onSave: { library.toggleSaved(savable) })
                 .disabled(tracks.isEmpty)
             }
             if let description = header.description {

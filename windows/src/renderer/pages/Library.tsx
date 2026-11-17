@@ -1,10 +1,11 @@
 // Bibliothèque : playlists, morceaux, titres likés, historique, albums, ajouts récents, playlists intelligentes.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Item, SmartField, SmartOperator, SmartPlaylist, SmartRule, Track } from '../../shared/types';
+import type { ReactNode } from 'react';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
 import { ask } from '../components/menus';
-import { CardGrid } from '../components/Shelf';
+import { CardGrid, playCollection } from '../components/Shelf';
 import { TrackRow } from '../components/TrackRow';
 import {
   account, clearRecents, deletePlaylist, deleteSmartPlaylist, library, moveInPlaylist, notify, refreshAccount,
@@ -164,12 +165,25 @@ function useScrollLimit(length: number, step: number, search = '') {
 }
 
 function GroupCard({ group, kind }: { group: LibraryGroup; kind: LibraryGroupKind }) {
-  return <button className="library-group-card"
-      onClick={() => open({ name: 'libraryGroup', kind, id: group.id })}>
-      <Artwork track={group.artworkTrack} size={176} radius={12} round={kind === 'artist'} />
-      <span className="card-title">{group.title}</span>
-      <span className="card-subtitle">{kind === 'artist' ? group.tracks.length + ' titres' : group.subtitle + ' · ' + releaseType(group)}</span>
-    </button>;
+  return <LibraryCoverCard title={group.title}
+    subtitle={kind === 'artist' ? group.tracks.length + ' titres' : group.subtitle + ' · ' + releaseType(group)}
+    onOpen={() => open({ name: 'libraryGroup', kind, id: group.id })}
+    onPlay={() => player.play(group.tracks)}>
+    <Artwork track={group.artworkTrack} size={176} radius={12} round={kind === 'artist'} />
+  </LibraryCoverCard>;
+}
+
+function LibraryCoverCard({ title, subtitle, onOpen, onPlay, children }: {
+  title: string; subtitle: string; onOpen: () => void; onPlay: () => void; children: ReactNode;
+}) {
+  return <div className="library-group-card">
+    <div className="library-cover">
+      <button className="card-art" onClick={onOpen} aria-label={`Ouvrir ${title}`}>{children}</button>
+      <button className="card-play" onClick={onPlay} aria-label={`Lire ${title}`}><Icon name="play" size={19} /></button>
+    </div>
+    <button className="card-title library-card-title" onClick={onOpen}>{title}</button>
+    <span className="card-subtitle">{subtitle}</span>
+  </div>;
 }
 
 type LibraryEntry = ReturnType<typeof libraryEntries>[number];
@@ -179,12 +193,12 @@ function LibraryGrid({ entries, kind }: { entries: LibraryEntry[]; kind: Library
     {entries.map(entry => {
       if (entry.kind === 'group') return <GroupCard key={'group:' + entry.group.id} group={entry.group} kind={kind} />;
       const { collection } = entry;
-      return <button key={'catalog:' + collection.id} className="library-group-card" onClick={() => open(kind === 'artist'
-        ? { name: 'artist', id: collection.id, title: collection.title } : { name: 'collection', collection })}>
+      return <LibraryCoverCard key={'catalog:' + collection.id} title={entry.title}
+        subtitle={kind === 'artist' ? entry.subtitle : [entry.subtitle, 'Album'].filter(Boolean).join(' · ')}
+        onOpen={() => open(kind === 'artist' ? { name: 'artist', id: collection.id, title: collection.title } : { name: 'collection', collection })}
+        onPlay={() => void playCollection(collection)}>
         <Artwork url={collection.artwork} size={176} radius={12} round={kind === 'artist'} />
-        <span className="card-title">{entry.title}</span>
-        <span className="card-subtitle">{kind === 'artist' ? entry.subtitle : [entry.subtitle, 'Album'].filter(Boolean).join(' · ')}</span>
-      </button>;
+      </LibraryCoverCard>;
     })}
   </div>;
 }

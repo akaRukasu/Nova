@@ -4,6 +4,7 @@ import type { Category, Collection, Item, Shelf, Track } from '../../shared/type
 import { isOctaveId } from '../../shared/octave';
 import { api } from '../lib/api';
 import { player } from '../lib/player';
+import { library, notify } from '../lib/library';
 import { open, routeForLink, type Route } from '../lib/router';
 import { Artwork } from './Artwork';
 import { Icon } from './icons';
@@ -16,13 +17,21 @@ export function routeFor(collection: Collection): Route {
   return { name: 'collection', collection };
 }
 
-async function playCollection(collection: Collection, shuffle = false) {
-  if (collection.kind === 'artist') {
-    const songs = await api.artistSongs(collection.id).catch(() => [] as Track[]);
-    return player.play(songs.length ? songs : (await api.artist(collection.id)).tracks, 0, shuffle);
-  }
-  const page = await api.collection(collection);
-  player.play(page.tracks, 0, shuffle);
+export async function playCollection(collection: Collection, shuffle = false) {
+  try {
+    if (collection.id.startsWith('local:')) {
+      const playlist = library.get().playlists.find(item => item.id === collection.id.slice(6));
+      if (playlist) return player.playPlaylist(playlist.tracks, 0, shuffle, playlist.id);
+      return;
+    }
+    if (collection.kind === 'artist') {
+      const songs = await api.artistSongs(collection.id).catch(() => [] as Track[]);
+      return player.play(songs.length ? songs : (await api.artist(collection.id)).tracks, 0, shuffle);
+    }
+    const page = await api.collection(collection);
+    if (collection.kind === 'playlist') player.playPlaylist(page.tracks, 0, shuffle);
+    else player.play(page.tracks, 0, shuffle);
+  } catch { notify('Impossible de charger les titres. Réessaie dans un instant.'); }
 }
 
 export function Card({ item, width = 176, onPlay }: { item: Item; width?: number; onPlay?: (track: Track) => void }) {
@@ -48,12 +57,10 @@ export function Card({ item, width = 176, onPlay }: { item: Item; width?: number
       <div className="card-art" role="button" tabIndex={0} onClick={() => open(routeFor(collection))}
         onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(routeFor(collection)); }}>
         <Artwork url={collection.artwork} size={width} radius={10} round={round} />
-        {!round && (
           <button className="card-play" onClick={(e) => { e.stopPropagation(); void playCollection(collection); }}
             aria-label={`Lire ${collection.title}`}>
             <Icon name="play" size={18} />
           </button>
-        )}
       </div>
       <div className="card-title link" onClick={() => open(routeFor(collection))} title={collection.title}>{collection.title}</div>
       {collection.subtitle && <div className="card-subtitle">{collection.subtitle}</div>}

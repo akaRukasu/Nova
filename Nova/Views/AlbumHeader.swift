@@ -1,5 +1,61 @@
 import SwiftUI
 
+struct AlbumPlaybackActions: View {
+    let play: () -> Void
+    let shuffle: () -> Void
+    var isSaved = false
+    var onSave: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: play) {
+                HStack(spacing: 8) {
+                    Image(systemName: "play.fill").font(.system(size: 16, weight: .semibold))
+                    Text("Lecture").font(.headline)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 15)
+                .frame(maxWidth: .infinity, minHeight: 54)
+            }
+            .buttonStyle(AlbumPlayStyle())
+            .accessibilityIdentifier("album.play")
+            roundButton("shuffle", label: "Lecture aléatoire", action: shuffle)
+            if let onSave {
+                roundButton(isSaved ? "checkmark" : "plus",
+                            label: isSaved ? "Retirer de la bibliothèque" : "Ajouter à la bibliothèque", action: onSave)
+            }
+        }
+    }
+
+    private func roundButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 54, height: 54)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay { Circle().strokeBorder(.primary.opacity(0.1)) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct AlbumPlayStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(LinearGradient(colors: [Color.novaAccent, Color.novaAccent.opacity(0.82)],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing), in: Capsule())
+            .shadow(color: Color.novaAccent.opacity(isEnabled ? 0.2 : 0), radius: 12, y: 5)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
+    }
+}
+
 struct AlbumHeader<Actions: View>: View {
     let title: String
     let artist: String
@@ -45,4 +101,13 @@ struct AlbumHeader<Actions: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 28).strokeBorder(.primary.opacity(0.06)) }
     }
+}
+
+#Preview("Commandes d’album") {
+    VStack(spacing: 28) {
+        AlbumPlaybackActions(play: {}, shuffle: {}, onSave: {})
+        AlbumPlaybackActions(play: {}, shuffle: {})
+    }
+    .padding(24)
+    .preferredColorScheme(.dark)
 }

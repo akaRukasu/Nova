@@ -1035,16 +1035,8 @@ struct LibraryGroupView: View {
         Section {
             AlbumHeader(title: group.title, artist: group.artist, artwork: group.artwork.squareArtworkURLs,
                         details: group.releaseType + " · \(group.tracks.count) titres") {
-                HStack(spacing: 10) {
-                    Button { player.play(group.tracks) } label: {
-                        Label("Lecture", systemImage: "play.fill").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glassProminent).tint(Color.novaAccent)
-                    Button { player.play(group.tracks, shuffled: true) } label: {
-                        Image(systemName: "shuffle").frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
-                }
+                AlbumPlaybackActions(play: { player.play(group.tracks) },
+                                     shuffle: { player.play(group.tracks, shuffled: true) })
                 if let reference = group.tracks.first {
                     NavigationLink(value: Route.trackCatalog(reference, .album)) {
                         Label("Voir l’album complet", systemImage: "square.stack.fill")
