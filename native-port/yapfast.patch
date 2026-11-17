@@ -1032,10 +1032,10 @@ index ae21e09..c5bb25e 100644
                      opening = None;
 diff --git a/crates/yapfast-core/src/microphone_test.rs b/crates/yapfast-core/src/microphone_test.rs
 new file mode 100644
-index 0000000..7be9bc1
+index 0000000..a57f7be
 --- /dev/null
 +++ b/crates/yapfast-core/src/microphone_test.rs
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,94 @@
 +//! Streams the selected microphone to the selected output during a local test.
 +use std::{
 +    sync::{
@@ -1059,6 +1059,8 @@ index 0000000..7be9bc1
 +
 +pub struct Test {
 +    pub status: mpsc::Receiver<Status>,
++    pub microphone: Option<String>,
++    pub speaker: Option<String>,
 +    stop: Arc<AtomicBool>,
 +}
 +
@@ -1067,6 +1069,7 @@ index 0000000..7be9bc1
 +        let stop = Arc::new(AtomicBool::new(false));
 +        let cancelled = stop.clone();
 +        let (progress, status) = mpsc::channel();
++        let selected = (microphone.clone(), speaker.clone());
 +        std::thread::Builder::new()
 +            .name("voxcord-microphone-test".into())
 +            .spawn(move || {
@@ -1083,7 +1086,12 @@ index 0000000..7be9bc1
 +                    });
 +                }
 +            })?;
-+        Ok(Self { status, stop })
++        Ok(Self {
++            status,
++            microphone: selected.0,
++            speaker: selected.1,
++            stop,
++        })
 +    }
 +}
 +
@@ -1625,6 +1633,19 @@ index f749b6e..2078bd9 100644
          };
          let mut reports = Vec::new();
          let input = format!("{}\n", serde_json::to_string(&gone).unwrap());
+diff --git a/crates/yapfast-core/src/video_player.rs b/crates/yapfast-core/src/video_player.rs
+index ad39618..fb29638 100644
+--- a/crates/yapfast-core/src/video_player.rs
++++ b/crates/yapfast-core/src/video_player.rs
+@@ -440,7 +440,7 @@ fn take(shared: &Shared, progress: &Progress, control: Control) {
+             Some(size) => progress.downloaded(size),
+             None => progress.failed(),
+         },
+-        Control::Send(_) | Control::Switch(_) | Control::Hear(_) => {}
++        Control::Send(_) | Control::Switch(_) | Control::SwitchWithSound(_, _) | Control::Hear(_) => {}
+     }
+     shared.changed.notify_all();
+ }
 diff --git a/crates/yapfast-core/src/voice.rs b/crates/yapfast-core/src/voice.rs
 index b507945..cf388ad 100644
 --- a/crates/yapfast-core/src/voice.rs
@@ -5245,7 +5266,7 @@ index 5b5f9f1..cdab5a1 100644
          link.set_sent(rate(stream.sent_kbps).into());
          link.set_target(rate(stream.target_kbps).into());
 diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
-index 597fb2e..900e74c 100644
+index 597fb2e..c1f2fb1 100644
 --- a/src/ui/callbacks.rs
 +++ b/src/ui/callbacks.rs
 @@ -195,6 +195,38 @@ fn show_emoji(adapter: &Rc<RefCell<Adapter>>, window: &YapfastWindow, query: &st
@@ -5404,7 +5425,7 @@ index 597fb2e..900e74c 100644
              }
          }
      });
-@@ -2765,9 +2817,56 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2765,9 +2817,75 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
          let Some(window) = weak.upgrade() else { return };
          let mut adapter = state.borrow_mut();
          adapter.camera_test = None;
@@ -5450,6 +5471,25 @@ index 597fb2e..900e74c 100644
 +            window.set_microphone_test_note("Test arrêté : appel actif.".into());
 +            return;
 +        }
++        let voice = &adapter.app.state.voice;
++        let changed = adapter.microphone_test.as_ref().is_some_and(|test| {
++            test.microphone != voice.microphone || test.speaker != voice.speaker
++        });
++        if changed {
++            let devices = (voice.microphone.clone(), voice.speaker.clone());
++            adapter.microphone_test.take();
++            match yapfast_core::microphone_test::Test::start(devices.0, devices.1) {
++                Ok(test) => {
++                    adapter.microphone_test = Some(test);
++                    window.set_microphone_test_note("Ouverture du microphone…".into());
++                }
++                Err(error) => {
++                    window.set_microphone_test_note(error.to_string().into());
++                    window.set_microphone_testing(false);
++                }
++            }
++            return;
++        }
 +        let status = adapter.microphone_test.as_ref().and_then(|test| test.status.try_iter().last());
 +        let (note, done) = match status {
 +            Some(Status::Monitoring) => ("Retour micro en direct sur la sortie sélectionnée.".into(), false),
@@ -5463,7 +5503,7 @@ index 597fb2e..900e74c 100644
          }
      });
      let state = adapter.clone();
-@@ -2785,7 +2884,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2785,7 +2903,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              window.set_meter_note(SharedString::from(if !meter::AVAILABLE {
                  "The level meter isn't available on this system yet."
              } else if meter.failed() {
@@ -5472,7 +5512,7 @@ index 597fb2e..900e74c 100644
              } else {
                  ""
              }));
-@@ -2810,7 +2909,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2810,7 +2928,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                      if !yapfast_core::discord_audio::AVAILABLE {
                          "Discord voice and its level aren't available on this system yet."
                      } else if meter.failed() {
@@ -5481,7 +5521,7 @@ index 597fb2e..900e74c 100644
                      } else {
                          ""
                      },
-@@ -2915,13 +3014,10 @@ fn composer_caret(
+@@ -2915,13 +3033,10 @@ fn composer_caret(
  
  /// Films with the chosen camera into the voice settings' preview, which is
  /// about 400 by 225 points.
@@ -5498,7 +5538,7 @@ index 597fb2e..900e74c 100644
          Err(error) => window.set_camera_note(error.to_string().into()),
      }
  }
-@@ -2972,7 +3068,7 @@ const PIP_HEIGHT: f32 = 180.0;
+@@ -2972,7 +3087,7 @@ const PIP_HEIGHT: f32 = 180.0;
  /// Opens a web page in the browser. Only web pages open: a message can't
  /// start other programs.
  /// The web address a link in a message leads to: a masked link's, behind
@@ -5509,10 +5549,10 @@ index 597fb2e..900e74c 100644
      (links::openable(link) && mention::target(link).is_none()).then_some(link)
 diff --git a/src/ui/language.rs b/src/ui/language.rs
 new file mode 100644
-index 0000000..5ad2b21
+index 0000000..dcd2332
 --- /dev/null
 +++ b/src/ui/language.rs
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +use std::{
 +    collections::BTreeMap,
 +    sync::{
@@ -5525,8 +5565,10 @@ index 0000000..5ad2b21
 +static TRANSLATIONS: OnceLock<BTreeMap<String, String>> = OnceLock::new();
 +
 +pub(super) fn select(locale: &str) {
-+    FRENCH.store(locale != "en", Ordering::Relaxed);
-+    if let Err(error) = slint::select_bundled_translation(locale) {
++    let french = locale != "en";
++    FRENCH.store(french, Ordering::Relaxed);
++    // Slint identifies the original, untranslated catalogue with an empty name.
++    if let Err(error) = slint::select_bundled_translation(if french { "fr" } else { "" }) {
 +        tracing::warn!(%error, "could not select the interface language");
 +    }
 +}
@@ -5544,7 +5586,7 @@ index 0000000..5ad2b21
 +        .map_or(text, String::as_str)
 +}
 diff --git a/src/ui/menus.rs b/src/ui/menus.rs
-index 8c63485..5eb63af 100644
+index 8c63485..bc97448 100644
 --- a/src/ui/menus.rs
 +++ b/src/ui/menus.rs
 @@ -36,7 +36,7 @@ fn thread_more(id: &str) -> Option<(&str, &'static str)> {
@@ -5556,15 +5598,35 @@ index 8c63485..5eb63af 100644
  pub(super) fn menu(adapter: &Adapter, id: &str, person: bool) -> Menu {
      if let Some(place) = id.strip_prefix(BELL) {
          return Notify::of(adapter, place)
-@@ -94,7 +94,7 @@ pub(super) fn menu(adapter: &Adapter, id: &str, person: bool) -> Menu {
-                 MenuChoice::Timeout => (format!("Time out {}", name()), &icons.timeout),
-                 MenuChoice::Kick => (format!("Kick {}", name()), &icons.kick),
-                 MenuChoice::Ban => (format!("Ban {}", name()), &icons.ban),
+@@ -91,19 +91,19 @@ pub(super) fn menu(adapter: &Adapter, id: &str, person: bool) -> Menu {
+         .into_iter()
+         .map(|choice| {
+             let (text, icon) = match choice {
+-                MenuChoice::Timeout => (format!("Time out {}", name()), &icons.timeout),
+-                MenuChoice::Kick => (format!("Kick {}", name()), &icons.kick),
+-                MenuChoice::Ban => (format!("Ban {}", name()), &icons.ban),
 -                MenuChoice::Invite if server => ("Invite to server".into(), &icons.befriend),
+-                MenuChoice::CreateChannel if server => ("Create channel".into(), &icons.create),
++                MenuChoice::Timeout => (format!("{} {}", tr("Time out"), name()), &icons.timeout),
++                MenuChoice::Kick => (format!("{} {}", tr("Kick"), name()), &icons.kick),
++                MenuChoice::Ban => (format!("{} {}", tr("Ban"), name()), &icons.ban),
 +                MenuChoice::Invite if server => (tr("Invite to server").into(), &icons.befriend),
-                 MenuChoice::CreateChannel if server => ("Create channel".into(), &icons.create),
++                MenuChoice::CreateChannel if server => (tr("Create channel").into(), &icons.create),
                  MenuChoice::CreateChannel if voice => {
-                     ("Create voice channel".into(), &icons.create)
+-                    ("Create voice channel".into(), &icons.create)
++                    (tr("Create voice channel").into(), &icons.create)
+                 }
+-                MenuChoice::EditChannel if category => ("Edit category".into(), &icons.edit),
+-                MenuChoice::DeleteChannel if category => ("Delete category".into(), &icons.delete),
++                MenuChoice::EditChannel if category => (tr("Edit category").into(), &icons.edit),
++                MenuChoice::DeleteChannel if category => (tr("Delete category").into(), &icons.delete),
+                 choice => {
+                     let (text, icon) = label(icons, choice, in_call);
+-                    (text.to_owned(), icon)
++                    (tr(text).to_owned(), icon)
+                 }
+             };
+             // A line goes between groups: what it does, then how this
 diff --git a/src/ui/messages.rs b/src/ui/messages.rs
 index e0a7808..8874448 100644
 --- a/src/ui/messages.rs
@@ -5592,10 +5654,10 @@ index e0a7808..8874448 100644
      let discoverable = server.is_some_and(|server| server.community)
 diff --git a/src/ui/personal.rs b/src/ui/personal.rs
 new file mode 100644
-index 0000000..8f31e90
+index 0000000..dad80ba
 --- /dev/null
 +++ b/src/ui/personal.rs
-@@ -0,0 +1,800 @@
+@@ -0,0 +1,805 @@
 +//! The personal soundboard uses the native voice engine. Only the controller
 +//! page is served over HTTP, for the PC and an explicitly paired phone.
 +use std::{
@@ -5702,9 +5764,14 @@ index 0000000..8f31e90
 +                if matches!(&request, Request::RefreshCatalog) {
 +                    let adapter = adapter.borrow();
 +                    if let Some(backend) = &adapter.backend {
-+                        let _ = backend.send(yapfast_core::chat::Command::Discord(
++                        let sent = backend.send(yapfast_core::chat::Command::Discord(
 +                            yapfast_core::chat::DiscordCommand::SoundCatalog,
 +                        ));
++                        if sent.is_err() {
++                            if let Some(board) = &adapter.personal_board {
++                                board.update_catalog(&Err("Le moteur Discord est indisponible.".into()));
++                            }
++                        }
 +                    } else if let Some(board) = &adapter.personal_board {
 +                        board.update_catalog(&Err(
 +                            "Connecte-toi à Discord pour charger tes serveurs.".into(),
@@ -9896,10 +9963,10 @@ index 490d006..9d5978f 100644
          padding: 12px; spacing: 4px;
 diff --git a/ui/personal-soundboard.html b/ui/personal-soundboard.html
 new file mode 100644
-index 0000000..8d10d4f
+index 0000000..f310dc1
 --- /dev/null
 +++ b/ui/personal-soundboard.html
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,187 @@
 +<!doctype html>
 +<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101117"><meta name="apple-mobile-web-app-capable" content="yes"><title>Voxcord · Soundboard</title>
 +<style>
@@ -9972,6 +10039,7 @@ index 0000000..8d10d4f
 +document.querySelectorAll("[data-filter]").forEach(node=>node.onclick=()=>setFilter(node.dataset.filter));document.querySelectorAll("[data-close]").forEach(node=>node.onclick=()=>$(node.dataset.close).close());
 +$("search").oninput=()=>{renderGrid();renderStatus();};$("enable").onclick=()=>command({action:"enable",enabled:!snapshot.board.enabled});$("stop-reading").onclick=$("stop").onclick=()=>{if(online&&snapshot?.ready)command({action:"stop"});else{stopOnlinePreview();renderStatus();}};$("monitor").onchange=()=>command({action:"monitor",enabled:$("monitor").checked});$("monitor-volume").oninput=()=>{$("monitor-percent").textContent=$("monitor-volume").value+" %";if(snapshot?.desktop)onlinePlayer.volume=Number($("monitor-volume").value)/100;};$("monitor-volume").onchange=()=>command({action:"monitor-volume",volume:Number($("monitor-volume").value)/100});$("refresh").onclick=()=>command({action:"refresh"});$("volume").oninput=()=>$("volume-label").textContent=$("volume").value+" %";$("volume").onchange=()=>command({action:"volume",volume:Number($("volume").value)/100});
 +let shortcutInput=null, shortcutTimer;
++for(const id of ["shortcuts","edit"])$(id).addEventListener("close",()=>{if(shortcutInput)stopShortcutCapture();});
 +async function stopShortcutCapture(){
 +  shortcutInput=null;
 +  clearTimeout(shortcutTimer);
@@ -13358,10 +13426,10 @@ index e6e465c..450589c 100644
      }
 diff --git a/ui/translations/fr.json b/ui/translations/fr.json
 new file mode 100644
-index 0000000..a94d980
+index 0000000..47dd0db
 --- /dev/null
 +++ b/ui/translations/fr.json
-@@ -0,0 +1,1063 @@
+@@ -0,0 +1,1115 @@
 +{
 +  "Off": "Désactivé",
 +  "Cancel": "Annuler",
@@ -14423,14 +14491,66 @@ index 0000000..a94d980
 +  "Server settings": "Réglages du serveur",
 +  "Minimize": "Réduire",
 +  "Restore": "Restaurer",
-+  "Maximize": "Agrandir"
++  "Maximize": "Agrandir",
++  "Add friend": "Ajouter en ami",
++  "Add friend nickname": "Ajouter un surnom",
++  "Add note": "Ajouter une note",
++  "Add to channel list": "Ajouter à la liste des salons",
++  "Ban": "Bannir",
++  "Block": "Bloquer",
++  "Cancel friend request": "Annuler la demande d’ami",
++  "Change friend nickname": "Modifier le surnom",
++  "Change nickname": "Modifier le pseudo",
++  "Close DM": "Fermer le message privé",
++  "Copy ID": "Copier l’identifiant",
++  "Copy link": "Copier le lien",
++  "Create category": "Créer une catégorie",
++  "Create channel": "Créer un salon",
++  "Create text channel": "Créer un salon textuel",
++  "Create voice channel": "Créer un salon vocal",
++  "Delete category": "Supprimer la catégorie",
++  "Delete channel": "Supprimer le salon",
++  "Disconnect": "Déconnecter",
++  "Duplicate channel": "Dupliquer le salon",
++  "Edit category": "Modifier la catégorie",
++  "Edit channel": "Modifier le salon",
++  "Edit server profile": "Modifier le profil du serveur",
++  "Hide muted channels": "Masquer les salons muets",
++  "Invite to channel": "Inviter dans le salon",
++  "Join call": "Rejoindre l’appel",
++  "Join thread": "Rejoindre le fil",
++  "Kick": "Expulser",
++  "Leave group": "Quitter le groupe",
++  "Leave server": "Quitter le serveur",
++  "Leave thread": "Quitter le fil",
++  "Mark as read": "Marquer comme lu",
++  "Mention": "Mentionner",
++  "Move to": "Déplacer vers",
++  "Mute Soundboard": "Couper la soundboard",
++  "Mute server": "Rendre le serveur muet",
++  "Pin": "Épingler",
++  "Pin channel to top": "Épingler le salon en haut",
++  "Profile": "Profil",
++  "Remove friend": "Retirer des amis",
++  "Remove from channel list": "Retirer de la liste des salons",
++  "Remove timeout": "Retirer l’exclusion temporaire",
++  "Server deafen": "Rendre sourd sur le serveur",
++  "Server mute": "Rendre muet sur le serveur",
++  "Show all channels": "Afficher tous les salons",
++  "Start call": "Démarrer un appel",
++  "Stop ignoring": "Ne plus ignorer",
++  "Time out": "Exclure temporairement",
++  "Unfollow channel category": "Ne plus suivre la catégorie",
++  "Unmute server": "Réactiver les notifications du serveur",
++  "Unpin": "Désépingler",
++  "Unpin channel": "Désépingler le salon"
 +}
 diff --git a/ui/translations/fr/LC_MESSAGES/yapfast-ui.po b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
 new file mode 100644
-index 0000000..1422ffc
+index 0000000..3aab087
 --- /dev/null
 +++ b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
-@@ -0,0 +1,3188 @@
+@@ -0,0 +1,3344 @@
 +msgid ""
 +msgstr ""
 +"Content-Type: text/plain; charset=UTF-8\n"
@@ -14833,6 +14953,12 @@ index 0000000..1422ffc
 +msgid "Add emoji, answer "
 +msgstr "Ajouter un émoji à la réponse "
 +
++msgid "Add friend"
++msgstr "Ajouter en ami"
++
++msgid "Add friend nickname"
++msgstr "Ajouter un surnom"
++
 +msgid "Add friends to DM"
 +msgstr "Ajouter des amis au MP"
 +
@@ -14844,6 +14970,9 @@ index 0000000..1422ffc
 +
 +msgid "Add members"
 +msgstr "Ajouter des membres"
++
++msgid "Add note"
++msgstr "Ajouter une note"
 +
 +msgid "Add pronouns"
 +msgstr "Ajouter des pronoms"
@@ -14862,6 +14991,9 @@ index 0000000..1422ffc
 +
 +msgid "Add to Group"
 +msgstr "Ajouter au groupe"
++
++msgid "Add to channel list"
++msgstr "Ajouter à la liste des salons"
 +
 +msgid "Add to server"
 +msgstr "Ajouter au serveur"
@@ -14974,6 +15106,9 @@ index 0000000..1422ffc
 +msgid "Backup codes can only be used one time each and are for emergency access to your account!"
 +msgstr "Chaque code de secours n’est utilisable qu’une fois et permet de récupérer l’accès au compte."
 +
++msgid "Ban"
++msgstr "Bannir"
++
 +msgid "Ban Reason"
 +msgstr "Motif du bannissement"
 +
@@ -14988,6 +15123,9 @@ index 0000000..1422ffc
 +
 +msgid "Bio"
 +msgstr "Biographie"
++
++msgid "Block"
++msgstr "Bloquer"
 +
 +msgid "Blocked accounts"
 +msgstr "Comptes bloqués"
@@ -15052,6 +15190,9 @@ index 0000000..1422ffc
 +msgid "Cancel editing"
 +msgstr "Annuler la modification"
 +
++msgid "Cancel friend request"
++msgstr "Annuler la demande d’ami"
++
 +msgid "Cancel reply"
 +msgstr "Annuler la réponse"
 +
@@ -15078,6 +15219,12 @@ index 0000000..1422ffc
 +
 +msgid "Change custom status"
 +msgstr "Modifier le statut personnalisé"
++
++msgid "Change friend nickname"
++msgstr "Modifier le surnom"
++
++msgid "Change nickname"
++msgstr "Modifier le pseudo"
 +
 +msgid "Channel name"
 +msgstr "Nom du salon"
@@ -15142,6 +15289,9 @@ index 0000000..1422ffc
 +msgid "Close "
 +msgstr "Fermer "
 +
++msgid "Close DM"
++msgstr "Fermer le message privé"
++
 +msgid "Close profile"
 +msgstr "Fermer le profil"
 +
@@ -15190,10 +15340,16 @@ index 0000000..1422ffc
 +msgid "Copy"
 +msgstr "Copier"
 +
++msgid "Copy ID"
++msgstr "Copier l’identifiant"
++
 +msgid "Copy Image"
 +msgstr "Copier l’image"
 +
 +msgid "Copy Link"
++msgstr "Copier le lien"
++
++msgid "Copy link"
 +msgstr "Copier le lien"
 +
 +msgid "Copy selection"
@@ -15228,6 +15384,18 @@ index 0000000..1422ffc
 +
 +msgid "Create an invite link anyone can use to join, or invite friends directly."
 +msgstr "Crée un lien d’invitation ou invite directement des amis."
++
++msgid "Create category"
++msgstr "Créer une catégorie"
++
++msgid "Create channel"
++msgstr "Créer un salon"
++
++msgid "Create text channel"
++msgstr "Créer un salon textuel"
++
++msgid "Create voice channel"
++msgstr "Créer un salon vocal"
 +
 +msgid "Creating..."
 +msgstr "Création…"
@@ -15295,6 +15463,12 @@ index 0000000..1422ffc
 +msgid "Delete Server"
 +msgstr "Supprimer le serveur"
 +
++msgid "Delete category"
++msgstr "Supprimer la catégorie"
++
++msgid "Delete channel"
++msgstr "Supprimer le salon"
++
 +msgid "Delete for everyone?"
 +msgstr "Supprimer pour tout le monde ?"
 +
@@ -15321,6 +15495,9 @@ index 0000000..1422ffc
 +
 +msgid "Direct messages"
 +msgstr "Messages privés"
++
++msgid "Disconnect"
++msgstr "Déconnecter"
 +
 +msgid "Discord and Matrix show"
 +msgstr "Discord et Matrix affichent"
@@ -15363,6 +15540,9 @@ index 0000000..1422ffc
 +
 +msgid "Duplicate Role"
 +msgstr "Dupliquer le rôle"
++
++msgid "Duplicate channel"
++msgstr "Dupliquer le salon"
 +
 +msgid "Duration"
 +msgstr "Durée"
@@ -15415,6 +15595,12 @@ index 0000000..1422ffc
 +msgid "Edit bio"
 +msgstr "Modifier la biographie"
 +
++msgid "Edit category"
++msgstr "Modifier la catégorie"
++
++msgid "Edit channel"
++msgstr "Modifier le salon"
++
 +msgid "Edit display name"
 +msgstr "Modifier le nom d’affichage"
 +
@@ -15432,6 +15618,9 @@ index 0000000..1422ffc
 +
 +msgid "Edit server nickname"
 +msgstr "Modifier le pseudo du serveur"
++
++msgid "Edit server profile"
++msgstr "Modifier le profil du serveur"
 +
 +msgid "Edit your message"
 +msgstr "Modifier ton message"
@@ -15655,6 +15844,9 @@ index 0000000..1422ffc
 +msgid "Hide messages from people you blocked"
 +msgstr "Masquer les messages des comptes bloqués"
 +
++msgid "Hide muted channels"
++msgstr "Masquer les salons muets"
++
 +msgid "Hide post guidelines"
 +msgstr "Masquer les consignes"
 +
@@ -15766,6 +15958,9 @@ index 0000000..1422ffc
 +msgid "Invite link"
 +msgstr "Lien d’invitation"
 +
++msgid "Invite to channel"
++msgstr "Inviter dans le salon"
++
 +msgid "Invite to server"
 +msgstr "Inviter dans un serveur"
 +
@@ -15784,6 +15979,9 @@ index 0000000..1422ffc
 +msgid "Join a server"
 +msgstr "Rejoindre un serveur"
 +
++msgid "Join call"
++msgstr "Rejoindre l’appel"
++
 +msgid "Join calls deafened"
 +msgstr "Rejoindre les appels avec le casque coupé"
 +
@@ -15798,6 +15996,9 @@ index 0000000..1422ffc
 +
 +msgid "Join the call"
 +msgstr "Rejoindre l’appel"
++
++msgid "Join thread"
++msgstr "Rejoindre le fil"
 +
 +msgid "Join voice"
 +msgstr "Rejoindre le vocal"
@@ -15835,6 +16036,9 @@ index 0000000..1422ffc
 +msgid "Keyframes viewers asked for:"
 +msgstr "Images clés demandées"
 +
++msgid "Kick"
++msgstr "Expulser"
++
 +msgid "LIVE"
 +msgstr "EN DIRECT"
 +
@@ -15843,6 +16047,15 @@ index 0000000..1422ffc
 +
 +msgid "Last ping:"
 +msgstr "Dernière latence"
++
++msgid "Leave group"
++msgstr "Quitter le groupe"
++
++msgid "Leave server"
++msgstr "Quitter le serveur"
++
++msgid "Leave thread"
++msgstr "Quitter le fil"
 +
 +msgid "Leave voice"
 +msgstr "Quitter l’appel"
@@ -15937,6 +16150,9 @@ index 0000000..1422ffc
 +msgid "Mark "
 +msgstr "Marquer "
 +
++msgid "Mark as read"
++msgstr "Marquer comme lu"
++
 +msgid "Mark messages read on Discord"
 +msgstr "Synchroniser les messages lus avec Discord"
 +
@@ -15991,6 +16207,9 @@ index 0000000..1422ffc
 +msgid "Members will be restricted to sending one message and creating one thread per this interval, unless they have Bypass Slowmode, Manage Channel or Manage Messages permissions."
 +msgstr "Les membres peuvent envoyer un message et créer un fil par intervalle, sauf si leurs permissions les exemptent du mode lent."
 +
++msgid "Mention"
++msgstr "Mentionner"
++
 +msgid "Mention people you reply to"
 +msgstr "Mentionner l’auteur dans les réponses"
 +
@@ -16042,11 +16261,20 @@ index 0000000..1422ffc
 +msgid "Move Up"
 +msgstr "Monter"
 +
++msgid "Move to"
++msgstr "Déplacer vers"
++
 +msgid "Multi-Factor Authentication"
 +msgstr "Authentification multifacteur"
 +
 +msgid "Mute"
 +msgstr "Couper le micro"
++
++msgid "Mute Soundboard"
++msgstr "Couper la soundboard"
++
++msgid "Mute server"
++msgstr "Rendre le serveur muet"
 +
 +msgid "Muted"
 +msgstr "Micro coupé"
@@ -16390,6 +16618,12 @@ index 0000000..1422ffc
 +msgid "Picked in the system's dialog"
 +msgstr "Choisis dans la fenêtre du système"
 +
++msgid "Pin"
++msgstr "Épingler"
++
++msgid "Pin channel to top"
++msgstr "Épingler le salon en haut"
++
 +msgid "Pin message"
 +msgstr "Épingler le message"
 +
@@ -16470,6 +16704,9 @@ index 0000000..1422ffc
 +
 +msgid "Private Thread"
 +msgstr "Fil privé"
++
++msgid "Profile"
++msgstr "Profil"
 +
 +msgid "Prompt members to reply to welcome messages with a sticker."
 +msgstr "Proposer de répondre aux messages de bienvenue avec un autocollant."
@@ -16576,8 +16813,14 @@ index 0000000..1422ffc
 +msgid "Remove answer "
 +msgstr "Retirer la réponse "
 +
++msgid "Remove friend"
++msgstr "Retirer des amis"
++
 +msgid "Remove from Favorites"
 +msgstr "Retirer des favoris"
++
++msgid "Remove from channel list"
++msgstr "Retirer de la liste des salons"
 +
 +msgid "Remove member"
 +msgstr "Retirer le membre"
@@ -16587,6 +16830,9 @@ index 0000000..1422ffc
 +
 +msgid "Remove the emoji"
 +msgstr "Retirer l’émoji"
++
++msgid "Remove timeout"
++msgstr "Retirer l’exclusion temporaire"
 +
 +msgid "Remove tracking from links you send"
 +msgstr "Retirer le pistage des liens envoyés"
@@ -16858,6 +17104,12 @@ index 0000000..1422ffc
 +msgid "Server Profile"
 +msgstr "Profil du serveur"
 +
++msgid "Server deafen"
++msgstr "Rendre sourd sur le serveur"
++
++msgid "Server mute"
++msgstr "Rendre muet sur le serveur"
++
 +msgid "Server name"
 +msgstr "Nom du serveur"
 +
@@ -16893,6 +17145,9 @@ index 0000000..1422ffc
 +
 +msgid "Show Boost progress bar"
 +msgstr "Afficher la progression des boosts"
++
++msgid "Show all channels"
++msgstr "Afficher tous les salons"
 +
 +msgid "Show channels you can't access"
 +msgstr "Afficher les salons inaccessibles"
@@ -17038,6 +17293,9 @@ index 0000000..1422ffc
 +msgid "Start a search with @ for people, # for text channels, ! for voice channels or * for servers."
 +msgstr "Commence par @ pour les personnes, # pour les salons textuels, ! pour les salons vocaux ou * pour les serveurs."
 +
++msgid "Start call"
++msgstr "Démarrer un appel"
++
 +msgid "Start from"
 +msgstr "Modèle de départ"
 +
@@ -17073,6 +17331,9 @@ index 0000000..1422ffc
 +
 +msgid "Stop covering "
 +msgstr "Afficher "
++
++msgid "Stop ignoring"
++msgstr "Ne plus ignorer"
 +
 +msgid "Stop microphone test"
 +msgstr "Arrêter le test micro"
@@ -17263,6 +17524,9 @@ index 0000000..1422ffc
 +msgid "Thumbnail"
 +msgstr "Miniature"
 +
++msgid "Time out"
++msgstr "Exclure temporairement"
++
 +msgid "Timed out"
 +msgstr "Exclu temporairement"
 +
@@ -17329,6 +17593,9 @@ index 0000000..1422ffc
 +msgid "Undeafening"
 +msgstr "Casque activé"
 +
++msgid "Unfollow channel category"
++msgstr "Ne plus suivre la catégorie"
++
 +msgid "Unknown"
 +msgstr "Inconnu"
 +
@@ -17344,8 +17611,17 @@ index 0000000..1422ffc
 +msgid "Unmute"
 +msgstr "Activer le micro"
 +
++msgid "Unmute server"
++msgstr "Réactiver les notifications du serveur"
++
 +msgid "Unmuting"
 +msgstr "Micro activé"
++
++msgid "Unpin"
++msgstr "Désépingler"
++
++msgid "Unpin channel"
++msgstr "Désépingler le salon"
 +
 +msgid "Unpin message"
 +msgstr "Désépingler le message"
