@@ -195,7 +195,7 @@ async function logout() {
 const localAudio = new LocalAudioLibrary(() => file('LocalAudio'), ids => sendToUI('audio:available', ids));
 
 const discordPresence = new DiscordPresence();
-const defaultExternalApps: ExternalAppsSettings = { nowPlaying: false, discord: false, discordId: '1572317655073816628' };
+const defaultExternalApps: ExternalAppsSettings = { nowPlaying: false, discord: false, discordId: '1572330402562187304' };
 let externalApps = defaultExternalApps;
 let nowPlaying: NowPlaying | undefined;
 let pendingPlayback: ReturnType<typeof setTimeout> | undefined;
