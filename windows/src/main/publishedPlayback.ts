@@ -1,6 +1,7 @@
 export interface PublishedPlayback {
   track: { id: string; title: string; artist: string; album: string; artwork?: string } | null;
   playing: boolean;
+  loading?: boolean;
   position: number;
   duration: number;
 }
@@ -23,6 +24,7 @@ export function publishedPlayback(value: unknown): PublishedPlayback {
       album: string(state.track.album), artwork: artwork || undefined,
     },
     playing: state.playing === true && state.loading !== true,
+    loading: state.loading === true,
     position: duration ? Math.min(duration, seconds(state.time)) : seconds(state.time),
     duration,
   };

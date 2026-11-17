@@ -321,7 +321,13 @@ let mini: BrowserWindow | null = null;
 let miniLayout: 'compact' | 'artwork' = 'compact';
 const miniSizes = { compact: { width: 432, height: 176 }, artwork: { width: 384, height: 568 } };
 const miniSize = () => miniSizes[miniLayout];
-const saveMini = () => writeJSON('mini-player.json', { layout: miniLayout, sizes: miniSizes });
+let miniSaving = Promise.resolve();
+const saveMini = () => {
+  const snapshot = { layout: miniLayout, sizes: { compact: { ...miniSizes.compact }, artwork: { ...miniSizes.artwork } } };
+  const saving = miniSaving.then(() => writeJSON('mini-player.json', snapshot));
+  miniSaving = saving.catch(() => undefined);
+  return saving;
+};
 
 function resizeMini() {
   if (!mini || mini.isDestroyed()) return;
@@ -332,7 +338,7 @@ function resizeMini() {
   mini.setMinimumSize(360, miniLayout === 'artwork' ? 432 : 164);
   mini.setBounds({ width, height,
     x: Math.max(area.x, Math.min(bounds.x + bounds.width - width, area.x + area.width - width)),
-    y: Math.max(area.y, Math.min(bounds.y + bounds.height - height, area.y + area.height - height)),
+    y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - height)),
   });
 }
 

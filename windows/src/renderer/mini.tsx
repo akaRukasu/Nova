@@ -23,6 +23,8 @@ function MiniPlayer() {
   const [state, setState] = useState<MiniState>({});
   const [layout, setLayout] = useState<'compact' | 'artwork'>('compact');
   const [changingLayout, setChangingLayout] = useState(false);
+  const layoutRequest = useRef(false);
+  const [layoutError, setLayoutError] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const [dragging, setDragging] = useState<number | null>(null);
   const [brokenArtwork, setBrokenArtwork] = useState<string>();
@@ -63,11 +65,16 @@ function MiniPlayer() {
   const formatTime = (value: number) => `${Math.floor(Math.max(0, value) / 60)}:${String(Math.floor(Math.max(0, value)) % 60).padStart(2, '0')}`;
   const commitSeek = () => { if (dragging != null) send('seek', dragging); setDragging(null); };
   const changeLayout = async () => {
+    if (layoutRequest.current) return;
+    layoutRequest.current = true;
     setChangingLayout(true);
+    setLayoutError('');
     try {
       const next = await window.nova.invoke<'compact' | 'artwork'>('mini:layout', layout === 'compact' ? 'artwork' : 'compact');
       if (next) setLayout(next);
-    } finally { setChangingLayout(false); }
+    } catch {
+      setLayoutError('Impossible d’enregistrer la présentation. Réessaie.');
+    } finally { layoutRequest.current = false; setChangingLayout(false); }
   };
   return (
     <div className={`mini mini--${layout}`}>
@@ -82,6 +89,7 @@ function MiniPlayer() {
           <Icon name="expand" size={17} />
         </button>
       </div>
+      {layoutError && <div className="mini-layout-error" role="status">{layoutError}</div>}
       <div className="mini-content">
         {artwork && artwork !== brokenArtwork
           ? <img className="mini-art" src={artwork} alt="" onError={() => setBrokenArtwork(artwork)} />

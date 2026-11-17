@@ -62,7 +62,7 @@ export function ExternalApps() {
             <button className="button secondary" onClick={() => void window.nova.invoke('external:open-folder')
               .catch(() => notify('Impossible d’ouvrir le dossier PlayingNow.'))}>Dossier PlayingNow</button>
           </div>
-          <p className="muted small">Dans OBS, ajoute une source Navigateur de 400 × 100. Le widget reprend les couleurs de la pochette et affiche le temps écoulé et la durée du morceau. Pour un outil compatible Cider, indique 127.0.0.1 et le port {status.port}.</p>
+          <p className="muted small">Dans les propriétés de la source Navigateur OBS, choisis 400 × 100, 600 × 150 ou la taille de ton choix : le widget garde ses proportions et reste entièrement visible. Les titres longs défilent et les changements de morceau sont animés. Pour un outil compatible Cider, indique 127.0.0.1 et le port {status.port}.</p>
         </div>}
         {status.error && <p className="error small" role="status">{status.error}</p>}
       </div>

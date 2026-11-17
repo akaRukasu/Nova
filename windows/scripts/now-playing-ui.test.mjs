@@ -71,21 +71,23 @@ test('OBS uses the player’s resolved cover, follows its colours and shows elap
         void overlay.loadURL(url);
       }, status.obsURL);
       overlay = await opened;
+      await overlay.emulateMedia({ reducedMotion: 'no-preference' });
       overlay.on('pageerror', error => console.error('Overlay page error:', error.message));
       for (const [index, track] of tracks.entries()) {
         await page.evaluate(value => { window.novaPlayer.setVolume(0); window.novaPlayer.play([value]); }, track);
         await page.waitForFunction(() => window.novaPlayer.deck.currentTime > .25);
         await page.evaluate(() => window.novaPlayer.seek(69));
         await overlay.getByRole('heading', { name: track.title, exact: true }).waitFor({ timeout: 10000 });
+        if (index) await overlay.waitForFunction(() => document.querySelectorAll('.track').length === 2);
         await overlay.waitForFunction(isRed => {
-          const accent = document.querySelector('.track').style.getPropertyValue('--accent').trim().split(' ').map(Number);
+          const accent = document.querySelector('.track.active').style.getPropertyValue('--accent').trim().split(' ').map(Number);
           return accent.length === 3 && (isRed ? accent[0] > accent[2] * 2 : accent[2] > accent[0] * 2);
         }, !!index);
         assert.equal(await page.locator('.player-bar .now-art img').getAttribute('src'), 'nova-stream://cover/' + track.id.slice(6));
-        assert.equal(await overlay.getByLabel('Durée totale').textContent(), '3:20');
-        await overlay.waitForFunction(() => document.querySelector('.elapsed').textContent.startsWith('1:'));
-        assert.match(await overlay.getByLabel('Temps écoulé').textContent(), /^1:(09|1\d)$/);
-        const layout = await overlay.locator('.track').boundingBox();
+        assert.equal(await overlay.locator('.track.active').getByLabel('Durée totale').textContent(), '3:20');
+        await overlay.waitForFunction(() => document.querySelector('.track.active .elapsed').textContent.startsWith('1:'));
+        assert.match(await overlay.locator('.track.active').getByLabel('Temps écoulé').textContent(), /^1:(09|1\d)$/);
+        const layout = await overlay.locator('.track.active').boundingBox();
         assert.equal(layout.width, 388);
         assert.ok(layout.height <= 88);
         assert.equal(await overlay.evaluate(() => document.documentElement.scrollHeight), 100);
@@ -100,11 +102,44 @@ test('OBS uses the player’s resolved cover, follows its colours and shows elap
       const cover = Buffer.from(await (await fetch(origin + '/cover.png')).arrayBuffer());
       await new Promise(resolve => setTimeout(resolve, 100));
       assert.deepEqual(await readFile(path.join(data, 'Now Playing', 'cover.png')), cover);
+      for (const [width, height] of [[800, 200], [600, 100], [320, 160]]) {
+        await app.evaluate(({ BrowserWindow }, size) => {
+          BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('/obs')).setSize(...size);
+        }, [width, height]);
+        await overlay.waitForFunction(size => innerWidth === size[0] && innerHeight === size[1], [width, height]);
+        await overlay.waitForFunction(() => Math.abs(document.querySelector('.stage').getBoundingClientRect().width
+          - Math.min(innerWidth, innerHeight * 4)) < .1);
+        const frame = await overlay.locator('.track.active').boundingBox();
+        const art = await overlay.locator('.track.active img').boundingBox();
+        assert.ok(frame.x >= 0 && frame.y >= 0 && frame.x + frame.width <= width && frame.y + frame.height <= height,
+          'The complete widget must fit any OBS source viewport');
+        assert.ok(Math.abs(art.width - art.height) < .1, 'Resizing must preserve the cover aspect ratio');
+        assert.equal(await overlay.locator('.track.active').getByLabel('Durée totale').textContent(), '3:20');
+      }
       const miniOpened = app.waitForEvent('window');
       await page.getByRole('button', { name: 'Mini lecteur', exact: true }).click();
       const mini = await miniOpened;
       await mini.locator('.mini--compact').waitFor();
       await mini.getByText(tracks[1].title, { exact: true }).waitFor();
+      await app.evaluate(({ BrowserWindow }) => {
+        const floating = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('#mini'));
+        floating.setSize(360, 164); floating.setPosition(300, 180); floating.emit('resized');
+      });
+      await mini.waitForFunction(() => innerWidth === 360 && innerHeight === 164);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await app.evaluate(({ BrowserWindow }) => {
+          const floating = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('#mini'));
+          for (let resize = 0; resize < 12; resize++) floating.emit('resized');
+        });
+        const target = attempt % 2 ? 'Passer au mini lecteur compact' : 'Afficher la grande pochette';
+        await mini.getByRole('button', { name: target }).click();
+        await mini.locator(attempt % 2 ? '.mini--compact' : '.mini--artwork').waitFor();
+        assert.ok(await mini.locator('.mini-window-actions').evaluate(element => getComputedStyle(element).webkitAppRegion === 'no-drag'));
+      }
+      await app.evaluate(({ BrowserWindow }) => {
+        const floating = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().endsWith('#mini'));
+        floating.setSize(432, 176); floating.emit('resized');
+      });
       assert.equal(await mini.locator('.mini-controls button').count(), 7);
       await mini.screenshot({ path: path.join(os.tmpdir(), 'nova-mini-0430-compact.png') });
       await mini.getByRole('button', { name: 'Afficher la grande pochette' }).click();

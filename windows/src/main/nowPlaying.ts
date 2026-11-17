@@ -18,6 +18,7 @@ export class NowPlaying {
   private cover?: Buffer;
   private writing = Promise.resolve();
   private revision = 0;
+  private sequence = 0;
   private lastTimeEvent = 0;
   port?: number;
   error?: string;
@@ -75,6 +76,8 @@ export class NowPlaying {
   publish(snapshot: PublishedPlayback) {
     const previous = this.snapshot;
     this.snapshot = snapshot;
+    const recording = (track: PublishedPlayback['track']) => track && [track.id, track.title, track.artist, track.album];
+    if (JSON.stringify(recording(previous.track)) !== JSON.stringify(recording(snapshot.track))) this.sequence++;
     if (!this.server) return;
     const changedTrack = JSON.stringify(previous.track) !== JSON.stringify(snapshot.track);
     const changedState = previous.playing !== snapshot.playing;
@@ -136,7 +139,7 @@ export class NowPlaying {
         const { track, playing, position, duration } = this.snapshot;
         return send('application/json', JSON.stringify({
           track: track ? { title: track.title, artist: track.artist, album: track.album, artwork: this.coverURL() } : null,
-          playing, position, duration,
+          playing, loading: this.snapshot.loading === true, sequence: this.sequence, position, duration,
         }));
       }
       case '/cover.png': return send('image/png', this.cover ?? this.placeholder);
