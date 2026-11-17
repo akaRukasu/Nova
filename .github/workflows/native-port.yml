@@ -5,12 +5,18 @@ on:
     branches: [codex/native-port-yapfast, voxcord/native-device-suite]
     paths: ["native-port/**", ".github/workflows/native-port.yml"]
   workflow_dispatch:
+    inputs:
+      package_run:
+        description: Successful run of the same source patch to package again
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: ${{ !inputs.package_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 70
     env:
@@ -46,7 +52,7 @@ jobs:
         working-directory: engine
         run: |
           git apply --check ../nova/native-port/yapfast.patch
-          git apply ../nova/native-port/yapfast.patch
+          git apply --index ../nova/native-port/yapfast.patch
       - name: Prepare the Windows SDK and native renderer
         working-directory: engine
         run: |
@@ -82,6 +88,7 @@ jobs:
 
   installer:
     needs: build
+    if: ${{ always() && (needs.build.result == 'success' || inputs.package_run) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -89,10 +96,55 @@ jobs:
         with:
           name: Voxcord-portable-and-source
           path: package
+          run-id: ${{ inputs.package_run || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: Voxcord-media-tests
           path: media-tests
+          run-id: ${{ inputs.package_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify the reused build has the same source patch
+        if: inputs.package_run
+        shell: pwsh
+        env:
+          PACKAGE_RUN: ${{ inputs.package_run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:PACKAGE_RUN -notmatch '^\d+$') { throw "Invalid build run" }
+          $run = Invoke-RestMethod "https://api.github.com/repos/${{ github.repository }}/actions/runs/$env:PACKAGE_RUN" -Headers @{Authorization="Bearer $env:GH_TOKEN"; 'User-Agent'='Voxcord-packaging'}
+          if ($run.conclusion -ne 'success') { throw "The original build must have passed" }
+          git fetch origin $run.head_sha --depth=1
+          if ($LASTEXITCODE -ne 0) { throw "Could not verify the original source" }
+          $originalPatch = git rev-parse "$($run.head_sha):native-port/yapfast.patch"
+          $currentPatch = git rev-parse HEAD:native-port/yapfast.patch
+          if ($originalPatch -ne $currentPatch) { throw "The original executable uses different source" }
+      - uses: actions/checkout@v5
+        if: inputs.package_run
+        with:
+          repository: yapfast/yapfast
+          ref: 28174c7227e9b5a7a7dd222378086e88a62cbdb1
+          path: engine
+          persist-credentials: false
+      - name: Complete the corresponding source archive
+        if: inputs.package_run
+        shell: pwsh
+        env:
+          VOXCORD_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          git -C engine config core.autocrlf false
+          git -C engine checkout-index --all --force
+          git -C engine apply --index ../native-port/yapfast.patch
+          if ($LASTEXITCODE -ne 0) { throw "Could not prepare the corresponding source" }
+          python native-port/complete-source.py engine package
+          if ($LASTEXITCODE -ne 0) { throw "Could not complete the source package" }
+      - uses: actions/upload-artifact@v4
+        if: inputs.package_run
+        with:
+          name: Voxcord-portable-and-source
+          path: package/Voxcord-*.zip
+          compression-level: 0
+          if-no-files-found: error
       - name: Run native camera and screen regression tests
         shell: pwsh
         run: |
