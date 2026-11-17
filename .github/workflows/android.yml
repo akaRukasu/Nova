@@ -4,6 +4,13 @@ on:
   push:
     paths:
       - "windows/**"
+      - "Nova/Resources/nova-octave.js"
+      - ".github/workflows/android.yml"
+  pull_request:
+    branches: [etape-2]
+    paths:
+      - "windows/**"
+      - "Nova/Resources/nova-octave.js"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -16,6 +23,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'push' || github.ref_name != 'codex/nova-mobile-octave'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -79,6 +87,7 @@ jobs:
           ls -la ../Nova-Android.apk
 
       - name: Publier
+        if: github.event_name != 'pull_request' && github.ref_name != 'codex/nova-mobile-octave'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -90,3 +99,10 @@ jobs:
             --title "Nova pour Android et Android TV — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
             --notes "Commit $GITHUB_SHA. Nova-Android.apk : téléphone, tablette et Android TV (même fichier). Installation : ouvre le fichier sur l'appareil et autorise « Installer des applications inconnues » pour ton navigateur ou ton gestionnaire de fichiers. Sur Android TV : installe-le avec une app comme « Downloader » ou depuis une clé USB." \
             --prerelease
+
+      - name: Garder l’APK de validation
+        if: github.event_name == 'pull_request' || github.ref_name == 'codex/nova-mobile-octave'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nova-Android
+          path: windows/Nova-Android.apk

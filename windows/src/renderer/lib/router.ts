@@ -14,7 +14,10 @@ export type Route =
   | { name: 'songs' }
   | { name: 'liked' }
   | { name: 'history' }
+  | { name: 'wrapped' }
   | { name: 'albums' }
+  | { name: 'artists' }
+  | { name: 'libraryGroup'; kind: 'album' | 'artist'; id: string }
   | { name: 'recent' }
   | { name: 'youtubePlaylists' }
   | { name: 'mix'; kind: string }

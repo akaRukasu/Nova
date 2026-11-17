@@ -17,6 +17,11 @@ struct Release: Identifiable, Codable, Hashable {
     /// « album », « single », « ep »…
     var type: String
     var genre: String?
+    var sourceURL: URL?
+
+    var isUpcoming: Bool {
+        releaseDate.map { Calendar.current.startOfDay(for: $0) > Calendar.current.startOfDay(for: Date()) } ?? false
+    }
 
     var typeLabel: String {
         switch type.lowercased() {
@@ -60,28 +65,41 @@ enum ReleasesService {
                 artists.append((id, name))
             }
         }
-        artists = Array(artists.prefix(60))
+        artists = Array(artists.prefix(100))
         var releases = try await albums(of: artists, since: since)
+        releases += (try? await upcoming(artistNames: artists.map(\.1))) ?? []
         for index in releases.indices { releases[index].genre = genre.name }
-        return releases
+        return combine(releases)
     }
 
     /// Sorties d'artistes nommés (artistes suivis ou les plus écoutés).
     static func releases(artistNames: [String], since: Date) async throws -> [Release] {
         var artists: [(Int, String)] = []
-        try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
-            for name in artistNames.prefix(40) {
-                group.addTask {
-                    guard let query = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                          let search = try? await get("https://api.deezer.com/search/artist?q=\(query)&limit=1"),
-                          let artist = (search["data"] as? [[String: Any]])?.first,
-                          let id = artist["id"] as? Int else { return nil }
-                    return (id, artist["name"] as? String ?? name)
+        let names = Array(Set(artistNames)).sorted()
+        for offset in stride(from: 0, to: names.count, by: 6) {
+            try Task.checkCancellation()
+            try await withThrowingTaskGroup(of: (Int, String)?.self) { group in
+                for name in names[offset..<min(offset + 6, names.count)] {
+                    group.addTask {
+                        var url = URLComponents(string: "https://api.deezer.com/search/artist")!
+                        url.queryItems = [URLQueryItem(name: "q", value: name), URLQueryItem(name: "limit", value: "5")]
+                        guard let address = url.url?.absoluteString,
+                              let search = try? await get(address),
+                              let matches = search["data"] as? [[String: Any]],
+                              let artist = matches.first(where: { TrackMatcher.normalize($0["name"] as? String ?? "") == TrackMatcher.normalize(name) }),
+                              let id = artist["id"] as? Int else { return nil }
+                        return (id, artist["name"] as? String ?? name)
+                    }
                 }
+                for try await found in group { if let found { artists.append(found) } }
             }
-            for try await found in group { if let found { artists.append(found) } }
+            try await Task.sleep(for: .milliseconds(700))
         }
-        return try await albums(of: artists, since: since)
+        var seen = Set<Int>()
+        artists = artists.filter { seen.insert($0.0).inserted }
+        var releases = try await albums(of: artists, since: since)
+        releases += (try? await upcoming(artistNames: artists.map(\.1))) ?? []
+        return combine(releases)
     }
 
     /// Sorties d'un artiste depuis `since`.
@@ -97,10 +115,21 @@ enum ReleasesService {
             try await withThrowingTaskGroup(of: [Release].self) { group in
                 for (id, name) in chunk {
                     group.addTask {
-                        guard let json = try? await get("https://api.deezer.com/artist/\(id)/albums?limit=15") else { return [] }
-                        return ((json["data"] as? [[String: Any]]) ?? []).compactMap { item -> Release? in
+                        var albums: [[String: Any]] = []
+                        var address: String? = "https://api.deezer.com/artist/\(id)/albums?limit=100"
+                        var visited = Set<String>()
+                        while let page = address, visited.insert(page).inserted {
+                            try Task.checkCancellation()
+                            let json: [String: Any]
+                            do { json = try await get(page) }
+                            catch { try Task.checkCancellation(); break }
+                            albums += (json["data"] as? [[String: Any]]) ?? []
+                            let next = (json["next"] as? String).flatMap(URL.init(string:))
+                            address = next?.host == "api.deezer.com" ? next?.absoluteString.replacingOccurrences(of: "http://", with: "https://") : nil
+                        }
+                        return albums.compactMap { item -> Release? in
                             guard var release = release(from: item, genre: nil),
-                                  let date = release.releaseDate, date >= since, date <= Date().addingTimeInterval(86_400 * 7)
+                                  let date = release.releaseDate, date >= since
                             else { return nil }
                             release.artist = name
                             return release
@@ -112,7 +141,7 @@ enum ReleasesService {
                 }
             }
             // Limite de l'API : 50 requêtes par 5 secondes.
-            try? await Task.sleep(for: .milliseconds(700))
+            try await Task.sleep(for: .milliseconds(700))
         }
         return result.sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
     }
@@ -125,7 +154,56 @@ enum ReleasesService {
                        coverURL: cover.flatMap(URL.init(string:)),
                        releaseDate: (item["release_date"] as? String).flatMap(dateFormatter.date(from:)),
                        type: item["record_type"] as? String ?? "album",
-                       genre: genre)
+                       genre: genre, sourceURL: URL(string: "https://www.deezer.com/album/\(id)"))
+    }
+
+    static func combine(_ releases: [Release]) -> [Release] {
+        var seen = Set<String>()
+        return releases.filter { release in
+            let key = [TrackMatcher.normalize(release.title), TrackMatcher.normalize(release.artist), release.releaseDate.map { dateFormatter.string(from: $0) } ?? String(release.id)].joined(separator: "|")
+            return seen.insert(key).inserted
+        }.sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
+    }
+
+    static func upcoming(artistNames: [String]) async throws -> [Release] {
+        let names = Array(Set(artistNames)).sorted()
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        var result: [Release] = []
+        for offset in stride(from: 0, to: names.count, by: 40) {
+            let batch = Array(names[offset..<min(offset + 40, names.count)])
+            let quoted = batch.map { name in
+                "artist:\"" + name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+            }.joined(separator: " OR ")
+            let query = "firstreleasedate:[\(dateFormatter.string(from: tomorrow)) TO *] AND (\(quoted))"
+            var page = 0
+            var total = 1
+            while page < total {
+                var url = URLComponents(string: "https://musicbrainz.org/ws/2/release-group")!
+                url.queryItems = [URLQueryItem(name: "query", value: query), URLQueryItem(name: "fmt", value: "json"), URLQueryItem(name: "limit", value: "100"), URLQueryItem(name: "offset", value: String(page))]
+                let data = try await ReleaseAnnouncements.shared.get(url.url!)
+                let json = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+                let groups = json["release-groups"] as? [[String: Any]] ?? []
+                for group in groups {
+                    guard let id = group["id"] as? String, UUID(uuidString: id) != nil,
+                          let title = group["title"] as? String,
+                          let rawDate = group["first-release-date"] as? String, rawDate.count == 10,
+                          let date = dateFormatter.date(from: rawDate), dateFormatter.string(from: date) == rawDate,
+                          let credits = group["artist-credit"] as? [[String: Any]],
+                          let number = Int(id.replacingOccurrences(of: "-", with: "").prefix(15), radix: 16) else { continue }
+                    let artists = credits.compactMap { ($0["artist"] as? [String: Any])?["name"] as? String }
+                    guard artists.contains(where: { artist in batch.contains { TrackMatcher.normalize($0) == TrackMatcher.normalize(artist) } }) else { continue }
+                    let release = Release(id: -number, title: title, artist: artists.joined(separator: " & "),
+                        coverURL: URL(string: "https://coverartarchive.org/release-group/\(id)/front-500"), releaseDate: date,
+                        type: (group["primary-type"] as? String ?? "album").lowercased(),
+                        sourceURL: URL(string: "https://musicbrainz.org/release-group/\(id)"))
+                    if release.isUpcoming { result.append(release) }
+                }
+                guard !groups.isEmpty else { break }
+                page += groups.count
+                total = json["count"] as? Int ?? page
+            }
+        }
+        return combine(result)
     }
 
     /// Requête à l'API publique de Deezer, avec nouvel essai quand le quota est atteint.
@@ -144,7 +222,25 @@ enum ReleasesService {
     }
 }
 
-// MARK: - Concerts (API Discovery de Ticketmaster, avec la clé gratuite de l'utilisateur)
+private actor ReleaseAnnouncements {
+    static let shared = ReleaseAnnouncements()
+    private var nextRequest = Date.distantPast
+
+    func get(_ url: URL) async throws -> Data {
+        let slot = max(Date(), nextRequest)
+        nextRequest = slot.addingTimeInterval(1.1)
+        let delay = slot.timeIntervalSinceNow
+        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("Nova/0.4.17 (https://github.com/akaRukasu/Nova)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return data
+    }
+}
+
+// MARK: - Concerts (Ticketmaster et OpenAgenda)
 
 struct Concert: Identifiable, Codable, Hashable {
     let id: String
@@ -158,6 +254,7 @@ struct Concert: Identifiable, Codable, Hashable {
     var longitude: Double?
     var ticketURL: URL?
     var imageURL: URL?
+    var source: String = "Ticketmaster"
 
     var place: String { [venue, city].filter { !$0.isEmpty }.joined(separator: " · ") }
 }
@@ -193,6 +290,24 @@ enum ConcertsService {
     /// Concerts à venir d'un artiste, et/ou autour d'une position.
     static func search(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
                        countryCode: String?, city: String? = nil) async throws -> [Concert] {
+        let artist = artist.flatMap(cleanSearch)
+        let city = city.flatMap(cleanSearch)
+        async let agenda = try? openAgenda(artist: artist, latitude: latitude, longitude: longitude, radiusKm: radiusKm, country: countryCode, city: city)
+        let found: [Concert]
+        do {
+            found = apiKey == nil ? [] : try await discovery(artist: artist, latitude: latitude, longitude: longitude,
+                                                             radiusKm: radiusKm, countryCode: countryCode, city: city)
+        } catch {
+            if let extra = await agenda, !extra.isEmpty { return combine([], extra, artist: artist) }
+            throw error
+        }
+        let extra = await agenda
+        if apiKey == nil && extra == nil { throw URLError(.cannotLoadFromNetwork) }
+        return combine(found, extra ?? [], artist: artist)
+    }
+
+    private static func discovery(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
+                                  countryCode: String?, city: String?) async throws -> [Concert] {
         var query = [
             URLQueryItem(name: "classificationName", value: "music"),
             URLQueryItem(name: "sort", value: "date,asc"),
@@ -200,14 +315,6 @@ enum ConcertsService {
             // Sans « * », l'API ne renvoie que les événements en anglais (presque rien en France).
             URLQueryItem(name: "locale", value: "*"),
         ]
-        if let artist, !artist.isEmpty {
-            // On identifie l'artiste dans le catalogue pour éviter les homonymes et les correspondances floues.
-            if let attractionID = try await attraction(named: artist) {
-                query.append(URLQueryItem(name: "attractionId", value: attractionID))
-            } else {
-                query.append(URLQueryItem(name: "keyword", value: artist))
-            }
-        }
         if let latitude, let longitude {
             query.append(URLQueryItem(name: "geoPoint", value: geohash(latitude: latitude, longitude: longitude)))
             query.append(URLQueryItem(name: "radius", value: "\(radiusKm)"))
@@ -218,13 +325,35 @@ enum ConcertsService {
         } else if let countryCode, artist?.isEmpty ?? true {
             query.append(URLQueryItem(name: "countryCode", value: countryCode))
         }
-        let json = try await get("events.json", query: query)
-        let events = ((json["_embedded"] as? [String: Any])?["events"] as? [[String: Any]]) ?? []
-        return events.compactMap(concert(from:))
+        var variants = [query]
+        if let artist {
+            let attractionIDs = (try? await attractions(named: artist)) ?? []
+            variants = [query.filter { $0.name != "classificationName" } + [URLQueryItem(name: "keyword", value: artist)]]
+            variants += attractionIDs.map { query + [URLQueryItem(name: "attractionId", value: $0)] }
+        }
+        var result: [Concert] = []
+        var failure: Error?
+        var succeeded = false
+        for variant in variants {
+            for page in 0..<10 {
+                do {
+                    let json = try await get("events.json", query: variant + [URLQueryItem(name: "page", value: String(page))])
+                    succeeded = true
+                    let events = ((json["_embedded"] as? [String: Any])?["events"] as? [[String: Any]]) ?? []
+                    result += events.compactMap(concert(from:))
+                    let total = (json["page"] as? [String: Any])?["totalPages"] as? Int ?? 1
+                    if page + 1 >= total { break }
+                } catch {
+                    failure = error
+                    break
+                }
+            }
+        }
+        if !succeeded, let failure { throw failure }
+        return result
     }
 
-    /// Identifiant Ticketmaster de l'artiste dont le nom correspond le mieux.
-    private static func attraction(named name: String) async throws -> String? {
+    private static func attractions(named name: String) async throws -> [String] {
         let json = try await get("attractions.json", query: [
             URLQueryItem(name: "keyword", value: name),
             URLQueryItem(name: "classificationName", value: "music"),
@@ -232,11 +361,129 @@ enum ConcertsService {
             URLQueryItem(name: "size", value: "10"),
         ])
         let attractions = ((json["_embedded"] as? [String: Any])?["attractions"] as? [[String: Any]]) ?? []
-        let wanted = name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        let exact = attractions.first {
-            (($0["name"] as? String) ?? "").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) == wanted
+        let wanted = concertKey(name)
+        let exact = attractions.filter {
+            concertKey(($0["name"] as? String) ?? "") == wanted
         }
-        return (exact ?? attractions.first)?["id"] as? String
+        return Array(exact.compactMap { $0["id"] as? String }.prefix(2))
+    }
+
+    private static func cleanSearch(_ text: String) -> String? {
+        let value = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        return value.isEmpty ? nil : value
+    }
+
+    private static func concertKey(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
+    }
+
+    private static func safeLink(_ value: String?) -> URL? {
+        guard let value, let url = URL(string: value), url.scheme == "https", url.host != nil,
+              url.user == nil, url.password == nil else { return nil }
+        return url
+    }
+
+    private static func inlineJSON(_ value: Any?) -> Any? {
+        guard let text = value as? String else { return value }
+        return try? JSONSerialization.jsonObject(with: Data(text.utf8))
+    }
+
+    private static func openAgenda(artist: String?, latitude: Double?, longitude: Double?, radiusKm: Int,
+                                   country: String?, city: String?) async throws -> [Concert] {
+        let endpoint = "https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets/evenements-publics-openagenda/records"
+        func phrase(_ value: String) -> String {
+            "\"" + value.replacingOccurrences(of: #"["\\\p{Cc}]"#, with: " ", options: .regularExpression) + "\""
+        }
+        let today = dayFormatter.string(from: Date())
+        var clauses = ["lastdate_begin >= date'\(today)'"]
+        if let artist { clauses.append("search(title_fr, \(phrase(artist)))") }
+        else {
+            let genres = ["concert", "musique", "rock", "metal", "punk", "jazz", "rap", "hip-hop", "electro", "pop", "reggae", "soul"]
+            let filters = [#"search(title_fr, "concert")"#] + genres.map { "search(keywords_fr, \(phrase($0)))" }
+            clauses.append("(" + filters.joined(separator: " or ") + ")")
+        }
+        let location = latitude.flatMap { lat in longitude.map { (lat: lat, lon: $0) } }
+        let radius = max(1, min(500, radiusKm))
+        if let location, (-90...90).contains(location.lat), (-180...180).contains(location.lon) {
+            // OpenAgenda ne reçoit qu'un centre arrondi. Le rayon exact est appliqué sur l'appareil.
+            let lat = (location.lat * 10).rounded() / 10
+            let lon = (location.lon * 10).rounded() / 10
+            clauses.append("within_distance(location_coordinates, geom'POINT(\(lon) \(lat))', \(radius + 10) km)")
+        } else if let city { clauses.append("location_city = \(phrase(city))") }
+        else if artist == nil { clauses.append("location_countrycode = \(phrase(country ?? "FR"))") }
+
+        let select = "uid,title_fr,firstdate_begin,lastdate_begin,timings,status,location_name,location_city,location_countrycode,location_coordinates,registration,canonicalurl,image"
+        let iso = ISO8601DateFormatter()
+        var concerts: [Concert] = []
+        for offset in stride(from: 0, to: 1000, by: 100) {
+            var components = URLComponents(string: endpoint)!
+            components.queryItems = [.init(name: "where", value: clauses.joined(separator: " and ")),
+                .init(name: "select", value: select), .init(name: "order_by", value: "lastdate_begin asc"),
+                .init(name: "limit", value: "100"), .init(name: "offset", value: String(offset))]
+            let response: (Data, URLResponse)
+            do { response = try await URLSession.shared.data(for: URLRequest(url: components.url!, timeoutInterval: 10)) }
+            catch { if concerts.isEmpty { throw error }; break }
+            let code = (response.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if code != 200 {
+                if concerts.isEmpty { throw ImportError.http(code, "OpenAgenda") }
+                break
+            }
+            let page = (try JSONSerialization.jsonObject(with: response.0)) as? [String: Any] ?? [:]
+            let events = page["results"] as? [[String: Any]] ?? []
+            for event in events {
+                guard let uid = event["uid"] as? String, let name = event["title_fr"] as? String,
+                      !name.isEmpty, (inlineJSON(event["status"]) as? [String: Any])?["id"] as? Int != 3 else { continue }
+                let coordinates = event["location_coordinates"] as? [String: Double]
+                if let location, let lat = coordinates?["lat"], let lon = coordinates?["lon"] {
+                    let radians = Double.pi / 180
+                    let a = pow(sin((lat - location.lat) * radians / 2), 2)
+                        + cos(lat * radians) * cos(location.lat * radians) * pow(sin((lon - location.lon) * radians / 2), 2)
+                    if 12_742 * asin(sqrt(min(1, max(0, a)))) > Double(radius) { continue }
+                }
+                let registration = inlineJSON(event["registration"]) as? [[String: Any]] ?? []
+                let url = registration.compactMap { safeLink($0["value"] as? String) }.first ?? safeLink(event["canonicalurl"] as? String)
+                let timings = (inlineJSON(event["timings"]) as? [[String: Any]])?.compactMap { $0["begin"] as? String } ?? []
+                let dates = timings.isEmpty ? [event["firstdate_begin"], event["lastdate_begin"]].compactMap { $0 as? String } : timings
+                for value in Set(dates) {
+                    guard let date = iso.date(from: value), dayFormatter.string(from: date) >= today else { continue }
+                    concerts.append(Concert(id: "openagenda:" + uid + ":" + value, name: name, artists: artist.map { [$0] } ?? [name], date: date,
+                        venue: event["location_name"] as? String ?? "", city: event["location_city"] as? String ?? "",
+                        country: event["location_countrycode"] as? String ?? "", latitude: coordinates?["lat"], longitude: coordinates?["lon"],
+                        ticketURL: url, imageURL: safeLink(event["image"] as? String), source: "OpenAgenda"))
+                }
+            }
+            if events.isEmpty || offset + 100 >= (page["total_count"] as? Int ?? 0) { break }
+        }
+        return concerts
+    }
+
+    static func combine(_ ticketmaster: [Concert], _ openAgenda: [Concert], artist: String?) -> [Concert] {
+        let wanted = concertKey(artist ?? "")
+        var seen = Set<String>()
+        var results: [Concert] = []
+        for concert in ticketmaster + openAgenda where seen.insert(concert.id).inserted {
+            let city = concertKey(concert.city), venue = concertKey(concert.venue), name = concertKey(concert.name)
+            func withoutCity(_ title: String) -> String {
+                let suffix = " a " + city
+                return title.hasSuffix(suffix) ? String(title.dropLast(suffix.count)) : title
+            }
+            let duplicate = results.firstIndex { previous in
+                guard previous.source != concert.source, !city.isEmpty, concertKey(previous.city) == city,
+                      dayFormatter.string(from: previous.date) == dayFormatter.string(from: concert.date),
+                      abs(previous.date.timeIntervalSince(concert.date)) <= 90 * 60 else { return false }
+                let previousVenue = concertKey(previous.venue), previousName = concertKey(previous.name)
+                let sameVenue = !venue.isEmpty && !previousVenue.isEmpty && (venue.contains(previousVenue) || previousVenue.contains(venue)
+                    || venue.split(separator: " ").contains { $0.count > 4 && previousVenue.split(separator: " ").contains($0) })
+                return sameVenue && (withoutCity(name) == withoutCity(previousName)
+                    || (!wanted.isEmpty && name.contains(wanted) && previousName.contains(wanted)))
+            }
+            if let duplicate {
+                if results[duplicate].ticketURL == nil { results[duplicate].ticketURL = concert.ticketURL }
+                if results[duplicate].imageURL == nil { results[duplicate].imageURL = concert.imageURL }
+            } else { results.append(concert) }
+        }
+        return results.sorted { $0.date < $1.date }
     }
 
     private static func get(_ path: String, query: [URLQueryItem]) async throws -> [String: Any] {
@@ -288,13 +535,16 @@ enum ConcertsService {
 
     private static func concert(from event: [String: Any]) -> Concert? {
         guard let id = event["id"] as? String, let name = event["name"] as? String,
-              let start = (event["dates"] as? [String: Any])?["start"] as? [String: Any],
+              let dates = event["dates"] as? [String: Any],
+              (dates["status"] as? [String: Any])?["code"] as? String != "cancelled",
+              let start = dates["start"] as? [String: Any],
               let day = start["localDate"] as? String,
               var date = dayFormatter.date(from: day) else { return nil }
         if let time = start["localTime"] as? String {
             let parts = time.split(separator: ":").compactMap { Int($0) }
             if parts.count >= 2 { date = date.addingTimeInterval(TimeInterval(parts[0] * 3600 + parts[1] * 60)) }
         }
+        if let iso = start["dateTime"] as? String, let timestamp = ISO8601DateFormatter().date(from: iso) { date = timestamp }
         let embedded = event["_embedded"] as? [String: Any] ?? [:]
         let venue = (embedded["venues"] as? [[String: Any]])?.first ?? [:]
         let location = venue["location"] as? [String: Any] ?? [:]

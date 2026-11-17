@@ -83,7 +83,12 @@ final class AccountStore {
         revision += 1
         let store = WKWebsiteDataStore.default()
         let records = await store.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
-        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records)
+        let youtube = records.filter { record in
+            let name = record.displayName.lowercased()
+            return name == "youtube.com" || name.hasSuffix(".youtube.com")
+                || name == "google.com" || name.hasSuffix(".google.com")
+        }
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: youtube)
     }
 
     func refreshProfile() async {

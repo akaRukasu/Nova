@@ -1,0 +1,134 @@
+{
+  "format": "nova-library",
+  "version": 1,
+  "exportedAt": 1790000000000,
+  "library": {
+    "recents": [
+      {
+        "id": "pc-backup-song",
+        "title": "Titre sauvegardé",
+        "artist": "Artiste QA",
+        "album": "Album QA",
+        "duration": 120,
+        "artworkURL": "https://example.com/cover.jpg",
+        "artistID": "octave:7",
+        "albumID": "octave:8",
+        "youtubeID": "abcdefghijk"
+      }
+    ],
+    "liked": [
+      {
+        "id": "pc-backup-song",
+        "title": "Titre sauvegardé",
+        "artist": "Artiste QA",
+        "album": "Album QA",
+        "duration": 120,
+        "artworkURL": "https://example.com/cover.jpg",
+        "artistID": "octave:7",
+        "albumID": "octave:8",
+        "youtubeID": "abcdefghijk"
+      }
+    ],
+    "addedTracks": [
+      {
+        "id": "local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "title": "Audio local QA",
+        "artist": "Artiste QA",
+        "localFileName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.flac"
+      }
+    ],
+    "playlists": [
+      {
+        "id": "de90cba7-a93c-5291-8261-469a838aae66",
+        "name": "Restauration PC QA",
+        "tracks": [
+          {
+            "id": "pc-backup-song",
+            "title": "Titre sauvegardé",
+            "artist": "Artiste QA",
+            "album": "Album QA",
+            "duration": 120,
+            "artworkURL": "https://example.com/cover.jpg",
+            "artistID": "octave:7",
+            "albumID": "octave:8",
+            "youtubeID": "abcdefghijk"
+          },
+          {
+            "id": "local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "title": "Audio local QA",
+            "artist": "Artiste QA",
+            "localFileName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.flac"
+          }
+        ],
+        "createdAt": 1789999995000,
+        "lastPlayedAt": 1790000000000
+      }
+    ],
+    "saved": [
+      {
+        "id": "octave:7",
+        "kind": "artist",
+        "title": "Artiste QA",
+        "subtitle": ""
+      }
+    ],
+    "savedDates": {
+      "octave:7": 1789999995000
+    },
+    "searches": [
+      "Artiste QA"
+    ],
+    "smartPlaylists": [
+      {
+        "id": "d485487d-4cbe-598b-8f66-6a7703396493",
+        "name": "Favoris sauvegardés QA",
+        "matchAll": true,
+        "sort": "recentlyPlayed",
+        "rules": [
+          {
+            "id": "d1c7144f-29e5-53a1-9559-03d64cc8789e",
+            "field": "liked",
+            "op": "isTrue",
+            "text": "true",
+            "number": 0
+          }
+        ]
+      }
+    ],
+    "stats": {
+      "pc-backup-song": {
+        "playCount": 7,
+        "lastPlayed": 1790000000000,
+        "added": 1789999995000
+      }
+    },
+    "listeningYears": {
+      "2026": {
+        "pc-backup-song": {
+          "track": {
+            "id": "pc-backup-song",
+            "title": "Titre sauvegardé",
+            "artist": "Artiste QA",
+            "album": "Album QA",
+            "duration": 120,
+            "artworkURL": "https://example.com/cover.jpg",
+            "artistID": "octave:7",
+            "albumID": "octave:8",
+            "youtubeID": "abcdefghijk"
+          },
+          "plays": 7
+        }
+      }
+    },
+    "historyRemoved": {
+      "pc-removed": 1790000000000
+    }
+  },
+  "shared": [
+    {
+      "id": "shared-qa",
+      "title": "Partagée QA",
+      "isOwner": false
+    }
+  ]
+}

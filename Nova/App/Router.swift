@@ -8,15 +8,18 @@ enum AppTab: Hashable {
 /// Pages qu'on peut ouvrir dans un onglet.
 enum Route: Hashable {
     case collection(MusicCollection)
+    case trackCatalog(Track, CollectionKind)
     case more(title: String, link: BrowseLink)
     case userPlaylist(UUID)
     case liked
     case downloads
     case history
+    case wrapped
     case account(title: String, browseID: String)
     case libraryPlaylists
     case libraryArtists
     case libraryAlbums
+    case libraryGroup(CollectionKind, String)
     case songs
     case smartPlaylist(UUID)
     case discover
@@ -70,6 +73,8 @@ struct RouteView: View {
 
     var body: some View {
         switch route {
+        case .trackCatalog(let track, let kind):
+            TrackCatalogView(track: track, kind: kind)
         case .collection(let collection):
             if collection.id.hasPrefix("local:"), let id = UUID(uuidString: String(collection.id.dropFirst(6))) {
                 // Playlist Nova affichée dans une étagère.
@@ -89,6 +94,8 @@ struct RouteView: View {
             DownloadsView()
         case .history:
             HistoryView()
+        case .wrapped:
+            WrappedView()
         case .account(let title, let browseID):
             BrowseView(title: title, link: BrowseLink(browseID: browseID))
         case .libraryPlaylists:
@@ -97,6 +104,8 @@ struct RouteView: View {
             LibraryCollectionsView(kind: .artist)
         case .libraryAlbums:
             LibraryCollectionsView(kind: .album)
+        case .libraryGroup(let kind, let id):
+            LibraryGroupView(kind: kind, id: id)
         case .songs:
             SongsView()
         case .smartPlaylist(let id):

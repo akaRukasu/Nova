@@ -58,7 +58,7 @@ struct TrackRow: View {
                             .font(.caption2)
                             .foregroundStyle(Color.novaAccent)
                     }
-                    if library.isLiked(track.id) {
+                    if library.isLiked(track) {
                         Image(systemName: "heart.fill")
                             .font(.caption2)
                             .foregroundStyle(.pink)
@@ -348,7 +348,7 @@ struct TrackMenu: View {
             }
         }
         Section {
-            let liked = library.isLiked(track.id)
+            let liked = library.isLiked(track)
             Button(liked ? "Je n'aime plus" : "J'aime", systemImage: liked ? "heart.slash" : "heart") {
                 player.toggleLike(track)
             }
@@ -368,12 +368,8 @@ struct TrackMenu: View {
             }
         }
         Section {
-            if let artist = track.artistCollection {
-                Button("Voir l'artiste", systemImage: "music.mic") { router.open(.collection(artist)) }
-            }
-            if let album = track.albumCollection {
-                Button("Voir l'album", systemImage: "square.stack") { router.open(.collection(album)) }
-            }
+            Button("Voir l'artiste", systemImage: "music.mic") { router.open(.trackCatalog(track, .artist)) }
+            Button("Voir l'album", systemImage: "square.stack") { router.open(.trackCatalog(track, .album)) }
             ShareLink(item: track.shareURL) {
                 Label("Partager", systemImage: "square.and.arrow.up")
             }

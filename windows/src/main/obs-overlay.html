@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova · Now Playing</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; overflow: hidden; background: transparent; }
+    body { color: #fff; font: 500 12px "Segoe UI", system-ui, sans-serif; }
+    .stage { position: absolute; inset: 0 auto auto 0; width: 400px; height: 100px; transform-origin: top left; }
+    .track { --accent: 210 210 218; --tint: 44 44 50; --shade: 22 22 26;
+      position: absolute; inset: 0 auto auto 0;
+      width: calc(100% - 12px); max-width: 388px; margin: 6px; display: grid; align-items: center;
+      grid-template-columns: 64px minmax(0,1fr); gap: 12px; padding: 9px; border-radius: 16px;
+      border: 1px solid rgb(var(--accent) / .2);
+      background: linear-gradient(115deg, rgb(var(--tint)), rgb(var(--shade)) 90%);
+      transition: background 400ms ease, border-color 400ms ease; }
+    [hidden] { display: none !important; }
+    img { width: 64px; height: 64px; border-radius: 9px; object-fit: cover; background: #242429; }
+    .metadata { min-width: 0; }
+    h1, p { overflow: hidden; white-space: nowrap; margin: 0; }
+    h1 > span, p > span { display: inline-block; vertical-align: top; }
+    h1 { font-size: 17px; line-height: 20px; font-weight: 700; letter-spacing: -.02em; }
+    p { color: #ffffffbd; line-height: 16px; margin-top: 2px; }
+    .timeline { margin-top: 6px; }
+    .times { display: flex; justify-content: space-between; color: #ffffff9c; font-size: 10px;
+      line-height: 12px; font-variant-numeric: tabular-nums; }
+    .progress { height: 3px; margin-top: 4px; background: #ffffff1a; border-radius: 4px; overflow: hidden; }
+    .progress span { display: block; height: 100%; width: 0; background: rgb(var(--accent)); transition: width 240ms linear; }
+  </style>
+</head>
+<body>
+  <div class="stage"></div>
+  <template id="track-template"><article class="track active">
+    <img alt="">
+    <div class="metadata"><h1><span></span></h1><p><span></span></p><div class="timeline">
+      <div class="times"><span class="elapsed" aria-label="Temps écoulé">0:00</span><span class="duration" aria-label="Durée totale">0:00</span></div>
+      <div class="progress" aria-hidden="true"><span></span></div>
+    </div></div>
+  </article></template>
+  <script>
+    const stage = document.querySelector('.stage');
+    const template = document.querySelector('#track-template');
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    let active, loadingSince = 0;
+    const fit = () => {
+      stage.style.transform = `scale(${Math.min(innerWidth / 400, innerHeight / 100)})`;
+    };
+    addEventListener('resize', fit);
+    fit();
+    const formatTime = value => {
+      const seconds = Math.max(0, Math.floor(Number(value) || 0));
+      return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+    };
+    function makeCard(key) {
+      const card = template.content.firstElementChild.cloneNode(true);
+      const image = card.querySelector('img');
+      image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 24;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0, 24, 24);
+        const pixels = context.getImageData(0, 0, 24, 24).data;
+        const bins = new Map();
+        const average = [0, 0, 0];
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i + 3] < 128) continue;
+          const rgb = Array.from(pixels.slice(i, i + 3));
+          const key = rgb.map(channel => channel >> 4).join(',');
+          const bin = bins.get(key) || { count: 0, rgb: [0, 0, 0] };
+          rgb.forEach((channel, index) => { average[index] += channel; bin.rgb[index] += channel; });
+          bin.count++; count++; bins.set(key, bin);
+        }
+        if (!count) return;
+        let best = -1, accent = [200, 200, 208];
+        for (const bin of bins.values()) {
+          const rgb = bin.rgb.map(channel => channel / bin.count);
+          const max = Math.max(...rgb), min = Math.min(...rgb);
+          const score = bin.count * (.2 + (max - min) / Math.max(1, max)) * Math.min(1, max / 70);
+          if (score > best) { best = score; accent = rgb; }
+        }
+        if (Math.max(...accent) < 20) accent = [190, 190, 198];
+        const boost = Math.max(1, 210 / Math.max(1, ...accent));
+        card.style.setProperty('--accent', accent.map(channel => Math.round(Math.min(255, channel * boost))).join(' '));
+        card.style.setProperty('--tint', average.map(channel => Math.round(channel / count * .28 + 14)).join(' '));
+        card.style.setProperty('--shade', average.map(channel => Math.round(channel / count * .1 + 12)).join(' '));
+      } catch { /* Une pochette absente garde le thème neutre. */ }
+      };
+      return { key, card, image, title: card.querySelector('h1'), artist: card.querySelector('p'),
+        timeline: card.querySelector('.timeline'), elapsed: card.querySelector('.elapsed'),
+        total: card.querySelector('.duration'), bar: card.querySelector('.progress span') };
+    }
+    function textLine(element, text) {
+      const span = element.firstElementChild;
+      if (span.textContent === text) return;
+      span.textContent = text;
+      element.title = text;
+      span.getAnimations().forEach(animation => animation.cancel());
+      requestAnimationFrame(() => {
+        const overflow = span.scrollWidth - element.clientWidth;
+        if (overflow <= 2 || reducedMotion.matches || !span.isConnected) return;
+        span.animate([
+          { transform: 'translateX(0)', offset: 0 }, { transform: 'translateX(0)', offset: .12 },
+          { transform: `translateX(${-overflow}px)`, offset: .72 },
+          { transform: `translateX(${-overflow}px)`, offset: .86 }, { transform: 'translateX(0)', offset: 1 },
+        ], { duration: Math.max(6500, overflow / 25 * 1000 + 2400), iterations: Infinity });
+      });
+    }
+    function leave(view) {
+      if (!view) return;
+      const opacity = getComputedStyle(view.card).opacity;
+      view.card.getAnimations().forEach(animation => animation.cancel());
+      view.card.classList.remove('active');
+      view.card.inert = true;
+      view.card.setAttribute('aria-hidden', 'true');
+      if (reducedMotion.matches) return view.card.remove();
+      view.card.animate([{ opacity, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
+        { duration: 260, easing: 'ease-out', fill: 'forwards' }).finished
+        .catch(() => undefined).then(() => view.card.remove());
+    }
+    function hide() { leave(active); active = undefined; }
+    function update(track, sequence, position, duration) {
+      const key = sequence ?? JSON.stringify([track.title, track.artist, track.album]);
+      let entering = false;
+      if (active?.key !== key) {
+        const previous = active;
+        for (const card of stage.children) if (card !== previous?.card) card.remove();
+        active = makeCard(key);
+        stage.append(active.card);
+        leave(previous);
+        entering = true;
+      }
+      const view = active;
+      if (view.image.src !== track.artwork) view.image.src = track.artwork;
+      textLine(view.title, track.title);
+      textLine(view.artist, track.artist);
+      view.timeline.hidden = !duration;
+      view.elapsed.textContent = formatTime(Math.min(position, duration || position));
+      view.total.textContent = formatTime(duration);
+      view.bar.style.width = (duration ? Math.min(100, Math.max(0, position / duration * 100)) : 0) + '%';
+      if (entering && !reducedMotion.matches) view.card.animate([
+        { opacity: 0, transform: 'translateY(8px)', filter: 'blur(2px)' },
+        { opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' },
+      ], { duration: 440, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+    async function refresh() {
+      try {
+        const response = await fetch('/now-playing', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+        if (!response.ok) throw new Error();
+        const { track, playing, loading, sequence, position, duration } = await response.json();
+        if (track && playing) { loadingSince = 0; update(track, sequence, position, duration); }
+        else if (track && loading && active) {
+          loadingSince ||= Date.now();
+          if (Date.now() - loadingSince > 3000) hide();
+        } else { loadingSince = 0; hide(); }
+      } catch { hide(); }
+      setTimeout(refresh, 750);
+    }
+    refresh();
+  </script>
+</body>
+</html>

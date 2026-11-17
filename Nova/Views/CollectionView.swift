@@ -63,7 +63,7 @@ struct CollectionView: View {
                 Section {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { position, track in
                         TrackRowButton(track: track, number: isAlbum && sort.isManual ? position + 1 : nil) {
-                            player.play(tracks, startAt: position)
+                            player.play(tracks, startAt: position, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave)
                         }
                     }
                     if isLoadingMore {
@@ -133,29 +133,17 @@ struct CollectionView: View {
     }
 
     private func headerView(_ tracks: [Track]) -> some View {
-        VStack(spacing: 10) {
-            ArtworkThumb(urls: header.artworkURL.map { [$0] } ?? collection.artworkURLs, size: 230, corner: 18)
-                .shadow(color: .black.opacity(0.25), radius: 18, y: 10)
-                .padding(.bottom, 6)
-            Text(header.title)
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-            if let artist = header.artist, !artist.isEmpty {
-                Button(artist) {
-                    if let id = header.artistID {
-                        router.open(.collection(MusicCollection(id: id, kind: .artist, title: artist)))
-                    }
-                }
-                .font(.headline)
-                .foregroundStyle(Color.novaAccent)
-                .disabled(header.artistID == nil)
-            }
-            let details = [header.subtitle, header.secondSubtitle].filter { !$0.isEmpty }.joined(separator: " • ")
-            if !details.isEmpty {
-                Text(details)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+        VStack(spacing: 18) {
+            AlbumHeader(title: header.title.isEmpty ? collection.title : header.title,
+                        artist: header.artist ?? collection.subtitle,
+                        artwork: header.artworkURL.map { [$0] } ?? collection.artworkURLs,
+                        details: [isAlbum ? "ALBUM" : "PLAYLIST", header.secondSubtitle, tracks.isEmpty ? "" : summary].filter { !$0.isEmpty }.joined(separator: " · "),
+                        onArtist: header.artistID.map { id in { router.open(.collection(MusicCollection(id: id, kind: .artist, title: header.artist ?? "Artiste"))) } }) {
+                AlbumPlaybackActions(
+                    play: { player.play(tracks, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) },
+                    shuffle: { player.play(tracks, shuffled: true, source: collection.kind == .playlist ? PlaybackSettings.playlistSource : .octave) },
+                    isSaved: library.isSaved(collection.id), onSave: { library.toggleSaved(savable) })
+                .disabled(tracks.isEmpty)
             }
             if let description = header.description {
                 Text(description)
@@ -165,13 +153,6 @@ struct CollectionView: View {
                     .multilineTextAlignment(.center)
                     .onTapGesture { withAnimation { showFullDescription.toggle() } }
             }
-            PlayShuffleButtons {
-                player.play(tracks)
-            } shuffle: {
-                player.play(tracks, shuffled: true)
-            }
-            .disabled(tracks.isEmpty)
-            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
@@ -191,7 +172,10 @@ struct CollectionView: View {
             // Playlist partagée : d'autres y ajoutent des titres, elle est relue à chaque ouverture.
             let shared = SharedPlaylists.shared.entries.contains { "VL" + $0.id == id }
             try await loadCached("collection-\(id)", freshFor: shared ? 0 : 1800,
-                                 fetch: { try await client.collection(id) }) { loaded in
+                                 fetch: {
+                if OctaveCatalog.id(id) != nil { return try await OctaveCatalog.shared.collection(collection) }
+                return try await client.collection(id)
+            }) { loaded in
                 content = loaded
                 tracks = loaded.tracks
             }

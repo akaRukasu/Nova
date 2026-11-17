@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +89,7 @@ jobs:
           path: Nova.ipa
 
       - name: Publish the IPA as a release
+        if: github.ref_name != 'codex/nova-mobile-octave'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -4,8 +4,15 @@ import type {
   Collection, LibraryState, Settings, SharedPlaylist, SmartPlaylist, SmartRule, Track, UserPlaylist,
 } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
-import { api, on } from './api';
+import { preserveArtwork } from '../../shared/artwork';
+import { listeningHistory, mergeListeningHistory, type HistorySnapshot } from '../../shared/historySync';
+import { isOctaveId, octaveAudioDefaults, type PlaybackSource } from '../../shared/octave';
+import { api, isAndroid, on, supportsOctave } from './api';
 import { Store } from './store';
+import { cancelLibraryAddition, queueOctaveAddition, startOctaveLibrary, syncYouTubeAdditions } from './octaveLibrary';
+import type { OctaveLibraryImport } from '../../shared/octaveBackup';
+import { applyLibraryRemovals, mergeLibraryChanges, restoreLibraryTracks } from '../../shared/libraryChanges';
+import { localPlaybackSelector } from '../../shared/localPlayback';
 
 export const library = new Store<LibraryState>({
   recents: [], liked: [], playlists: [], smartPlaylists: [], saved: [], searches: [], stats: {}, settings: defaultSettings,
@@ -22,7 +29,11 @@ function persist() {
 }
 
 function update(change: (state: LibraryState) => LibraryState) {
-  library.set(change);
+  library.set(state => {
+    const next = change(state);
+    return next.added !== state.added || next.liked !== state.liked || next.playlists !== state.playlists || next.libraryChanges !== state.libraryChanges
+      ? applyLibraryRemovals(next) : next;
+  });
   persist();
 }
 
@@ -32,11 +43,78 @@ export function notify(message: string) {
 }
 
 export async function loadLibrary() {
-  library.set(sanitize(await api.loadLibrary()));
+  const [saved, ids] = await Promise.all([api.loadLibrary(), isAndroid ? [] :
+    window.nova.invoke<string[]>('audio:available').catch(() => [])]);
+  addLocalAudioIds(ids);
+  library.set(applyLibraryRemovals(sanitize(saved)));
   applyTheme(library.get().settings.theme);
   // Le compte YouTube (likes, playlists) arrive après coup : l'interface s'affiche sans l'attendre,
   // même si YouTube est lent ou ne répond pas.
   void refreshAccount();
+  startOctaveLibrary();
+  indexLibraryRecordings();
+  if (isAndroid) void import('./pcHistory').then(module => module.startPCHistory());
+}
+
+function indexLibraryRecordings(extra: Track[] = []) {
+  const state = library.get();
+  const tracks = [...new Map([...(state.added ?? []), ...state.liked, ...state.playlists.flatMap(playlist => playlist.tracks), ...extra]
+    .filter(track => isOctaveId(track.id) && track.albumId).map(track => [track.id, track])).values()];
+  void window.nova.invoke('octave:library-index', tracks, 'imported').catch(() => undefined);
+}
+
+function mergeOctaveTracks(existing: Track[], incoming: Track[]): Track[] {
+  const releaseKey = (track: Track) => [track.title, track.artist, track.album ?? '']
+    .map(value => value.normalize('NFKC').toLocaleLowerCase('fr').replace(/[^\p{L}\p{N}]/gu, '')).join('|');
+  const merged = [...existing];
+  const ids = new Set(existing.flatMap(track => track.youtubeId ? [track.id, track.youtubeId] : [track.id]));
+  const recordings = new Map<string, number[]>();
+  existing.forEach((track, index) => {
+    if (track.id.startsWith('local:') || !track.album) return;
+    const key = releaseKey(track);
+    const list = recordings.get(key) ?? [];
+    list.push(index);
+    recordings.set(key, list);
+  });
+  for (const track of incoming) {
+    if (ids.has(track.id) || (track.youtubeId && ids.has(track.youtubeId))) continue;
+    ids.add(track.id);
+    const same = track.album && (recordings.get(releaseKey(track)) ?? []).find(index => {
+      const candidate = merged[index];
+      return isOctaveId(candidate.id) !== isOctaveId(track.id) && Boolean(candidate.duration && track.duration
+        && Math.abs(candidate.duration - track.duration) <= 5);
+    });
+    if (typeof same === 'number') {
+      const previous = merged[same];
+      merged[same] = isOctaveId(previous.id) ? { ...previous, youtubeId: previous.youtubeId ?? track.id }
+        : preserveArtwork(previous, track);
+      continue;
+    }
+    merged.push(track);
+  }
+  return merged;
+}
+
+export function importOctaveLibrary(incoming: OctaveLibraryImport) {
+  const state = library.get();
+  const playlists = [...state.playlists];
+  const nameKey = (name: string) => name.trim().normalize('NFC').toLocaleLowerCase('fr');
+  const byName = new Map(playlists.map((playlist, index) => [nameKey(playlist.name), index]));
+  const now = Date.now();
+  for (const list of incoming.playlists) {
+    const index = byName.get(nameKey(list.name));
+    if (index !== undefined) {
+      const current = playlists[index];
+      playlists[index] = { ...current, tracks: mergeOctaveTracks(current.tracks, list.tracks) };
+    } else playlists.push({ id: crypto.randomUUID(), name: list.name, tracks: list.tracks, created: list.created ?? now });
+  }
+  const known = new Set(state.saved.map(collection => collection.id));
+  const liked = mergeOctaveTracks(state.liked, incoming.liked);
+  const saved = [...state.saved, ...incoming.saved.filter(collection => !known.has(collection.id) && known.add(collection.id))];
+  const references = [...incoming.liked, ...incoming.playlists.flatMap(list => list.tracks)];
+  update(current => ({ ...current, playlists, liked, saved }));
+  indexLibraryRecordings(references);
+  return { playlists: incoming.playlists.length, tracks: new Set(references.map(track => track.id)).size };
 }
 
 /** Bibliothèque relue au démarrage : un élément abîmé (synchronisation interrompue…) est écarté au lieu de tout bloquer. */
@@ -64,6 +142,7 @@ export async function refreshAccount() {
   const info = await api.account().catch(() => ({ signedIn: false }));
   account.set({ ...info, playlists: account.get().playlists });
   if (!info.signedIn) return;
+  void syncYouTubeAdditions();
   // Likes du compte (les mêmes que sur l'iPhone) fusionnés avec ceux de Nova.
   const [liked, playlists] = await Promise.all([
     api.accountLiked().catch(() => [] as Track[]),
@@ -72,8 +151,7 @@ export async function refreshAccount() {
   account.set((current) => ({ ...current, playlists }));
   if (liked.length) {
     update((state) => {
-      const known = new Set(liked.map((t) => t.id));
-      return { ...state, liked: [...liked, ...state.liked.filter((t) => !known.has(t.id))] };
+      return { ...state, liked: mergeOctaveTracks(state.liked, liked) };
     });
   }
 }
@@ -92,24 +170,64 @@ export function updateSettings(change: Partial<Settings>) {
   }
 }
 
+export function playbackOptions(settings: Settings, source?: PlaybackSource) {
+  const octave = { ...octaveAudioDefaults, ...settings.octaveAudio };
+  return source === 'octave'
+    ? { autoplay: octave.autoplay, automix: octave.transition === 'automix' }
+    : { autoplay: settings.autoplayRadio, automix: settings.transition === 'automix' };
+}
+
+export function togglePlaybackOption(option: 'autoplay' | 'automix', source?: PlaybackSource) {
+  const settings = library.get().settings;
+  const enabled = !playbackOptions(settings, source)[option];
+  if (source === 'octave') {
+    const octaveAudio = { ...octaveAudioDefaults, ...settings.octaveAudio };
+    if (option === 'autoplay') octaveAudio.autoplay = enabled;
+    else octaveAudio.transition = enabled ? 'automix' : 'off';
+    updateSettings({ octaveAudio });
+  } else {
+    updateSettings(option === 'autoplay' ? { autoplayRadio: enabled } : { transition: enabled ? 'automix' : 'off' });
+  }
+}
+
 // MARK: Écoutes
 
-export function recordPlay(track: Track) {
+export function recordPlay(track: Track, playedAt = Date.now(), playlistId?: string) {
   update((state) => {
-    const stats = { ...state.stats, [track.id]: { playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: Date.now() } };
-    if (!state.settings.recordHistory) return { ...state, stats };
+    track = preserveArtwork(track, state.recents.find(t => t.id === track.id) ?? state.liked.find(t => t.id === track.id));
+    const stats = { ...state.stats, [track.id]: { ...state.stats[track.id], playCount: (state.stats[track.id]?.playCount ?? 0) + 1, lastPlayed: playedAt } };
+    const playlists = playlistId ? state.playlists.map(p => p.id === playlistId && playedAt > (p.lastPlayedAt ?? 0)
+      ? { ...p, lastPlayedAt: playedAt } : p) : state.playlists;
+    if (!state.settings.recordHistory) return { ...state, stats, playlists };
     const recents = [track, ...state.recents.filter((t) => t.id !== track.id)].slice(0, 1000);
-    return { ...state, stats, recents };
+    const year = String(new Date(playedAt).getFullYear());
+    const recorded = state.listeningYears?.[year];
+    const entry = { track, plays: (recorded?.[track.id]?.plays ?? 0) + 1 };
+    const listeningYears = { ...state.listeningYears, [year]: { ...recorded, [track.id]: entry } };
+    return { ...state, stats, playlists, recents, listeningYears };
   });
 }
 
 export function removeRecent(id: string) {
-  update((state) => ({ ...state, recents: state.recents.filter((t) => t.id !== id) }));
+  update((state) => ({ ...state, recents: state.recents.filter((t) => t.id !== id),
+    historyChanges: { ...state.historyChanges, removed: { ...state.historyChanges?.removed, [id]: Date.now() } } }));
 }
 
 export function clearRecents() {
-  update((state) => ({ ...state, recents: [] }));
+  update((state) => ({ ...state, recents: [], listeningYears: {}, historyChanges: { clearedAt: Date.now() } }));
 }
+
+export function mergeHistory(snapshot: HistorySnapshot) {
+  const before = listeningHistory(library.get());
+  const merged = mergeListeningHistory(library.get(), snapshot);
+  const after = listeningHistory(merged);
+  if (JSON.stringify(before) !== JSON.stringify(after)) update(() => merged);
+  return after;
+}
+
+on('phone:history', (id: string, incoming: HistorySnapshot) => {
+  void window.nova.invoke('phone:history-result', id, mergeHistory(incoming));
+});
 
 export function addSearch(query: string) {
   const text = query.trim();
@@ -132,20 +250,57 @@ export function updateArtwork(id: string, artwork: string) {
     recents: patch(state.recents),
     liked: patch(state.liked),
     playlists: state.playlists.map((p) => (p.tracks.some((t) => t.id === id) ? { ...p, tracks: patch(p.tracks) } : p)),
+    listeningYears: Object.fromEntries(Object.entries(state.listeningYears ?? {}).map(([year, entries]) => [year,
+      Object.fromEntries(Object.entries(entries).map(([key, entry]) => [key, key === id
+        ? { ...entry, track: { ...entry.track, artwork, square: true } } : entry]))])),
   }));
 }
 
 // MARK: Likes
 
-export const isLiked = (id: string) => library.get().liked.some((t) => t.id === id);
+const sameTrackID = (a: Track, b: Track) => a.id === b.id || a.youtubeId === b.id || b.youtubeId === a.id
+  || (a.youtubeId != null && a.youtubeId === b.youtubeId);
+export const isLiked = (track: Track) => library.get().liked.some(candidate => sameTrackID(candidate, track));
+export const isInLibrary = (track: Track) => songs().some(candidate => sameTrackID(candidate, track));
+
+export function removeTrackFromLibrary(track: Track) {
+  const state = library.get();
+  const matching = [...(state.added ?? []), ...state.liked, ...state.playlists.flatMap(playlist => playlist.tracks)]
+    .filter(candidate => sameTrackID(candidate, track));
+  const removed = { ...state.libraryChanges?.removed };
+  for (const candidate of [...matching, track]) {
+    removed[candidate.id] = Date.now();
+    if (candidate.youtubeId) removed[candidate.youtubeId] = removed[candidate.id];
+    cancelLibraryAddition(candidate);
+  }
+  update(current => ({ ...current, libraryChanges: { ...current.libraryChanges, removed } }));
+  notify('« ' + track.title + ' » retiré de la bibliothèque');
+}
+
+export function addTrackToLibrary(track: Track) {
+  if (library.get().added?.some(candidate => sameTrackID(candidate, track))) return;
+  update(state => restoreLibraryTracks({ ...state, added: [track, ...(state.added ?? [])] }, [track]));
+  markAdded([track]);
+  queueOctaveAddition(track);
+  notify('« ' + track.title + ' » ajouté à la bibliothèque');
+}
 
 export function toggleLike(track: Track) {
-  const liked = !isLiked(track.id);
+  const matching = library.get().liked.filter(candidate => sameTrackID(candidate, track));
+  const liked = !matching.length;
+  if (liked && supportsOctave) queueOctaveAddition(track);
+  if (!liked) for (const candidate of matching) {
+    if (!library.get().added?.some(added => sameTrackID(added, candidate))) cancelLibraryAddition(candidate);
+  }
   update((state) => ({
     ...state,
-    liked: liked ? [track, ...state.liked] : state.liked.filter((t) => t.id !== track.id),
+    ...(liked ? restoreLibraryTracks(state, [track]) : {}),
+    liked: liked ? [track, ...state.liked] : state.liked.filter(candidate => !sameTrackID(candidate, track)),
   }));
-  if (account.get().signedIn) void api.setLike(track.id, liked).catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  if ((!liked || !supportsOctave) && !track.id.startsWith('local:') && account.get().signedIn) {
+    void api.youtubeRecording(track).then(recording => recording && api.setLike(recording.id, liked))
+      .catch(() => notify('Le like n’a pas pu être envoyé à YouTube.'));
+  }
   return liked;
 }
 
@@ -153,9 +308,9 @@ export function toggleLike(track: Track) {
 
 export function createPlaylist(name: string, tracks: Track[] = []): UserPlaylist {
   const playlist: UserPlaylist = { id: crypto.randomUUID(), name: name.trim() || 'Nouvelle playlist', tracks: dedupe(tracks), created: Date.now() };
-  update((state) => ({ ...state, playlists: [playlist, ...state.playlists] }));
+  update((state) => restoreLibraryTracks({ ...state, playlists: [playlist, ...state.playlists] }, tracks));
   // Compte connecté : la playlist existe aussi sur YouTube (et donc sur l'iPhone).
-  if (account.get().signedIn) {
+  if (account.get().signedIn && !playlist.tracks.some((track) => isOctaveId(track.id) || track.id.startsWith('local:'))) {
     void api.createAccountPlaylist(playlist.name, playlist.tracks.map((t) => t.id)).then((youtubeId) => {
       if (youtubeId) update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === playlist.id ? { ...p, youtubeId } : p)) }));
     }).catch(() => undefined);
@@ -166,7 +321,7 @@ export function createPlaylist(name: string, tracks: Track[] = []): UserPlaylist
 /** Même nom qu'une playlist existante : elle est remplacée (réimport sans doublon). */
 export function upsertPlaylist(name: string, tracks: Track[], youtubeId?: string): UserPlaylist {
   const existing = library.get().playlists.find((p) => p.name.toLowerCase() === name.toLowerCase());
-  const playlist: UserPlaylist = { id: existing?.id ?? crypto.randomUUID(), name, tracks: dedupe(tracks), created: Date.now(),
+  const playlist: UserPlaylist = { id: existing?.id ?? crypto.randomUUID(), name, tracks: dedupe(tracks), created: existing?.created ?? Date.now(),
     youtubeId: youtubeId ?? existing?.youtubeId };
   update((state) => ({ ...state, playlists: [playlist, ...state.playlists.filter((p) => p.id !== playlist.id)] }));
   return playlist;
@@ -180,18 +335,66 @@ export function importIntoPlaylist(name: string, tracks: Track[], youtubeId?: st
   const outcome = { added: incoming.length, alreadyPresent: 0, duplicates: tracks.length - incoming.length };
   if (!existing) {
     upsertPlaylist(name, incoming, youtubeId);
+    markAdded(incoming);
     return outcome;
   }
   const ids = new Set(existing.tracks.map((t) => t.id)), keys = new Set(existing.tracks.map(dedupeKey));
-  const fresh = incoming.filter((t) => !ids.has(t.id) && !keys.has(dedupeKey(t)));
+  const sourceKey = (track: Track) => track.youtubeId ?? track.id;
+  const existingById = new Map(existing.tracks.map(t => [sourceKey(t), t]));
+  const existingByName = new Map(existing.tracks.map(t => [dedupeKey(t), t]));
+  const fresh = incoming.filter((t) => !existingById.has(sourceKey(t)) && !ids.has(t.id) && !keys.has(dedupeKey(t)));
   outcome.added = fresh.length;
   outcome.alreadyPresent = incoming.length - fresh.length;
   // Ordre de la playlist d'origine, puis les titres qui n'étaient que dans Nova.
-  const incomingIds = new Set(incoming.map((t) => t.id)), incomingKeys = new Set(incoming.map(dedupeKey));
-  const ordered = incoming.map((t) => existing.tracks.find((e) => e.id === t.id || dedupeKey(e) === dedupeKey(t)) ?? t);
-  const kept = existing.tracks.filter((t) => !incomingIds.has(t.id) && !incomingKeys.has(dedupeKey(t)));
+  const replaced = new Set<string>();
+  const ordered = incoming.map(track => {
+    const previous = existingById.get(sourceKey(track)) ?? existingByName.get(dedupeKey(track));
+    if (previous) replaced.add(previous.id);
+    return !previous || isOctaveId(track.id) ? { ...track, artwork: track.artwork ?? previous?.artwork } : previous;
+  });
+  const kept = existing.tracks.filter(track => !replaced.has(track.id));
   upsertPlaylist(name, [...ordered, ...kept], youtubeId ?? existing.youtubeId);
+  markAdded(fresh);
   return outcome;
+}
+
+export async function verifyPlaylistOnOctave(id: string, progress: (processed: number, total: number) => void) {
+  const playlist = library.get().playlists.find(playlist => playlist.id === id);
+  if (!playlist) return 0;
+  const candidates = playlist.tracks.filter(track => !track.id.startsWith('local:') && (!isOctaveId(track.id) || !track.albumId));
+  const replacements = new Map<string, Track>();
+  let next = 0;
+  let processed = 0;
+  await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, async () => {
+    while (next < candidates.length) {
+      const track = candidates[next++];
+      const result = await api.octaveMatch(track).catch(() => undefined);
+      if (result && result.id !== track.id) replacements.set(track.id, {
+        ...result, artwork: result.artwork ?? track.artwork, youtubeId: track.youtubeId ?? (!isOctaveId(track.id) ? track.id : undefined),
+      });
+      progress(++processed, candidates.length);
+    }
+  }));
+  update(state => {
+    const stats = { ...state.stats };
+    for (const [id, track] of replacements) if (!stats[track.id] && stats[id]) stats[track.id] = stats[id];
+    return { ...state, stats, playlists: state.playlists.map(item => item.id === id
+      ? { ...item, tracks: dedupe(item.tracks.map(track => replacements.get(track.id) ?? track)) } : item) };
+  });
+  return replacements.size;
+}
+
+function markAdded(tracks: Track[]) {
+  if (!tracks.length) return;
+  const now = Date.now();
+  update(state => {
+    const stats = { ...state.stats };
+    for (const track of tracks) {
+      const previous = stats[track.id] ?? { playCount: 0 };
+      if (!previous.addedAt) stats[track.id] = { ...previous, addedAt: now };
+    }
+    return { ...state, stats };
+  });
 }
 
 export function addToPlaylist(id: string, tracks: Track[]) {
@@ -200,9 +403,10 @@ export function addToPlaylist(id: string, tracks: Track[]) {
   // Sans doublon : ni le même titre, ni une autre version du même morceau.
   const known = new Set(playlist.tracks.map((t) => t.id)), keys = new Set(playlist.tracks.map(dedupeKey));
   const fresh = tracks.filter((t) => !known.has(t.id) && !keys.has(dedupeKey(t)) && !!known.add(t.id) && !!keys.add(dedupeKey(t)));
-  update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...fresh] } : p)) }));
-  if (playlist.youtubeId && fresh.length && account.get().signedIn) {
-    void api.addToAccountPlaylist(playlist.youtubeId, fresh.map((t) => t.id)).catch(() => undefined);
+  update((state) => restoreLibraryTracks({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, tracks: [...p.tracks, ...fresh] } : p)) }, fresh));
+  const youtubeTracks = fresh.filter((track) => !isOctaveId(track.id) && !track.id.startsWith('local:'));
+  if (playlist.youtubeId && youtubeTracks.length && account.get().signedIn) {
+    void api.addToAccountPlaylist(playlist.youtubeId, youtubeTracks.map((t) => t.id)).catch(() => undefined);
   }
   notify(fresh.length ? `Ajouté à « ${playlist.name} »` : 'Déjà dans la playlist');
 }
@@ -213,6 +417,17 @@ export function removeFromPlaylist(id: string, trackId: string) {
 
 export function renamePlaylist(id: string, name: string) {
   update((state) => ({ ...state, playlists: state.playlists.map((p) => (p.id === id ? { ...p, name } : p)) }));
+}
+
+export function movePlaylist(id: string, destination: number) {
+  update((state) => {
+    const from = state.playlists.findIndex(playlist => playlist.id === id);
+    if (from < 0 || destination < 0 || destination >= state.playlists.length || from === destination) return state;
+    const playlists = [...state.playlists];
+    const [playlist] = playlists.splice(from, 1);
+    playlists.splice(destination, 0, playlist);
+    return { ...state, playlists };
+  });
 }
 
 export function deletePlaylist(id: string) {
@@ -270,8 +485,10 @@ export function removeShared(id: string) {
 }
 
 export async function addToShared(entry: SharedPlaylist, tracks: Track[]) {
+  const ids = tracks.filter((track) => !isOctaveId(track.id) && !track.id.startsWith('local:')).map((track) => track.id);
+  if (!ids.length) return;
   try {
-    await api.addToAccountPlaylist(entry.id, tracks.map((t) => t.id));
+    await api.addToAccountPlaylist(entry.id, ids);
     notify(`Ajouté à « ${entry.title} » (visible chez tous les participants)`);
   } catch {
     notify('Ajout impossible : la collaboration est-elle activée sur cette playlist ?');
@@ -286,7 +503,9 @@ export const isSaved = (id: string) => library.get().saved.some((c) => c.id === 
 
 export function toggleSaved(collection: Collection) {
   const saved = !isSaved(collection.id);
-  update((state) => ({ ...state, saved: saved ? [collection, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
+  if (saved && collection.kind === 'album') queueOctaveAddition(undefined, collection);
+  if (!saved && collection.kind === 'album') cancelLibraryAddition(undefined, collection);
+  update((state) => ({ ...state, saved: saved ? [{ ...collection, addedAt: Date.now() }, ...state.saved] : state.saved.filter((c) => c.id !== collection.id) }));
   notify(saved ? `« ${collection.title} » ajouté à la bibliothèque` : `« ${collection.title} » retiré de la bibliothèque`);
 }
 
@@ -359,7 +578,9 @@ function phoneTrack(raw: any): Track | undefined {
   return {
     id: raw.id, title: raw.title, artist: raw.artist ?? '', album: raw.album ?? undefined, duration: raw.duration ?? undefined,
     artwork, artistId: raw.artistID ?? raw.artistId ?? undefined, albumId: raw.albumID ?? raw.albumId ?? undefined,
-    square: /googleusercontent|ggpht/.test(artwork ?? ''),
+    youtubeId: raw.youtubeID ?? raw.youtubeId ?? undefined,
+    localFileName: raw.localFileName ?? undefined,
+    square: raw.id.startsWith('octave:') || /googleusercontent|ggpht/.test(artwork ?? ''),
   };
 }
 
@@ -370,12 +591,14 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
   const phonePlaylists: UserPlaylist[] = (raw?.playlists ?? []).map((p: any) => ({
     id: crypto.randomUUID(), name: String(p.name ?? 'Playlist'), tracks: dedupe(phoneTracks(p.tracks)),
     created: phoneDate(p.createdAt) ?? Date.now(),
+    lastPlayedAt: phoneDate(p.lastPlayedAt),
   })).filter((p: UserPlaylist) => p.tracks.length);
   const liked = phoneTracks(raw?.liked);
   const recents = phoneTracks(raw?.recents);
   const added = phoneTracks(raw?.addedTracks);
   const saved: Collection[] = (raw?.saved ?? []).filter((c: any) => c?.id && c.title).map((c: any) => ({
     id: c.id, kind: c.kind ?? 'playlist', title: c.title, subtitle: c.subtitle || undefined, artwork: c.artworkURL ?? c.artwork ?? undefined,
+    addedAt: phoneDate(raw?.savedDates?.[c.id]),
   }));
   update((state) => {
     const stats = { ...state.stats };
@@ -384,25 +607,36 @@ export function mergeFromPhone(raw: any): { playlists: number; tracks: number } 
       stats[id] = {
         playCount: Math.max(current?.playCount ?? 0, value?.playCount ?? 0),
         lastPlayed: Math.max(current?.lastPlayed ?? 0, phoneDate(value?.lastPlayed) ?? 0) || undefined,
+        addedAt: current?.addedAt ?? phoneDate(value?.added),
       };
     }
     // Playlists du même nom remplacées par celles de l'iPhone (le lien avec YouTube est gardé).
     const byName = new Map(state.playlists.map((p) => [p.name.toLowerCase(), p]));
     const merged = phonePlaylists.map((p) => {
       const existing = byName.get(p.name.toLowerCase());
-      return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId } : p;
+    return existing ? { ...p, id: existing.id, youtubeId: existing.youtubeId, tracks: dedupe([...p.tracks, ...existing.tracks]),
+        lastPlayedAt: Math.max(p.lastPlayedAt ?? 0, existing.lastPlayedAt ?? 0) || undefined } : p;
     });
     const replaced = new Set(merged.map((p) => p.id));
-    const lastPlayed = (t: Track) => stats[t.id]?.lastPlayed ?? 0;
-    const history = [...recents, ...state.recents].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i)
-      .sort((a, b) => lastPlayed(b) - lastPlayed(a)).slice(0, 1000);
+    const history = mergeListeningHistory({ ...state, stats }, { version: 1,
+      entries: recents.map(track => ({ track, playedAt: phoneDate(raw?.stats?.[track.id]?.lastPlayed) ?? 0 })),
+      clearedAt: raw?.historyClearedAt, removed: raw?.historyRemoved,
+    });
+    const listeningYears = structuredClone(state.listeningYears ?? {});
+    for (const [year, entries] of Object.entries<any>(raw?.listeningYears ?? {})) {
+      const current = listeningYears[year] ??= {};
+      for (const [id, value] of Object.entries<any>(entries)) {
+        const track = phoneTrack(value?.track);
+        if (track && value?.plays > (current[id]?.plays ?? 0)) current[id] = { track, plays: value.plays };
+      }
+    }
     const known = new Set(state.saved.map((c) => c.id));
     return {
-      ...state,
-      stats,
+      ...history,
+      libraryChanges: mergeLibraryChanges(state.libraryChanges, raw?.libraryRemoved, raw?.libraryRestored),
+      listeningYears,
       liked: [...liked, ...state.liked].filter((t, i, all) => all.findIndex((o) => o.id === t.id) === i),
       playlists: [...merged, ...state.playlists.filter((p) => !replaced.has(p.id))],
-      recents: history,
       added: dedupe([...added, ...(state.added ?? [])]),
       saved: [...state.saved, ...saved.filter((c) => !known.has(c.id))],
       searches: [...state.searches, ...((raw?.searches ?? []) as string[]).filter((s) => !state.searches.includes(s))].slice(0, 30),
@@ -433,6 +667,7 @@ on('phone:library', (raw: unknown, phone?: string) => {
 // MARK: Morceaux (sans doublons)
 
 export function dedupeKey(track: Track) {
+  if (track.id.startsWith('local:')) return track.id;
   const clean = (v: string) => v.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
   return `${clean(track.title)}|${clean(track.artist.split(/,|&| et /)[0] ?? '')}`;
@@ -457,6 +692,21 @@ export function songs(state = library.get()): Track[] {
     .sort((a, b) => a.title.localeCompare(b.title, 'fr'));
   songsCache = { source: state.playlists, liked: state.liked, added: state.added, songs: result };
   return result;
+}
+
+const localAudioIds = new Set<string>();
+let localPlaybackCache: { songs: Track[]; pick: (track: Track) => Track } | undefined;
+function addLocalAudioIds(ids: string[]) {
+  for (const id of ids) localAudioIds.add(id);
+  localPlaybackCache = undefined;
+}
+if (!isAndroid) on('audio:available', addLocalAudioIds);
+
+export function preferLocalAudio(track: Track): Track {
+  if (isAndroid || !localAudioIds.size || track.id.startsWith('local:')) return track;
+  const tracks = songs();
+  if (localPlaybackCache?.songs !== tracks) localPlaybackCache = { songs: tracks, pick: localPlaybackSelector(tracks, localAudioIds) };
+  return localPlaybackCache.pick(track);
 }
 
 export function shuffle<T>(items: T[]): T[] {

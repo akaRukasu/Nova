@@ -81,6 +81,18 @@ function artistsText(artists?: any[], fallback?: string) {
   return fallback ?? '';
 }
 
+function plainSongCredits(node: Node): { artist?: string; album?: string } {
+  if (node.item_type !== 'song') return {};
+  // Sur mobile, YouTube renvoie aussi « Artiste • Album • durée » sans aucun lien.
+  for (const column of (node.flex_columns ?? []).slice(1)) {
+    const parts = text(column.title).split(/\s*[•·]\s*/).map(part => part.trim()).filter(Boolean);
+    if (parts.length < 2 || !/^\d+(?::[0-5]\d)+$/.test(parts.at(-1)!)) continue;
+    const credits = parts.slice(0, -1).filter(part => !/^(?:titre|song|video|vidéo|single|album|ep)$/i.test(part));
+    if (credits.length && !/\b(?:views|lectures|streams)\b/i.test(credits[0])) return {artist: credits[0], album: credits[1]};
+  }
+  return {};
+}
+
 const palette = ['#e5484d', '#f76b15', '#ffb224', '#46a758', '#12a594', '#0090ff', '#6e56cf', '#d6409f', '#8e4ec6', '#3e63dd'];
 function colorFor(title: string) {
   let hash = 0;
@@ -95,13 +107,23 @@ export function trackFrom(node: Node): Track | undefined {
       const id = node.id ?? payload(node.endpoint).videoId ?? payload(node.overlay?.content?.endpoint).videoId;
       if (!id || !node.title) return undefined;
       const art = artwork(node.thumbnail ?? node.thumbnails);
+      const plain = plainSongCredits(node);
+      // Les réponses mobiles déplacent parfois les crédits vers la troisième colonne.
+      const runs = (node.flex_columns ?? []).slice(1).flatMap((column: Node) => column.title?.runs ?? []);
+      const linkedArtists = runs.filter((run: Node) => /^UC/.test(payload(run.endpoint).browseId ?? ''));
+      const performers = node.artists?.length ? node.artists : node.authors?.length ? node.authors
+        : linkedArtists.map((run: Node) => ({ name: run.text, channel_id: payload(run.endpoint).browseId }));
+      const album = node.album ?? (() => {
+        const run = runs.find((run: Node) => /^MPR/.test(payload(run.endpoint).browseId ?? ''));
+        return run ? { name: run.text, id: payload(run.endpoint).browseId } : undefined;
+      })();
       return {
         id,
         title: node.title,
-        artist: artistsText(node.artists ?? node.authors, node.author?.name),
-        album: node.album?.name,
-        albumId: node.album?.id,
-        artistId: (node.artists ?? node.authors)?.[0]?.channel_id,
+        artist: artistsText(performers, node.author?.name ?? plain.artist),
+        album: album?.name ?? plain.album,
+        albumId: album?.id,
+        artistId: performers?.[0]?.channel_id,
         duration: node.duration?.seconds || undefined,
         artwork: art,
         square: isSquare(art),
@@ -486,6 +508,14 @@ export async function stream(videoId: string, highQuality: boolean): Promise<Str
 
 // MARK: - Compte
 
+export async function addHistory(videoId: string): Promise<void> {
+  const client = await yt();
+  if (!client.session.logged_in) return;
+  const info = await client.music.getInfo(videoId);
+  const response = await info.addToWatchHistory();
+  if (!response.ok) throw new Error(`YouTube Music a refusé l’historique (${response.status}).`);
+}
+
 export async function accountInfo(): Promise<{ name?: string; photo?: string }> {
   const client = await yt();
   const info: any = await client.account.getInfo();
@@ -514,6 +544,21 @@ export async function setLike(videoId: string, liked: boolean) {
   const client = await yt();
   if (liked) await client.interact.like(videoId);
   else await client.interact.removeRating(videoId);
+}
+
+export async function saveAlbum(target: Collection) {
+  if (target.kind !== 'album' || !/^MPREb[\w-]+$/.test(target.id)) throw new Error('Album YouTube Music invalide.');
+  const client = await yt();
+  if (!client.session.logged_in) throw new Error('Connecte YouTube Music pour enregistrer cet album.');
+  const album: Node = await client.music.getAlbum(target.id);
+  const bookmark = album.header?.buttons?.find((button: Node) => button.type === 'ToggleButton'
+    && ['BOOKMARK_BORDER', 'BOOKMARK', 'LIBRARY_ADD'].includes(button.icon_type));
+  if (bookmark?.is_toggled) return;
+  if (!bookmark?.endpoint || !['feedbackEndpoint', 'likeEndpoint'].includes(bookmark.endpoint.name)) {
+    throw new Error('YouTube Music ne propose pas l’ajout de cet album à la bibliothèque.');
+  }
+  const response = await bookmark.endpoint.call(client.actions);
+  if (!response?.success) throw new Error('YouTube Music n’a pas confirmé l’ajout de l’album.');
 }
 
 export async function createAccountPlaylist(name: string, videoIds: string[], privacy = 'PRIVATE'): Promise<string | undefined> {

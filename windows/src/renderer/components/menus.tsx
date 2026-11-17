@@ -1,14 +1,16 @@
 // Menu contextuel (clic droit ou « … »), boîte de saisie et notifications.
 import { useEffect, useRef, useState } from 'react';
 import type { Collection, Track } from '../../shared/types';
+import { isOctaveId, octaveCollectionUrl, octaveTrackUrl } from '../../shared/octave';
 import { addToJam, jam } from '../lib/jam';
 import {
-  addToPlaylist, addToShared, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
+  addToPlaylist, addToShared, addTrackToLibrary, createPlaylist, isInLibrary, isLiked, isSaved, library, notify, removeTrackFromLibrary, toast, toggleLike, toggleSaved,
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { Store, useStore } from '../lib/store';
 import { Icon } from './icons';
+import { openTrackCatalog } from '../lib/catalogNavigation';
 
 export interface MenuItem {
   label: string;
@@ -46,17 +48,23 @@ export function playlistSubmenu(tracks: Track[]): MenuItem[] {
       if (name) { createPlaylist(name, tracks); notify(`Playlist « ${name} » créée`); }
     } },
     ...library.get().playlists.slice(0, 30).map((p) => ({ label: p.name, action: () => addToPlaylist(p.id, tracks) })),
-    ...((library.get().shared ?? []).length ? [{ label: '', separator: true }] : []),
-    ...(library.get().shared ?? []).map((s) => ({ label: `${s.title} (partagée)`, icon: 'jam', action: () => void addToShared(s, tracks) })),
+    ...(tracks.some((track) => !isOctaveId(track.id)) && (library.get().shared ?? []).length ? [
+      { label: '', separator: true },
+      ...(library.get().shared ?? []).map((s) => ({ label: `${s.title} (partagée)`, icon: 'jam', action: () => void addToShared(s, tracks) })),
+    ] : []),
   ];
 }
 
 export function trackMenu(track: Track, extra: MenuItem[] = []): MenuItem[] {
-  const liked = isLiked(track.id);
+  const liked = isLiked(track);
   const items: MenuItem[] = [];
-  if (jam.get().role !== 'none') {
+  const octave = isOctaveId(track.id);
+  if (!octave && jam.get().role !== 'none') {
     items.push({ label: 'Ajouter au Jam', icon: 'jam', action: () => addToJam(track) },
       { label: 'Au Jam, juste après', icon: 'jam', action: () => addToJam(track, true) }, { label: '', separator: true });
+  }
+  if (octave) {
+    items.push({ label: 'Lire dans Octave', icon: 'play', action: () => player.play([track]) });
   }
   items.push(
     { label: 'Lire ensuite', icon: 'list', action: () => { player.playNext(track); notify('Lu juste après'); } },
@@ -64,23 +72,30 @@ export function trackMenu(track: Track, extra: MenuItem[] = []): MenuItem[] {
     { label: 'Lancer la radio', icon: 'radio', action: () => player.startRadio(track) },
     { label: '', separator: true },
     { label: liked ? 'Je n’aime plus' : 'J’aime', icon: 'heart', action: () => toggleLike(track) },
+    isInLibrary(track)
+      ? { label: 'Retirer de la bibliothèque', icon: 'trash', danger: true, action: () => removeTrackFromLibrary(track) }
+      : { label: 'Ajouter à la bibliothèque', icon: 'plus', action: () => addTrackToLibrary(track) },
     { label: 'Ajouter à une playlist', icon: 'plus', submenu: playlistSubmenu([track]) },
   );
-  if (track.artistId || track.albumId) items.push({ label: '', separator: true });
-  if (track.artistId) items.push({ label: 'Voir l’artiste', icon: 'mic', action: () => open({ name: 'artist', id: track.artistId!, title: track.artist }) });
-  if (track.albumId) items.push({ label: 'Voir l’album', icon: 'album', action: () => open({ name: 'collection', collection: { id: track.albumId!, kind: 'album', title: track.album ?? '' } }) });
-  items.push({ label: 'Copier le lien', icon: 'share', action: () => { void navigator.clipboard.writeText(`https://music.youtube.com/watch?v=${track.id}`); notify('Lien copié'); } });
+  items.push({ label: '', separator: true },
+    { label: 'Voir l’artiste', icon: 'mic', action: () => void openTrackCatalog(track, 'artist') },
+    { label: 'Voir l’album', icon: 'album', action: () => void openTrackCatalog(track, 'album') });
+  items.push({ label: 'Copier le lien', icon: 'share', action: () => {
+    void navigator.clipboard.writeText(octave ? octaveTrackUrl(track) : `https://music.youtube.com/watch?v=${track.id}`);
+    notify('Lien copié');
+  } });
   return [...items, ...extra];
 }
 
 export function collectionMenu(collection: Collection): MenuItem[] {
+  const octave = octaveCollectionUrl(collection);
   return [
     { label: isSaved(collection.id) ? 'Retirer de la bibliothèque' : 'Ajouter à la bibliothèque', icon: isSaved(collection.id) ? 'check' : 'plus',
       action: () => toggleSaved(collection) },
     { label: 'Copier le lien', icon: 'share', action: () => {
       const id = collection.id;
-      const url = collection.kind === 'artist' ? `https://music.youtube.com/channel/${id}`
-        : collection.kind === 'album' ? `https://music.youtube.com/browse/${id}` : `https://music.youtube.com/playlist?list=${id.replace(/^VL/, '')}`;
+      const url = octave ?? (collection.kind === 'artist' ? `https://music.youtube.com/channel/${id}`
+        : collection.kind === 'album' ? `https://music.youtube.com/browse/${id}` : `https://music.youtube.com/playlist?list=${id.replace(/^VL/, '')}`);
       void navigator.clipboard.writeText(url);
       notify('Lien copié');
     } },

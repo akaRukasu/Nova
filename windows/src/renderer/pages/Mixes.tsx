@@ -81,7 +81,7 @@ export function MixCard({ kind }: { kind: MixKind }) {
     <button className="mix-card" style={{ background: `linear-gradient(135deg, ${kind.colors[0]}, ${kind.colors[1]})` }}
       onClick={() => open({ name: 'mix', kind: kind.id })}>
       <div className="mix-mosaic">{tracks.map((t) => <Artwork key={t.id} track={t} size={88} radius={0} />)}</div>
-      <div className="mix-label"><small>NOVA</small><strong>{kind.title}</strong></div>
+      <div className="mix-label"><strong>{kind.title}</strong></div>
     </button>
   );
 }
@@ -118,7 +118,8 @@ export function MixPage({ kindId }: { kindId: string }) {
       {!tracks ? <Loading /> : tracks.length ? <TrackList tracks={tracks} /> : (
         <p className="muted">Écoute et aime quelques titres de plus : ce mix se remplira tout seul.</p>
       )}
-      {tracks && tracks.length > 0 && <button className="text-button" onClick={() => player.play(tracks, 0, true)}>Tout lire en aléatoire</button>}
+      {tracks && tracks.length > 0 && <button className="text-button"
+        onClick={() => player.play(tracks, 0, true)}>Lire en aléatoire</button>}
     </div>
   );
 }

@@ -121,7 +121,8 @@ struct SmartPlaylistView: View {
         LocalTracksList(tracks: tracks,
                         emptyTitle: "Aucun titre ne correspond",
                         emptyIcon: "gearshape",
-                        emptyMessage: "Modifie les règles pour élargir la sélection. La liste se met à jour toute seule.")
+                        emptyMessage: "Modifie les règles pour élargir la sélection. La liste se met à jour toute seule.",
+                        source: PlaybackSettings.playlistSource)
             .navigationTitle(playlist?.name ?? "Playlist intelligente")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
