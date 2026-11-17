@@ -17,6 +17,7 @@ import { libraryEntries, libraryGroups, recentLibraryEntries, releaseType, type 
 import { useStore } from '../lib/store';
 import { Empty, PageTitle, PlayShuffle, SortButton, TrackList, sortOrder, useTrackSort } from './common';
 import { AlbumHero, ArtistHero } from './Content';
+import { openTrackCatalog } from '../lib/catalogNavigation';
 
 export function UserPlaylistPage({ id }: { id: string }) {
   const state = useStore(library);
@@ -239,9 +240,7 @@ export function LibraryGroupPage({ id, kind }: { id: string; kind: LibraryGroupK
     <AlbumHero title={group.title} artist={group.subtitle} track={group.artworkTrack}
       details={`${releaseType(group)} · ${group.tracks.length} titres · ${Math.round(group.tracks.reduce((sum, track) => sum + (track.duration || 0), 0) / 60)} min`}>
           <PlayShuffle tracks={group.tracks} />
-          {catalogID && <button className="button secondary" onClick={() => open({
-            name: 'collection', collection: { id: catalogID, kind: 'album', title: group.title, subtitle: group.subtitle },
-          })}>Voir dans le catalogue</button>}
+          <button className="button secondary" onClick={() => void openTrackCatalog(group.tracks[0], 'album')}>Voir l’album complet</button>
     </AlbumHero>
     <TrackList tracks={group.tracks} />
   </div>;

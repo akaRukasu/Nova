@@ -101,6 +101,7 @@ final class LocalAudioFiles {
     }
 
     private String displayName(Uri uri) {
+        if ("file".equals(uri.getScheme()) && uri.getLastPathSegment() != null) return uri.getLastPathSegment();
         try (Cursor cursor = context.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
             if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
         } catch (Exception ignored) {}

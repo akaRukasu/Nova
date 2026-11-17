@@ -368,12 +368,8 @@ struct TrackMenu: View {
             }
         }
         Section {
-            if let artist = track.artistCollection {
-                Button("Voir l'artiste", systemImage: "music.mic") { router.open(.collection(artist)) }
-            }
-            if let album = track.albumCollection {
-                Button("Voir l'album", systemImage: "square.stack") { router.open(.collection(album)) }
-            }
+            Button("Voir l'artiste", systemImage: "music.mic") { router.open(.trackCatalog(track, .artist)) }
+            Button("Voir l'album", systemImage: "square.stack") { router.open(.trackCatalog(track, .album)) }
             ShareLink(item: track.shareURL) {
                 Label("Partager", systemImage: "square.and.arrow.up")
             }

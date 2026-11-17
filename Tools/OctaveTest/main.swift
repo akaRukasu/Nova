@@ -63,6 +63,20 @@ do {
     let restoredSmart = await restoredLibrary.smartPlaylists.first { $0.name == "Favoris sauvegardés QA" }
     try require(restoredSmart?.rules.first?.op == .isTrue, "Les règles de playlists intelligentes du PC restent lisibles")
     print("Restauration PC vers iPhone OK — dates, playlists, favoris, historique et récap annuel sans doublons")
+    let playlistOnly = Track(id: "delete-playlist-only", title: "Titre à retirer", artist: "Artiste QA")
+    _ = await restoredLibrary.importIntoPlaylist(name: "Suppression QA", tracks: [playlistOnly])
+    let staleLibrary = await restoredLibrary.exportData()!
+    let playlistMembership = await restoredLibrary.isInLibrary(playlistOnly.id)
+    try require(playlistMembership, "Un titre présent uniquement dans une playlist appartient à la bibliothèque")
+    await restoredLibrary.removeFromLibrary(playlistOnly)
+    _ = try await restoredLibrary.restoreData(staleLibrary)
+    let absent = await restoredLibrary.isInLibrary(playlistOnly.id)
+    try require(!absent, "Une ancienne sauvegarde ne doit pas ressusciter un titre retiré")
+    await restoredLibrary.addToLibrary(playlistOnly)
+    _ = try await restoredLibrary.restoreData(staleLibrary)
+    let readded = await restoredLibrary.isInLibrary(playlistOnly.id)
+    try require(readded, "Un réajout explicite doit rester présent après synchronisation")
+    print("Suppression depuis une playlist, sauvegarde obsolète et réajout confirmés")
 
     let octaveBackup = Data(#"""
     {"app":"octave","type":"library-backup","version":2,"data":{"octave:library":{"state":{"playlists":[

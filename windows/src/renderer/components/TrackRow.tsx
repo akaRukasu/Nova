@@ -1,5 +1,6 @@
 // Ligne de titre : pochette, titre, artiste, album, durée ; double-clic pour lire, clic droit pour le menu.
 import type { Track } from '../../shared/types';
+import { useRef, useEffect } from 'react';
 import { isOctaveId } from '../../shared/octave';
 import { isAndroid } from '../lib/api';
 import { isLiked, toggleLike } from '../lib/library';
@@ -27,10 +28,29 @@ export function TrackRow({ track, index, onPlay, showArtwork = true, showAlbum =
   const liked = isLiked(track);
   const octave = isOctaveId(track.id);
   const playLabel = octave ? `Lire ${track.title} dans Octave` : `Lire ${track.title}`;
+  const hold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pressed = useRef(false);
+  const origin = useRef({ x: 0, y: 0 });
+  const cancelHold = () => clearTimeout(hold.current);
+  useEffect(() => cancelHold, []);
   return (
     <div className={`track-row ${current ? 'current' : ''}`} onDoubleClick={isAndroid ? undefined : (e) => {
       if (!octave || !(e.target as HTMLElement).closest('button, .link')) onPlay();
     }}
+      onPointerDown={isAndroid ? e => {
+        if (e.pointerType === 'mouse' || !e.isPrimary) return;
+        cancelHold(); pressed.current = false;
+        origin.current = { x: e.clientX, y: e.clientY };
+        hold.current = setTimeout(() => {
+          pressed.current = true;
+          showMenu({ clientX: origin.current.x, clientY: origin.current.y }, trackMenu(track, extraMenu));
+        }, 500);
+      } : undefined}
+      onPointerMove={isAndroid ? e => {
+        if (Math.hypot(e.clientX - origin.current.x, e.clientY - origin.current.y) > 10) cancelHold();
+      } : undefined}
+      onPointerUp={cancelHold} onPointerCancel={cancelHold}
+      onClickCapture={e => { if (pressed.current) { pressed.current = false; e.preventDefault(); e.stopPropagation(); } }}
       onClick={isAndroid ? (e) => { if (!(e.target as HTMLElement).closest('button, .link')) onPlay(); } : undefined}
       onContextMenu={(e) => showMenu(e, trackMenu(track, extraMenu))}>
       {rank != null && <span className={`rank ${rank < 3 ? 'top' : ''}`}>{rank + 1}</span>}

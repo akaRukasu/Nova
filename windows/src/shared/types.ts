@@ -191,6 +191,7 @@ export interface LibraryState {
   stats: Record<string, TrackStats>;
   listeningYears?: Record<string, ListeningYear>;
   historyChanges?: import('./historySync.js').HistoryChanges;
+  libraryChanges?: { removed?: Record<string, number>; restored?: Record<string, number> };
   settings: Settings;
 }
 

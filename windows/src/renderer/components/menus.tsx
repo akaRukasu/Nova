@@ -4,12 +4,13 @@ import type { Collection, Track } from '../../shared/types';
 import { isOctaveId, octaveCollectionUrl, octaveTrackUrl } from '../../shared/octave';
 import { addToJam, jam } from '../lib/jam';
 import {
-  addToPlaylist, addToShared, addTrackToLibrary, createPlaylist, isLiked, isSaved, library, notify, toast, toggleLike, toggleSaved,
+  addToPlaylist, addToShared, addTrackToLibrary, createPlaylist, isInLibrary, isLiked, isSaved, library, notify, removeTrackFromLibrary, toast, toggleLike, toggleSaved,
 } from '../lib/library';
 import { player } from '../lib/player';
 import { open } from '../lib/router';
 import { Store, useStore } from '../lib/store';
 import { Icon } from './icons';
+import { openTrackCatalog } from '../lib/catalogNavigation';
 
 export interface MenuItem {
   label: string;
@@ -71,12 +72,14 @@ export function trackMenu(track: Track, extra: MenuItem[] = []): MenuItem[] {
     { label: 'Lancer la radio', icon: 'radio', action: () => player.startRadio(track) },
     { label: '', separator: true },
     { label: liked ? 'Je n’aime plus' : 'J’aime', icon: 'heart', action: () => toggleLike(track) },
-    { label: 'Ajouter à la bibliothèque', icon: 'plus', action: () => addTrackToLibrary(track) },
+    isInLibrary(track)
+      ? { label: 'Retirer de la bibliothèque', icon: 'trash', danger: true, action: () => removeTrackFromLibrary(track) }
+      : { label: 'Ajouter à la bibliothèque', icon: 'plus', action: () => addTrackToLibrary(track) },
     { label: 'Ajouter à une playlist', icon: 'plus', submenu: playlistSubmenu([track]) },
   );
-  if (track.artistId || track.albumId) items.push({ label: '', separator: true });
-  if (track.artistId) items.push({ label: 'Voir l’artiste', icon: 'mic', action: () => open({ name: 'artist', id: track.artistId!, title: track.artist }) });
-  if (track.albumId) items.push({ label: 'Voir l’album', icon: 'album', action: () => open({ name: 'collection', collection: { id: track.albumId!, kind: 'album', title: track.album ?? '' } }) });
+  items.push({ label: '', separator: true },
+    { label: 'Voir l’artiste', icon: 'mic', action: () => void openTrackCatalog(track, 'artist') },
+    { label: 'Voir l’album', icon: 'album', action: () => void openTrackCatalog(track, 'album') });
   items.push({ label: 'Copier le lien', icon: 'share', action: () => {
     void navigator.clipboard.writeText(octave ? octaveTrackUrl(track) : `https://music.youtube.com/watch?v=${track.id}`);
     notify('Lien copié');

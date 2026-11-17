@@ -9,6 +9,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { localAddresses } from './jam.js';
 import type { HistorySnapshot } from '../shared/historySync.js';
+import type { LocalAudioLibrary } from './localAudio.js';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 export interface Pairing {
   pcId: string;
@@ -66,7 +69,7 @@ export function currentPairing(): Pairing {
 
 export async function startSyncServer(dataDir: string, handler: typeof onLibrary,
   exchangeHistory?: (incoming: HistorySnapshot) => Promise<HistorySnapshot>,
-  exportLibrary?: () => Promise<unknown>) {
+  exportLibrary?: () => Promise<unknown>, audio?: LocalAudioLibrary) {
   onLibrary = handler;
   pairingFile = path.join(dataDir, 'pairing.json');
   try {
@@ -77,15 +80,39 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
     await savePairing();
   }
   server = http.createServer((request, response) => {
+    const media = request.url?.match(/^\/audio\/([a-f0-9]{64}\.[a-z0-9]{1,8})$/);
+    if (media && audio) {
+      if (request.headers['x-nova-token'] !== pairing.token) { response.writeHead(403).end(); return; }
+      void (async () => {
+        if (request.method === 'POST') {
+          await audio.receive(media[1], request);
+          response.writeHead(200, { 'content-length': 2 }).end('{}');
+        } else if (request.method === 'GET' || request.method === 'HEAD') {
+          const result = await audio.response('local:' + media[1].slice(0, 64), null);
+          response.writeHead(result.status, Object.fromEntries(result.headers));
+          if (request.method === 'HEAD') { await result.body?.cancel(); response.end(); }
+          else if (result.body) await pipeline(Readable.fromWeb(result.body as import('node:stream/web').ReadableStream), response);
+          else response.end();
+        } else response.writeHead(405).end();
+      })().catch(() => { if (!response.headersSent) response.writeHead(400); response.end(); });
+      return;
+    }
     if (request.method === 'GET' && request.url === '/library' && exportLibrary) {
       if (request.headers['x-nova-token'] !== pairing.token) { response.writeHead(403).end(); return; }
       const token = pairing.token;
       void exportLibrary().then(async snapshot => {
         if (pairing.token !== token) { response.writeHead(403).end(); return; }
         const body = JSON.stringify(snapshot);
+        const backup = snapshot as { library?: Record<string, unknown>; shared?: unknown };
+        const contents = backup.library ?? {};
+        const dates = Object.fromEntries(Object.entries(contents.stats as Record<string, { added?: number }> ?? {}).map(([id, value]) => [id, value.added]));
+        const etag = '"' + crypto.createHash('sha256').update(JSON.stringify({ playlists: contents.playlists, liked: contents.liked,
+          added: contents.addedTracks, saved: contents.saved, savedDates: contents.savedDates, dates, shared: backup.shared,
+          removed: contents.libraryRemoved, restored: contents.libraryRestored })).digest('hex') + '"';
+        if (request.headers['if-none-match'] === etag) { response.writeHead(304, { etag }).end(); return; }
         pairing = { ...pairing, paired: true, phoneName: String(request.headers['x-nova-device'] ?? 'iPhone'), lastSync: Date.now() };
         await savePairing().catch(() => undefined);
-        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store',
+        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', etag,
           'content-length': Buffer.byteLength(body) }).end(body);
       }).catch(() => response.writeHead(503).end());
       return;
@@ -164,8 +191,9 @@ export async function startSyncServer(dataDir: string, handler: typeof onLibrary
         const summary = onLibrary(parsed.library ? { ...parsed.library, shared: parsed.shared } : parsed, phone);
         pairing = { ...pairing, paired: true, phoneName: phone, lastSync: Date.now() };
         await savePairing();
-        response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify(summary));
+        const result = JSON.stringify(summary);
+        response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(result) });
+        response.end(result);
       } catch {
         response.writeHead(400);
         response.end();

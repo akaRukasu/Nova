@@ -20,6 +20,9 @@ final class LibraryStore {
     private(set) var listeningYears: [String: [String: ListeningEntry]] = [:]
     private var historyClearedAt: Double?
     private var historyRemoved: [String: Double] = [:]
+    private var libraryRemoved: [String: Double] = [:]
+    private var libraryRestored: [String: Double] = [:]
+    private var songIDs = Set<String>()
     /// Tous les morceaux de la bibliothèque (likés, playlists, historique), sans doublons.
     private(set) var songs: [Track] = []
     /// Titres ajoutés à la bibliothèque (bouton « + »), du plus récent au plus ancien.
@@ -46,6 +49,8 @@ final class LibraryStore {
         var listeningYears: [String: [String: ListeningEntry]]?
         var historyClearedAt: Double?
         var historyRemoved: [String: Double]?
+        var libraryRemoved: [String: Double]?
+        var libraryRestored: [String: Double]?
     }
 
     @ObservationIgnored private let directory: URL = FileManager.default
@@ -68,6 +73,8 @@ final class LibraryStore {
             listeningYears = snapshot.listeningYears ?? [:]
             historyClearedAt = snapshot.historyClearedAt
             historyRemoved = snapshot.historyRemoved ?? [:]
+            libraryRemoved = snapshot.libraryRemoved ?? [:]
+            libraryRestored = snapshot.libraryRestored ?? [:]
         } else if let data = try? Data(contentsOf: directory.appendingPathComponent("recents.json")),
                   let old = try? JSONDecoder().decode([Track].self, from: data) {
             // Historique de l'étape 1.
@@ -76,6 +83,7 @@ final class LibraryStore {
         likedIDs = Set(liked.map(\.id))
         savedIDs = Set(saved.map(\.id))
         addedIDs = Set(addedTracks.map(\.id))
+        applyLibraryRemovals()
         if removeDuplicatePlaylists() { save() } else { rebuildSongs() }
     }
 
@@ -101,7 +109,7 @@ final class LibraryStore {
 
     /// Le titre est dans la bibliothèque (ajouté, liké ou dans une playlist).
     func isInLibrary(_ id: String) -> Bool {
-        addedIDs.contains(id) || likedIDs.contains(id)
+        songIDs.contains(id)
     }
 
     func addToLibrary(_ track: Track) {
@@ -113,10 +121,28 @@ final class LibraryStore {
     }
 
     func removeFromLibrary(_ track: Track) {
-        guard addedIDs.remove(track.id) != nil else { return }
-        addedTracks.removeAll { $0.id == track.id }
-        if !isLiked(track.id) { onLibraryRemoval?(track, nil) }
+        let matching = (addedTracks + liked + playlists.flatMap(\.tracks)).filter { Self.sameTrackID($0, track) }
+        let now = Date().timeIntervalSince1970 * 1000
+        for candidate in matching + [track] {
+            libraryRemoved[candidate.id] = now
+            if let youtubeID = candidate.youtubeID { libraryRemoved[youtubeID] = now }
+            onLibraryRemoval?(candidate, nil)
+        }
         save()
+    }
+
+    private func applyLibraryRemovals() {
+        func keep(_ track: Track) -> Bool {
+            let ids = [track.id, track.youtubeID].compactMap { $0 }
+            let removed = ids.compactMap { libraryRemoved[$0] }.max() ?? 0
+            let restored = ids.compactMap { libraryRestored[$0] }.max() ?? 0
+            return removed == 0 || restored > removed
+        }
+        addedTracks = addedTracks.filter(keep)
+        liked = liked.filter(keep)
+        for index in playlists.indices { playlists[index].tracks = playlists[index].tracks.filter(keep) }
+        addedIDs = Set(addedTracks.map(\.id))
+        likedIDs = Set(liked.map(\.id))
     }
 
     /// Élément de la grille « Ajouts récents ».
@@ -237,6 +263,7 @@ final class LibraryStore {
         liked.forEach(include)
         playlists.forEach { $0.tracks.forEach(include) }
         songs = result.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        songIDs = Set(songs.flatMap { [$0.id, $0.youtubeID].compactMap { $0 } })
     }
 
     static func dedupeKey(_ track: Track) -> String {
@@ -274,6 +301,10 @@ final class LibraryStore {
 
     private func markAdded(_ tracks: [Track], force: Bool = false) {
         let now = Date()
+        for track in tracks {
+            libraryRestored[track.id] = now.timeIntervalSince1970 * 1000
+            if let id = track.youtubeID { libraryRestored[id] = now.timeIntervalSince1970 * 1000 }
+        }
         for track in tracks where force || stats[track.id]?.added == nil {
             var info = stats[track.id] ?? TrackStats()
             info.added = now
@@ -784,6 +815,8 @@ final class LibraryStore {
             throw NSError(domain: "NovaBackup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ce fichier n’est pas une sauvegarde Nova compatible."])
         }
         let incoming = backup.library
+        for (id, date) in incoming.libraryRemoved ?? [:] { libraryRemoved[id] = max(libraryRemoved[id] ?? 0, date) }
+        for (id, date) in incoming.libraryRestored ?? [:] { libraryRestored[id] = max(libraryRestored[id] ?? 0, date) }
         var names = Set<String>()
         var replaced = Set<UUID>()
         let restored = (incoming.playlists ?? []).filter {
@@ -844,7 +877,8 @@ final class LibraryStore {
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
                                 addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
-                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved)
+                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved,
+                                libraryRemoved: libraryRemoved, libraryRestored: libraryRestored)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         return try? encoder.encode(ExportEnvelope(library: snapshot, shared: SharedPlaylists.shared.entries))
@@ -855,7 +889,8 @@ final class LibraryStore {
         let envelope = ExportEnvelope(library: Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved,
                                                         searches: searches, smartPlaylists: smartPlaylists, stats: stats,
                                                         addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
-                                                        historyClearedAt: historyClearedAt, historyRemoved: historyRemoved),
+                                                        historyClearedAt: historyClearedAt, historyRemoved: historyRemoved,
+                                                        libraryRemoved: libraryRemoved, libraryRestored: libraryRestored),
                                       shared: SharedPlaylists.shared.entries)
         return await Task.detached(priority: .utility) {
             let encoder = JSONEncoder()
@@ -880,6 +915,7 @@ final class LibraryStore {
     private func save(rebuildingSongs: Bool = true) {
         groupCache.removeAll()
         if rebuildingSongs {
+            applyLibraryRemovals()
             rebuildSongs()
             revision += 1
             UserDefaults.standard.set(revision, forKey: "libraryRevision")
@@ -907,7 +943,8 @@ final class LibraryStore {
         let snapshot = Snapshot(recents: recents, liked: liked, playlists: playlists, saved: saved, searches: searches,
                                 smartPlaylists: smartPlaylists, stats: stats,
                                 addedTracks: addedTracks, savedDates: savedDates, listeningYears: listeningYears,
-                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved)
+                                historyClearedAt: historyClearedAt, historyRemoved: historyRemoved,
+                                libraryRemoved: libraryRemoved, libraryRestored: libraryRestored)
         let directory = directory, fileURL = fileURL
         Task.detached(priority: .utility) {
             do {

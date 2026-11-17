@@ -539,7 +539,7 @@ app.whenReady().then(async () => {
     const playlists = Array.isArray(library?.playlists) ? library.playlists.length : 0;
     const tracks = new Set([...(library?.liked ?? []), ...(library?.addedTracks ?? []), ...(library?.playlists ?? []).flatMap((p: any) => p.tracks ?? [])].map((t: any) => t?.id)).size;
     return { playlists, tracks };
-  }, exchangeHistory, async () => createPhoneBackup(backupLibrary ?? await loadLibrary())).catch(() => undefined);
+  }, exchangeHistory, async () => createPhoneBackup(backupLibrary ?? await loadLibrary()), localAudio).catch(() => undefined);
   ipcMain.handle('phone:history-result', (event, id: string, history: HistorySnapshot) => {
     if (event.sender === window?.webContents) pendingHistory.get(id)?.(history);
   });

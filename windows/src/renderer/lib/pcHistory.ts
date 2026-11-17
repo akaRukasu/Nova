@@ -1,5 +1,6 @@
 import { isAndroid } from './api';
-import { library, mergeHistory } from './library';
+import { library, mergeHistory, mergeFromPhone, songs } from './library';
+import { portableBackup } from '../../shared/portableBackup';
 import { listeningHistory, type HistorySnapshot } from '../../shared/historySync';
 import { Store } from './store';
 
@@ -11,6 +12,7 @@ let paired = savedPairing();
 let working = false;
 let started = false;
 let changed: ReturnType<typeof setTimeout> | undefined;
+const audioSynced = new Set<string>();
 export const pcHistory = new Store<{ name?: string; syncing: boolean; lastSync?: number; error?: string }>({
   name: paired?.name, syncing: false,
 });
@@ -21,6 +23,17 @@ export async function syncPCHistory() {
   working = true;
   pcHistory.set(state => ({ ...state, syncing: true, error: undefined }));
   try {
+    const backup = await window.nova.invoke<any>('phone:library-transfer', target.host, target.port, target.token, 'download', '');
+    if (paired !== target) return;
+    if (!backup?.library && !backup?.notModified) throw new Error('Mets Nova à jour sur le PC pour synchroniser la bibliothèque.');
+    if (backup.library) mergeFromPhone({ ...backup.library, shared: backup.shared });
+    await window.nova.invoke('phone:library-transfer', target.host, target.port, target.token, 'upload', JSON.stringify(portableBackup(library.get())));
+    const audio = songs().filter(track => track.id.startsWith('local:') && !audioSynced.has(track.id));
+    if (audio.length) {
+      await window.nova.invoke('phone:audio-transfer', target.host, target.port, target.token, JSON.stringify(audio));
+      if (paired !== target) return;
+      for (const track of audio) audioSynced.add(track.id);
+    }
     const outgoing = listeningHistory(library.get());
     const remote = await window.nova.invoke<HistorySnapshot>('phone:exchange-history',
       target.host, target.port, target.token, JSON.stringify(outgoing));
@@ -48,12 +61,14 @@ export async function pairPCHistory(link: string) {
     throw new Error('Ce lien d’association Nova est invalide.');
   }
   paired = { host: endpoint.hostname, port: Number(endpoint.port || 80), token, name: uri.searchParams.get('n') || 'PC' };
+  audioSynced.clear();
   localStorage.setItem('nova-pc-history', JSON.stringify(paired));
   pcHistory.set({ name: paired.name, syncing: false });
   await syncPCHistory();
 }
 
 export function unpairPCHistory() {
+  audioSynced.clear();
   paired = undefined;
   localStorage.removeItem('nova-pc-history');
   pcHistory.set({ syncing: false });
@@ -62,11 +77,12 @@ export function unpairPCHistory() {
 export function startPCHistory() {
   if (started || !isAndroid) return;
   started = true;
-  let last = JSON.stringify(listeningHistory(library.get()));
+  let last = library.get();
   library.subscribe(() => {
-    const next = JSON.stringify(listeningHistory(library.get()));
+    const next = library.get();
     if (next === last) return;
     last = next;
+    if (working) return;
     clearTimeout(changed);
     changed = setTimeout(() => void syncPCHistory(), 5000);
   });

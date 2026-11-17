@@ -632,6 +632,26 @@ public class NovaPlayerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void syncLocalAudio(PluginCall call) {
+        getBridge().execute(() -> {
+            try {
+                new LocalAudioTransfer(getContext(), call.getString("host"), call.getInt("port", 0), call.getString("token"))
+                        .sync(new org.json.JSONArray(call.getString("tracks", "[]")));
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void transferLibrary(PluginCall call) {
+        link.transferLibrary(call.getString("host"), call.getInt("port", 0), call.getString("token"),
+                call.getString("direction"), call.getString("library", ""), (library, error) -> {
+                    if (error != null) call.reject(error);
+                    else call.resolve(new JSObject().put("library", library));
+                });
+    }
+
+    @PluginMethod
     public void unpair(PluginCall call) {
         link.unpair();
         call.resolve();

@@ -76,6 +76,13 @@ enum LibraryTransfer {
 
     @MainActor
     static func receive(_ request: Request) async throws -> Data {
+        let result = try await receiveUpdate(request)
+        guard let data = result.data else { throw TransferError.updatePC }
+        return data
+    }
+
+    @MainActor
+    static func receiveUpdate(_ request: Request, etag: String? = nil) async throws -> (data: Data?, etag: String?) {
         guard isLocal(request.url), var url = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else { throw TransferError.notLocal }
         url.path = "/library"
         url.query = nil
@@ -83,12 +90,45 @@ enum LibraryTransfer {
         var download = URLRequest(url: endpoint, timeoutInterval: 90)
         download.setValue(request.token, forHTTPHeaderField: "X-Nova-Token")
         download.setValue(UIDevice.current.name, forHTTPHeaderField: "X-Nova-Device")
+        if let etag { download.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         let (data, response) = try await URLSession.shared.data(for: download, delegate: LocalTransferDelegate())
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let version = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+        if status == 304 { return (nil, version ?? etag) }
         if status == 404 { throw TransferError.updatePC }
         guard status == 200 else { throw TransferError.refused(status) }
         guard response.mimeType == "application/json" else { throw TransferError.updatePC }
-        return data
+        return (data, version)
+    }
+
+    @MainActor
+    static func syncAudio(_ request: Request, tracks: [Track]) async throws {
+        guard isLocal(request.url), var url = URLComponents(url: request.url, resolvingAgainstBaseURL: false) else { throw TransferError.notLocal }
+        for track in tracks where track.id.hasPrefix("local:") {
+            guard let filename = track.localFileName,
+                  filename.range(of: #"^[a-f0-9]{64}\.[a-z0-9]{1,8}$"#, options: .regularExpression) != nil,
+                  "local:" + String(filename.prefix(64)) == track.id else { continue }
+            url.path = "/audio/" + filename
+            url.query = nil
+            guard let endpoint = url.url else { throw TransferError.notLocal }
+            var transfer = URLRequest(url: endpoint, timeoutInterval: 180)
+            transfer.setValue(request.token, forHTTPHeaderField: "X-Nova-Token")
+            if let file = LocalAudioLibrary.url(for: track) {
+                transfer.httpMethod = "HEAD"
+                let (_, response) = try await URLSession.shared.data(for: transfer, delegate: LocalTransferDelegate())
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 200 { continue }
+                guard status == 404 else { throw TransferError.refused(status) }
+                transfer.httpMethod = "POST"
+                let (_, uploaded) = try await URLSession.shared.upload(for: transfer, fromFile: file, delegate: LocalTransferDelegate())
+                guard (uploaded as? HTTPURLResponse)?.statusCode == 200 else { throw TransferError.refused((uploaded as? HTTPURLResponse)?.statusCode ?? 0) }
+            } else {
+                let (file, response) = try await URLSession.shared.download(for: transfer, delegate: LocalTransferDelegate())
+                defer { try? FileManager.default.removeItem(at: file) }
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw TransferError.refused((response as? HTTPURLResponse)?.statusCode ?? 0) }
+                try await LocalAudioLibrary.shared.receive(file, track: track)
+            }
+        }
     }
 
     @MainActor
@@ -100,7 +140,7 @@ enum LibraryTransfer {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(request.token, forHTTPHeaderField: "X-Nova-Token")
         urlRequest.setValue(UIDevice.current.name, forHTTPHeaderField: "X-Nova-Device")
-        let (data, response) = try await URLSession.shared.upload(for: urlRequest, from: body)
+        let (data, response) = try await URLSession.shared.upload(for: urlRequest, from: body, delegate: LocalTransferDelegate())
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw TransferError.refused(status) }
         let summary = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -124,6 +164,8 @@ final class PCSync {
         var lastSync: Date?
         /// Adresses où le PC a déjà répondu (maison, partage de connexion…), la plus récente d'abord.
         var knownURLs: [URL]?
+        var libraryETag: String?
+        var audioSynced: [String]?
     }
 
     private(set) var pairedComputer: String?
@@ -169,6 +211,8 @@ final class PCSync {
         try Task.checkCancellation()
         guard state?.request.token == current.request.token else { throw CancellationError() }
         let message = try library.restoreData(data).message
+        try await LibraryTransfer.syncAudio(current.request, tracks: library.songs)
+        current.audioSynced = library.songs.filter { $0.id.hasPrefix("local:") }.map(\.id)
         current.lastRevision = library.revision
         current.lastHistoryRevision = library.historyRevision
         current.lastSync = Date()
@@ -214,7 +258,7 @@ final class PCSync {
     @discardableResult
     func sync(library: LibraryStore, force: Bool = false, includeHistory: Bool = false) async throws -> String? {
         guard var current = state, !isSyncing else { return nil }
-        let contentChanged = library.revision != current.lastRevision
+        var contentChanged = library.revision != current.lastRevision
         let historyChanged = includeHistory && library.historyRevision != current.lastHistoryRevision
         guard force || contentChanged || includeHistory else { return nil }
         isSyncing = true
@@ -226,16 +270,27 @@ final class PCSync {
         remember(url)
         current.request.url = url
         current.knownURLs = state?.knownURLs
+        let incoming = try await LibraryTransfer.receiveUpdate(current.request, etag: current.libraryETag)
+        guard state?.request.token == current.request.token else { return nil }
+        if let data = incoming.data {
+            _ = try library.restoreData(data)
+            contentChanged = true
+        }
+        current.libraryETag = incoming.etag
         let contentRevision = library.revision
         let historyRevision = library.historyRevision
         let remote = try await LibraryTransfer.exchangeHistory(current.request, history: library.listeningHistory())
         guard state?.request.token == current.request.token else { return nil }
         if let remote { library.mergeHistory(remote) }
-        var message = "Historique synchronisé avec \(current.request.computer)."
+        var message = "Bibliothèque et historique synchronisés avec \(current.request.computer)."
         if force || contentChanged || (remote == nil && historyChanged) {
             message = try await LibraryTransfer.send(current.request, library: library)
             current.lastRevision = contentRevision
         } else if remote == nil { return nil }
+        let synced = force ? Set<String>() : Set(current.audioSynced ?? [])
+        let audio = library.songs.filter { $0.id.hasPrefix("local:") && !synced.contains($0.id) }
+        try await LibraryTransfer.syncAudio(current.request, tracks: audio)
+        current.audioSynced = Array(synced.union(audio.map(\.id)))
         guard state?.request.token == current.request.token else { return nil }
         current.lastHistoryRevision = historyRevision
         current.lastSync = Date()

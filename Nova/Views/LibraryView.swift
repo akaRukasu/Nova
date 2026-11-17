@@ -1045,6 +1045,13 @@ struct LibraryGroupView: View {
                     }
                     .buttonStyle(.glass).accessibilityLabel("Lecture aléatoire")
                 }
+                if let reference = group.tracks.first {
+                    NavigationLink(value: Route.trackCatalog(reference, .album)) {
+                        Label("Voir l’album complet", systemImage: "square.stack.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glass)
+                }
             }
             .listRowSeparator(.hidden).listRowBackground(Color.clear)
             .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 16, trailing: 16))

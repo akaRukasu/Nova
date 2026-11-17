@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { LocalAudioLibrary } from '../dist/main/localAudio.js';
+import { startSyncServer, stopSyncServer, currentPairing, pairingLink } from '../dist/main/phoneSync.js';
 
 test('local WAV imports persist, deduplicate by bytes, and support seeking through byte ranges', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nova-local-audio-'));
@@ -34,7 +35,21 @@ test('local WAV imports persist, deduplicate by bytes, and support seeking throu
     assert.equal((await restored.response(track.id, 'bytes=999999999-')).status, 416);
     assert.equal((await restored.response('local:../../file', null)).status, 400);
     assert.equal((await restored.response('local:' + '0'.repeat(64), null)).status, 404);
+    const receiving = new LocalAudioLibrary(() => path.join(root, 'Received'));
+    await startSyncServer(path.join(root,'Server'),()=>({playlists:0,tracks:0}),undefined,undefined,receiving);
+    const address=new URL(new URL(pairingLink().link).searchParams.get('u')).port;
+    const endpoint=`http://127.0.0.1:${address}/audio/${track.localFileName}`;
+    const headers={'X-Nova-Token':currentPairing().token};
+    assert.equal((await fetch(endpoint)).status,403);
+    assert.equal((await fetch(endpoint,{method:'HEAD',headers})).status,404);
+    assert.equal((await fetch(endpoint,{method:'POST',headers,body:bytes})).status,200);
+    assert.equal((await fetch(endpoint,{method:'HEAD',headers})).status,200);
+    assert.deepEqual(Buffer.from(await (await fetch(endpoint,{headers})).arrayBuffer()),bytes);
+    const corrupted=Buffer.from(bytes); corrupted[100]=1;
+    assert.equal((await fetch(endpoint,{method:'POST',headers,body:corrupted})).status,400);
+    assert.deepEqual(Buffer.from(await (await fetch(endpoint,{headers})).arrayBuffer()),bytes,'A failed transfer must preserve the existing file');
   } finally {
+    stopSyncServer();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -25,6 +25,17 @@ actor LocalAudioLibrary {
                 && !["jpg", "jpeg", "png"].contains($0.pathExtension.lowercased()) }
     }
 
+    func receive(_ temporary: URL, track: Track) async throws {
+        guard let filename = track.localFileName,
+              filename.range(of: #"^[a-f0-9]{64}\.[a-z0-9]{1,8}$"#, options: .regularExpression) != nil,
+              "local:" + String(filename.prefix(64)) == track.id else { throw CocoaError(.fileReadInvalidFileName) }
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + (filename as NSString).pathExtension)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try FileManager.default.copyItem(at: temporary, to: staging)
+        let result = await importFiles([staging])
+        guard result.tracks.first?.id == track.id else { throw CocoaError(.fileReadCorruptFile) }
+    }
+
     func importFiles(_ urls: [URL]) async -> (tracks: [Track], errors: [String]) {
         var tracks: [Track] = []
         var errors: [String] = []

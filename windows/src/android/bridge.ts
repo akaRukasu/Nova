@@ -33,6 +33,8 @@ interface NovaPlayer {
   isTV(): Promise<{ tv: boolean }>;
   syncInfo(): Promise<{ pcId: string; token: string; port: number; address: string; name: string; paired: boolean; phoneName?: string; lastSync?: number }>;
   exchangeHistory(options: { host: string; port: number; token: string; history: string }): Promise<{ history: string }>;
+  transferLibrary(options: { host: string; port: number; token: string; direction: string; library: string }): Promise<{ library: string }>;
+  syncLocalAudio(options: { host: string; port: number; token: string; tracks: string }): Promise<void>;
   unpair(): Promise<void>;
   setRemoteState(options: { state: string }): Promise<void>;
   jamHost(options: { name: string }): Promise<{ port: number; addresses: string[] }>;
@@ -253,6 +255,9 @@ const handlers: Record<string, (...args: any[]) => unknown> = {
   },
   'phone:exchange-history': async (host: string, port: number, token: string, history: string) =>
     JSON.parse((await native.exchangeHistory({ host, port, token, history })).history),
+  'phone:library-transfer': async (host: string, port: number, token: string, direction: string, library: string) =>
+    JSON.parse((await native.transferLibrary({ host, port, token, direction, library })).library),
+  'phone:audio-transfer': (host: string, port: number, token: string, tracks: string) => native.syncLocalAudio({ host, port, token, tracks }),
   'phone:unpair': () => native.unpair(),
   'phone:network': () => ({ publicNetworks: [], allowed: true }),
   'phone:allowNetwork': () => true,

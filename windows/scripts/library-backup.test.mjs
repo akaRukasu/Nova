@@ -29,7 +29,8 @@ test('the PC backup uses the iPhone schema, preserves dates and annual recap, an
   assert.equal(backup.library.listeningYears[2026][song.id].plays,7);
   assert.equal(backup.library.smartPlaylists[0].rules[0].op,'isTrue');
   assert.equal(backup.library.smartPlaylists[0].sort,'recentlyPlayed');
-  assert.ok(!text.includes('private-key') && !text.includes('C:/Users') && !text.includes('localFileName'));
+  assert.ok(!text.includes('private-key') && !text.includes('C:/Users'));
+  assert.equal(backup.library.addedTracks[0].localFileName,local.localFileName);
   const fixture=JSON.parse(await fs.readFile(new URL('../../Tools/Fixtures/pc-library-backup.json',import.meta.url),'utf8'));
   assert.deepEqual(JSON.parse(text),fixture,'The same fixture must also be restored by the native iPhone diagnostic');
   const legacy=structuredClone(state);
@@ -49,6 +50,9 @@ test('the local PC library download requires the pairing token and rejects it af
     const token=currentPairing().token;
     const response=await fetch(endpoint,{headers:{'X-Nova-Token':token}});
     assert.equal(response.headers.get('cache-control'),'no-store');
+    const etag=response.headers.get('etag');
+    assert.ok(etag);
+    assert.equal((await fetch(endpoint,{headers:{'X-Nova-Token':token,'If-None-Match':etag}})).status,304);
     assert.deepEqual(await response.json(),JSON.parse(JSON.stringify(createPhoneBackup(state,date))));
     assert.equal(currentPairing().paired,true);
     await unpair();

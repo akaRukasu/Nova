@@ -280,10 +280,10 @@ function PCHistoryTransfer() {
   const [error, setError] = useState<string>();
   return <section className="phone-transfer">
     <div>
-      <h3>Historique avec le PC</h3>
+      <h3>Bibliothèque avec le PC</h3>
       <p className="muted">{status.name
-        ? `Associé à ${status.name}. L’historique s’échange quand Nova est ouvert sur les deux appareils, sur le réseau local.`
-        : 'Sur ton PC, ouvre Importer puis copie le lien pour Android et colle-le ici pour partager ton historique.'}</p>
+        ? `Associé à ${status.name}. Bibliothèque, fichiers audio et historique s’échangent quand Nova est ouvert sur les deux appareils, sur le même réseau local.`
+        : 'Sur ton PC, ouvre Importer puis copie le lien pour Android et colle-le ici pour synchroniser ta bibliothèque.'}</p>
       {!status.name && <div className="row-buttons">
         <input type="password" autoComplete="off" aria-label="Lien d’association du PC" value={link}
           placeholder="Lien d’association Nova" onChange={event => setLink(event.target.value)} />
@@ -297,7 +297,7 @@ function PCHistoryTransfer() {
           {status.syncing ? 'Synchronisation…' : 'Synchroniser maintenant'}</button>
         <button className="button secondary" disabled={status.syncing} onClick={unpairPCHistory}>Dissocier</button>
       </div>}
-      {status.lastSync && <p className="success">Historique synchronisé à {new Date(status.lastSync).toLocaleTimeString('fr-FR')}.</p>}
+      {status.lastSync && <p className="success">Bibliothèque synchronisée à {new Date(status.lastSync).toLocaleTimeString('fr-FR')}.</p>}
       {(error || status.error) && <p className="error" role="status">{error || status.error}</p>}
     </div>
   </section>;

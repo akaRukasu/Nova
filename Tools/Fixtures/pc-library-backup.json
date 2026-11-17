@@ -33,7 +33,8 @@
       {
         "id": "local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "title": "Audio local QA",
-        "artist": "Artiste QA"
+        "artist": "Artiste QA",
+        "localFileName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.flac"
       }
     ],
     "playlists": [
@@ -55,7 +56,8 @@
           {
             "id": "local:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "title": "Audio local QA",
-            "artist": "Artiste QA"
+            "artist": "Artiste QA",
+            "localFileName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.flac"
           }
         ],
         "createdAt": 1789999995000,

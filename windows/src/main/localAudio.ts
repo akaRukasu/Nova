@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, stat, writeFile, open, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { parseFile } from 'music-metadata';
@@ -8,6 +8,31 @@ import type { Track } from '../shared/types.js';
 
 export class LocalAudioLibrary {
   constructor(private readonly directory: () => string) {}
+
+  async receive(filename: string, chunks: AsyncIterable<Uint8Array>) {
+    if (!/^[a-f0-9]{64}\.[a-z0-9]{1,8}$/.test(filename)) throw new Error('Nom de fichier invalide.');
+    await mkdir(this.directory(), { recursive: true });
+    const temporary = path.join(this.directory(), crypto.randomUUID() + '.' + filename.split('.').pop());
+    const output = await open(temporary, 'wx');
+    const digest = createHash('sha256');
+    let size = 0;
+    try {
+      for await (const chunk of chunks) {
+        size += chunk.length;
+        if (size > 1_000_000_000) throw new Error('Fichier audio trop volumineux.');
+        digest.update(chunk);
+        await output.writeFile(chunk);
+      }
+      await output.close();
+      if (digest.digest('hex') !== filename.slice(0, 64)) throw new Error('Le fichier transféré est incomplet.');
+      const result = await this.import([temporary]);
+      if (!result.tracks.length) throw new Error(result.errors[0] ?? 'Format audio non reconnu.');
+      return result.tracks[0];
+    } finally {
+      await output.close().catch(() => undefined);
+      await unlink(temporary).catch(() => undefined);
+    }
+  }
 
   async import(files: string[]) {
     const tracks: Track[] = [], errors: string[] = [];
