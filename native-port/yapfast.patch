@@ -390,10 +390,10 @@ index 5b575ae..8b9e907 100644
          let capture = unsafe { stream.client.GetService::<IAudioCaptureClient>() }?;
          let left = Vec::with_capacity(stream.buffer as usize * format.frame_bytes());
 diff --git a/crates/yapfast-core/src/camera.rs b/crates/yapfast-core/src/camera.rs
-index 34829ab..bea90bf 100644
+index 34829ab..70dc90b 100644
 --- a/crates/yapfast-core/src/camera.rs
 +++ b/crates/yapfast-core/src/camera.rs
-@@ -39,6 +39,67 @@ pub type Sink = Box<dyn FnMut(&I420<'_>) + Send>;
+@@ -39,6 +39,79 @@ pub type Sink = Box<dyn FnMut(&I420<'_>) + Send>;
  /// The largest picture a camera gives, and how many a second: width,
  /// height, frames.
  pub type Size = (u32, u32, u32);
@@ -403,7 +403,9 @@ index 34829ab..bea90bf 100644
 +/// the preview without waiting for a camera driver on the UI thread.
 +pub struct Preview {
 +    pub feed: crate::picture::Feed,
-+    pub error: std::sync::mpsc::Receiver<String>,
++    error: std::sync::mpsc::Receiver<String>,
++    opened: Arc<AtomicBool>,
++    deadline: Instant,
 +    stop: Arc<AtomicBool>,
 +}
 +
@@ -415,6 +417,8 @@ index 34829ab..bea90bf 100644
 +        let (failed, error) = std::sync::mpsc::channel();
 +        let stop = Arc::new(AtomicBool::new(false));
 +        let cancelled = stop.clone();
++        let opened = Arc::new(AtomicBool::new(false));
++        let first_frame = opened.clone();
 +        std::thread::Builder::new().name("voxcord-camera-preview".into()).spawn(move || {
 +            let mut reason = "La caméra a démarré sans envoyer d’image.".to_owned();
 +            for size in [(WIDTH, HEIGHT, FPS), (640, 480, 30), (320, 240, 15)] {
@@ -436,6 +440,7 @@ index 34829ab..bea90bf 100644
 +                let deadline = Instant::now() + FIRST_FRAME_WAIT;
 +                while !cancelled.load(Ordering::Acquire) && Instant::now() < deadline {
 +                    if arrived.recv_timeout(Duration::from_millis(80)).is_ok() {
++                        first_frame.store(true, Ordering::Release);
 +                        while !cancelled.load(Ordering::Acquire) {
 +                            std::thread::sleep(Duration::from_millis(80));
 +                        }
@@ -449,7 +454,14 @@ index 34829ab..bea90bf 100644
 +                let _ = failed.send(format!("{reason} Vérifie le périphérique et les autorisations caméra de Windows."));
 +            }
 +        })?;
-+        Ok(Self { feed, error, stop })
++        Ok(Self { feed, error, opened, deadline: Instant::now() + Duration::from_secs(12), stop })
++    }
++
++    pub fn error(&self) -> Option<String> {
++        self.error.try_recv().ok().or_else(|| {
++            (!self.opened.load(Ordering::Acquire) && Instant::now() >= self.deadline)
++                .then(|| "La caméra n’a pas répondu. Vérifie le périphérique et les autorisations de Windows.".into())
++        })
 +    }
 +}
 +
@@ -461,7 +473,7 @@ index 34829ab..bea90bf 100644
  
  fn test_pattern() -> bool {
      std::env::var_os("YAPFAST_CAMERA_TEST_PATTERN").is_some_and(|value| value != "0")
-@@ -67,6 +128,11 @@ pub fn list() -> Vec<Device> {
+@@ -67,6 +140,11 @@ pub fn list() -> Vec<Device> {
      }
      #[cfg(any(target_os = "linux", windows))]
      native::list(&mut devices);
@@ -473,7 +485,7 @@ index 34829ab..bea90bf 100644
      devices
  }
  
-@@ -206,8 +272,8 @@ impl Camera {
+@@ -206,8 +284,8 @@ impl Camera {
              Some(id) => devices.iter().find(|device| device.id == id),
              None => devices.first(),
          };
@@ -484,7 +496,7 @@ index 34829ab..bea90bf 100644
          };
          if device.id == TEST_PATTERN {
              let delay = std::env::var("YAPFAST_CAMERA_TEST_DELAY_MS").ok();
-@@ -238,7 +304,9 @@ impl Camera {
+@@ -238,7 +316,9 @@ impl Camera {
          })
          .await??;
          // The sink lasts as long as the camera, so this ends with a picture.
@@ -495,7 +507,7 @@ index 34829ab..bea90bf 100644
          Ok(camera)
      }
  
-@@ -357,6 +425,19 @@ impl Drop for Camera {
+@@ -357,6 +437,19 @@ impl Drop for Camera {
  mod tests {
      use super::*;
  
@@ -509,7 +521,7 @@ index 34829ab..bea90bf 100644
 +            assert!(Instant::now() < deadline, "the settings preview received no frame");
 +            std::thread::sleep(Duration::from_millis(20));
 +        }
-+        assert!(preview.error.try_recv().is_err());
++        assert!(preview.error().is_none());
 +    }
 +
      #[test]
@@ -899,13 +911,17 @@ index ae21e09..8da0b49 100644
                      opening = None;
 diff --git a/crates/yapfast-core/src/microphone_test.rs b/crates/yapfast-core/src/microphone_test.rs
 new file mode 100644
-index 0000000..952520b
+index 0000000..f619355
 --- /dev/null
 +++ b/crates/yapfast-core/src/microphone_test.rs
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,99 @@
 +//! Records a short microphone sample in memory, then plays it locally.
 +use std::{
-+    sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc},
++    sync::{
++        Arc,
++        atomic::{AtomicBool, Ordering},
++        mpsc,
++    },
 +    time::Duration,
 +};
 +
@@ -933,15 +949,22 @@ index 0000000..952520b
 +        let stop = Arc::new(AtomicBool::new(false));
 +        let cancelled = stop.clone();
 +        let (progress, status) = mpsc::channel();
-+        std::thread::Builder::new().name("voxcord-microphone-test".into()).spawn(move || {
-+            let result = sample(microphone.as_deref(), speaker.as_deref(), &cancelled, &progress);
-+            if !cancelled.load(Ordering::Acquire) {
-+                let _ = progress.send(match result {
-+                    Ok(()) => Status::Finished,
-+                    Err(error) => Status::Failed(format!("{error:#}")),
-+                });
-+            }
-+        })?;
++        std::thread::Builder::new()
++            .name("voxcord-microphone-test".into())
++            .spawn(move || {
++                let result = sample(
++                    microphone.as_deref(),
++                    speaker.as_deref(),
++                    &cancelled,
++                    &progress,
++                );
++                if !cancelled.load(Ordering::Acquire) {
++                    let _ = progress.send(match result {
++                        Ok(()) => Status::Finished,
++                        Err(error) => Status::Failed(format!("{error:#}")),
++                    });
++                }
++            })?;
 +        Ok(Self { status, stop })
 +    }
 +}
@@ -964,44 +987,67 @@ index 0000000..952520b
 +    let _ = status.send(Status::Recording);
 +    let mut recording = vec![0; SAMPLE_CHUNKS * CHUNK];
 +    for frame in recording.chunks_exact_mut(CHUNK) {
-+        if stop.load(Ordering::Acquire) { return Ok(()); }
-+        input.read(frame).context("Le microphone n’a pas fourni de son")?;
++        if stop.load(Ordering::Acquire) {
++            return Ok(());
++        }
++        input
++            .read(frame)
++            .context("Le microphone n’a pas fourni de son")?;
 +    }
 +    drop(input);
-+    if stop.load(Ordering::Acquire) { return Ok(()); }
-+    let mut output = Output::<i16>::open(speaker, "Voxcord — retour micro", RATE, 1, Some(chunk * 3))
-+        .context("Impossible d’ouvrir la sortie audio sélectionnée")?;
++    if stop.load(Ordering::Acquire) {
++        return Ok(());
++    }
++    let mut output =
++        Output::<i16>::open(speaker, "Voxcord — retour micro", RATE, 1, Some(chunk * 3))
++            .context("Impossible d’ouvrir la sortie audio sélectionnée")?;
 +    let _ = status.send(Status::Playing);
 +    for frame in recording.chunks_exact(CHUNK) {
-+        if stop.load(Ordering::Acquire) { return Ok(()); }
-+        output.write(frame).context("La sortie audio a interrompu le test")?;
++        if stop.load(Ordering::Acquire) {
++            return Ok(());
++        }
++        output
++            .write(frame)
++            .context("La sortie audio a interrompu le test")?;
 +    }
-+    output.drain().context("La sortie audio a interrompu le test")
++    output
++        .drain()
++        .context("La sortie audio a interrompu le test")
 +}
 diff --git a/crates/yapfast-core/src/personal_audio.rs b/crates/yapfast-core/src/personal_audio.rs
 new file mode 100644
-index 0000000..f6d3d1d
+index 0000000..776c314
 --- /dev/null
 +++ b/crates/yapfast-core/src/personal_audio.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,59 @@
 +//! Decode soundboard clips and play a local, cancellable preview.
 +use std::{
-+    sync::{Arc, atomic::{AtomicBool, Ordering}},
++    sync::{
++        Arc,
++        atomic::{AtomicBool, Ordering},
++    },
 +    time::Duration,
 +};
 +
 +use anyhow::{Context, Result, ensure};
 +
-+use crate::{audio_io::{Output, RATE}, soundboard};
++use crate::{
++    audio_io::{Output, RATE},
++    soundboard,
++};
 +
 +pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 +const MAX_SECONDS: usize = 30;
 +
 +pub fn decode(data: &[u8]) -> Result<Arc<[i16]>> {
-+    ensure!(!data.is_empty() && data.len() <= MAX_BYTES, "Le fichier doit faire entre 1 octet et 8 Mo.");
-+    let stereo = soundboard::decode_bounded(data, MAX_SECONDS)
-+        .context("Fichier audio illisible")?;
-+    Ok(stereo.chunks_exact(2)
++    ensure!(
++        !data.is_empty() && data.len() <= MAX_BYTES,
++        "Le fichier doit faire entre 1 octet et 8 Mo."
++    );
++    let stereo =
++        soundboard::decode_bounded(data, MAX_SECONDS).context("Fichier audio illisible")?;
++    Ok(stereo
++        .chunks_exact(2)
 +        .map(|frame| ((i32::from(frame[0]) + i32::from(frame[1])) / 2) as i16)
 +        .collect())
 +}
@@ -1013,7 +1059,13 @@ index 0000000..f6d3d1d
 +    stop: &AtomicBool,
 +) -> Result<()> {
 +    let block = Duration::from_millis(20);
-+    let mut output = Output::<i16>::open(speaker, "Voxcord — écoute de la soundboard", RATE, 1, Some(block * 3))?;
++    let mut output = Output::<i16>::open(
++        speaker,
++        "Voxcord — écoute de la soundboard",
++        RATE,
++        1,
++        Some(block * 3),
++    )?;
 +    let mut frame = [0; RATE as usize / 50];
 +    for next in samples.chunks(frame.len()) {
 +        if stop.load(Ordering::Acquire) {
@@ -3029,112 +3081,286 @@ index 37497a0..44c4f2b 100644
  #[cfg(feature = "desktop")]
 diff --git a/src/myinstants.rs b/src/myinstants.rs
 new file mode 100644
-index 0000000..4405efe
+index 0000000..3040b4a
 --- /dev/null
 +++ b/src/myinstants.rs
-@@ -0,0 +1,104 @@
-+use reqwest::{blocking::Client, redirect::Policy, Url};
+@@ -0,0 +1,278 @@
++use reqwest::{Url, blocking::Client, redirect::Policy};
 +use serde::{Deserialize, Serialize};
-+use std::{collections::VecDeque, io::Read, sync::{Arc, Mutex}, time::{Duration, Instant}};
++use std::{
++    collections::VecDeque,
++    io::Read,
++    sync::{Arc, Mutex},
++    time::{Duration, Instant},
++};
 +
 +const MAX_AUDIO: usize = 8 * 1024 * 1024;
 +#[derive(Debug)]
-+pub struct Failure { pub status: u16, pub message: String }
-+fn fail(status: u16, message: impl Into<String>) -> Failure { Failure { status, message: message.into() } }
++pub struct Failure {
++    pub status: u16,
++    pub message: String,
++}
++fn fail(status: u16, message: impl Into<String>) -> Failure {
++    Failure {
++        status,
++        message: message.into(),
++    }
++}
 +pub type Fetch = Arc<dyn Fn(&str, usize) -> Result<Vec<u8>, Failure> + Send + Sync>;
 +
 +#[derive(Clone, Deserialize, Serialize)]
-+pub struct Sound { pub name: String, pub slug: String, pub sound: String, #[serde(default)] pub color: String }
++pub struct Sound {
++    pub name: String,
++    pub slug: String,
++    pub sound: String,
++    #[serde(default)]
++    pub color: String,
++}
 +#[derive(Clone, Serialize)]
-+pub struct Page { pub count: u64, pub next: bool, pub results: Vec<Sound> }
++pub struct Page {
++    pub count: u64,
++    pub next: bool,
++    pub results: Vec<Sound>,
++}
 +#[derive(Deserialize)]
-+struct ApiPage { count: u64, next: Option<String>, results: Vec<Sound> }
++struct ApiPage {
++    count: u64,
++    next: Option<String>,
++    results: Vec<Sound>,
++}
 +struct State {
 +    requests: VecDeque<Instant>,
 +    pages: VecDeque<(String, u32, Instant, Page)>,
 +    audio: VecDeque<(String, Arc<Vec<u8>>)>,
 +}
-+pub struct Catalog { state: Mutex<State>, fetch: Fetch }
++pub struct Catalog {
++    state: Mutex<State>,
++    fetch: Fetch,
++}
 +
-+fn slug_ok(slug: &str) -> bool { !slug.is_empty() && slug.len() <= 160 && slug.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') }
++fn slug_ok(slug: &str) -> bool {
++    !slug.is_empty()
++        && slug.len() <= 160
++        && slug
++            .bytes()
++            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
++}
 +fn sound_url_ok(value: &str) -> bool {
-+    Url::parse(value).is_ok_and(|url| url.scheme() == "https" && matches!(url.host_str(), Some("www.myinstants.com" | "myinstants.com"))
-+        && url.port().is_none() && url.username().is_empty() && url.password().is_none()
-+        && url.path().starts_with("/media/sounds/") && url.path().ends_with(".mp3"))
++    Url::parse(value).is_ok_and(|url| {
++        url.scheme() == "https"
++            && matches!(
++                url.host_str(),
++                Some("www.myinstants.com" | "myinstants.com")
++            )
++            && url.port().is_none()
++            && url.username().is_empty()
++            && url.password().is_none()
++            && url.path().starts_with("/media/sounds/")
++            && url.path().ends_with(".mp3")
++    })
 +}
 +fn http_get(url: &str, limit: usize) -> Result<Vec<u8>, Failure> {
-+    let client = Client::builder().timeout(Duration::from_secs(15)).redirect(Policy::none())
-+        .user_agent("Voxcord Myinstants integration").build().map_err(|_| fail(502,"Connexion Myinstants indisponible."))?;
-+    let response = client.get(url).header("Accept", "application/json, audio/*").send().map_err(|_| fail(502,"Myinstants est injoignable. Vérifie la connexion Internet du PC."))?;
-+    if response.status().as_u16() == 429 { return Err(fail(429,"Limite Myinstants atteinte. Patiente une minute avant une nouvelle recherche.")); }
-+    if !response.status().is_success() { return Err(fail(502,"Myinstants n’a pas pu fournir ce contenu.")); }
-+    if response.content_length().is_some_and(|length| length > limit as u64) { return Err(fail(413,"Ce son dépasse la limite de 8 Mo.")); }
++    let client = Client::builder()
++        .timeout(Duration::from_secs(15))
++        .redirect(Policy::none())
++        .user_agent("Voxcord Myinstants integration")
++        .build()
++        .map_err(|_| fail(502, "Connexion Myinstants indisponible."))?;
++    let response = client
++        .get(url)
++        .header("Accept", "application/json, audio/*")
++        .send()
++        .map_err(|_| {
++            fail(
++                502,
++                "Myinstants est injoignable. Vérifie la connexion Internet du PC.",
++            )
++        })?;
++    if response.status().as_u16() == 429 {
++        return Err(fail(
++            429,
++            "Limite Myinstants atteinte. Patiente une minute avant une nouvelle recherche.",
++        ));
++    }
++    if !response.status().is_success() {
++        return Err(fail(502, "Myinstants n’a pas pu fournir ce contenu."));
++    }
++    if response
++        .content_length()
++        .is_some_and(|length| length > limit as u64)
++    {
++        return Err(fail(413, "Ce son dépasse la limite de 8 Mo."));
++    }
 +    let mut bytes = Vec::new();
-+    response.take((limit+1) as u64).read_to_end(&mut bytes).map_err(|_| fail(502,"Téléchargement Myinstants interrompu."))?;
-+    if bytes.len() > limit { return Err(fail(413,"Contenu Myinstants trop volumineux.")); }
++    response
++        .take((limit + 1) as u64)
++        .read_to_end(&mut bytes)
++        .map_err(|_| fail(502, "Téléchargement Myinstants interrompu."))?;
++    if bytes.len() > limit {
++        return Err(fail(413, "Contenu Myinstants trop volumineux."));
++    }
 +    Ok(bytes)
 +}
 +impl Catalog {
-+    pub fn new() -> Self { Self::with_fetch(Arc::new(http_get)) }
-+    pub fn with_fetch(fetch: Fetch) -> Self { Self { state: Mutex::new(State { requests: VecDeque::new(), pages: VecDeque::new(), audio: VecDeque::new() }), fetch } }
++    pub fn new() -> Self {
++        Self::with_fetch(Arc::new(http_get))
++    }
++    pub fn with_fetch(fetch: Fetch) -> Self {
++        Self {
++            state: Mutex::new(State {
++                requests: VecDeque::new(),
++                pages: VecDeque::new(),
++                audio: VecDeque::new(),
++            }),
++            fetch,
++        }
++    }
 +    pub fn search(&self, query: &str, page: u32) -> Result<Page, Failure> {
 +        let query = query.trim();
-+        if query.chars().count() < 2 || query.chars().count() > 100 || !(1..=50).contains(&page) { return Err(fail(400,"Recherche entre 2 et 100 caractères, page entre 1 et 50.")); }
++        if query.chars().count() < 2 || query.chars().count() > 100 || !(1..=50).contains(&page) {
++            return Err(fail(
++                400,
++                "Recherche entre 2 et 100 caractères, page entre 1 et 50.",
++            ));
++        }
 +        // ponytail: one shared network operation at a time; a worker queue only if multi-user throughput becomes necessary.
 +        let mut state = self.state.lock().unwrap();
-+        state.pages.retain(|(_,_,time,_)| time.elapsed() < Duration::from_secs(600));
-+        if let Some((_,_,_,cached)) = state.pages.iter().find(|(name,number,_,_)| name == query && *number == page) { return Ok(cached.clone()); }
-+        while state.requests.front().is_some_and(|time| time.elapsed() >= Duration::from_secs(60)) { state.requests.pop_front(); }
-+        if state.requests.len() >= 10 { return Err(fail(429,format!("Limite Myinstants : réessaie dans {} s.",61-state.requests.front().unwrap().elapsed().as_secs()))); }
++        state
++            .pages
++            .retain(|(_, _, time, _)| time.elapsed() < Duration::from_secs(600));
++        if let Some((_, _, _, cached)) = state
++            .pages
++            .iter()
++            .find(|(name, number, _, _)| name == query && *number == page)
++        {
++            return Ok(cached.clone());
++        }
++        while state
++            .requests
++            .front()
++            .is_some_and(|time| time.elapsed() >= Duration::from_secs(60))
++        {
++            state.requests.pop_front();
++        }
++        if state.requests.len() >= 10 {
++            return Err(fail(
++                429,
++                format!(
++                    "Limite Myinstants : réessaie dans {} s.",
++                    61 - state.requests.front().unwrap().elapsed().as_secs()
++                ),
++            ));
++        }
 +        state.requests.push_back(Instant::now());
 +        let mut url = Url::parse("https://www.myinstants.com/api/v1/instants/").unwrap();
-+        url.query_pairs_mut().append_pair("name",query).append_pair("page",&page.to_string());
-+        let bytes = (self.fetch)(url.as_str(), 1024*1024)?;
-+        let raw: ApiPage = serde_json::from_slice(&bytes).map_err(|_| fail(502,"Réponse Myinstants illisible."))?;
-+        let results = raw.results.into_iter().take(20).filter(|sound| slug_ok(&sound.slug) && sound_url_ok(&sound.sound)).map(|mut sound| {
-+            sound.name = sound.name.chars().take(160).collect();
-+            sound.color = if sound.color.len()==6 && sound.color.bytes().all(|c| c.is_ascii_hexdigit()) { format!("#{}",sound.color) } else { "#7c6bff".into() }; sound
-+        }).collect();
-+        let result = Page { count: raw.count, next: raw.next.is_some(), results };
-+        if state.pages.len() >= 20 { state.pages.pop_front(); }
-+        state.pages.push_back((query.into(),page,Instant::now(),result.clone())); Ok(result)
++        url.query_pairs_mut()
++            .append_pair("name", query)
++            .append_pair("page", &page.to_string());
++        let bytes = (self.fetch)(url.as_str(), 1024 * 1024)?;
++        let raw: ApiPage = serde_json::from_slice(&bytes)
++            .map_err(|_| fail(502, "Réponse Myinstants illisible."))?;
++        let results = raw
++            .results
++            .into_iter()
++            .take(20)
++            .filter(|sound| slug_ok(&sound.slug) && sound_url_ok(&sound.sound))
++            .map(|mut sound| {
++                sound.name = sound.name.chars().take(160).collect();
++                sound.color = if sound.color.len() == 6
++                    && sound.color.bytes().all(|c| c.is_ascii_hexdigit())
++                {
++                    format!("#{}", sound.color)
++                } else {
++                    "#7c6bff".into()
++                };
++                sound
++            })
++            .collect();
++        let result = Page {
++            count: raw.count,
++            next: raw.next.is_some(),
++            results,
++        };
++        if state.pages.len() >= 20 {
++            state.pages.pop_front();
++        }
++        state
++            .pages
++            .push_back((query.into(), page, Instant::now(), result.clone()));
++        Ok(result)
 +    }
 +    pub fn audio(&self, slug: &str) -> Result<(Sound, Arc<Vec<u8>>), Failure> {
-+        if !slug_ok(slug) { return Err(fail(400,"Identifiant Myinstants invalide.")); }
++        if !slug_ok(slug) {
++            return Err(fail(400, "Identifiant Myinstants invalide."));
++        }
 +        let mut state = self.state.lock().unwrap();
-+        let sound = state.pages.iter().flat_map(|(_,_,_,page)| &page.results).find(|sound| sound.slug == slug).cloned().ok_or_else(|| fail(404,"Relance la recherche Myinstants pour retrouver ce son."))?;
-+        if let Some(index) = state.audio.iter().position(|(id,_)| id==slug) {
-+            let entry = state.audio.remove(index).unwrap(); let bytes = entry.1.clone(); state.audio.push_back(entry); return Ok((sound,bytes));
++        let sound = state
++            .pages
++            .iter()
++            .flat_map(|(_, _, _, page)| &page.results)
++            .find(|sound| sound.slug == slug)
++            .cloned()
++            .ok_or_else(|| {
++                fail(
++                    404,
++                    "Relance la recherche Myinstants pour retrouver ce son.",
++                )
++            })?;
++        if let Some(index) = state.audio.iter().position(|(id, _)| id == slug) {
++            let entry = state.audio.remove(index).unwrap();
++            let bytes = entry.1.clone();
++            state.audio.push_back(entry);
++            return Ok((sound, bytes));
 +        }
 +        let bytes = (self.fetch)(&sound.sound, MAX_AUDIO)?;
-+        if bytes.is_empty() || bytes.len() > MAX_AUDIO { return Err(fail(413,"Son vide ou supérieur à 8 Mo.")); }
++        if bytes.is_empty() || bytes.len() > MAX_AUDIO {
++            return Err(fail(413, "Son vide ou supérieur à 8 Mo."));
++        }
 +        let bytes = Arc::new(bytes);
-+        if state.audio.len() >= 6 { state.audio.pop_front(); }
-+        state.audio.push_back((slug.into(),bytes.clone())); Ok((sound,bytes))
++        if state.audio.len() >= 6 {
++            state.audio.pop_front();
++        }
++        state.audio.push_back((slug.into(), bytes.clone()));
++        Ok((sound, bytes))
 +    }
 +}
 +
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
-+    use std::sync::atomic::{AtomicUsize,Ordering};
++    use std::sync::atomic::{AtomicUsize, Ordering};
 +    #[test]
 +    fn official_search_contract_cache_limits_and_audio_allowlist() {
-+        let calls = Arc::new(AtomicUsize::new(0)); let counted = calls.clone();
-+        let catalog = Catalog::with_fetch(Arc::new(move |url,_| {
-+            counted.fetch_add(1,Ordering::Relaxed);
-+            if url.contains("/api/v1/") { Ok(br#"{"count":2,"next":null,"results":[{"name":"Test","slug":"test-12","sound":"https://www.myinstants.com/media/sounds/test.mp3","color":"AB1234"},{"name":"Bad","slug":"bad","sound":"http://127.0.0.1/private.mp3","color":"000000"}]}"#.to_vec()) }
-+            else { Ok(b"audio".to_vec()) }
++        let calls = Arc::new(AtomicUsize::new(0));
++        let counted = calls.clone();
++        let catalog = Catalog::with_fetch(Arc::new(move |url, _| {
++            counted.fetch_add(1, Ordering::Relaxed);
++            if url.contains("/api/v1/") {
++                Ok(br#"{"count":2,"next":null,"results":[{"name":"Test","slug":"test-12","sound":"https://www.myinstants.com/media/sounds/test.mp3","color":"AB1234"},{"name":"Bad","slug":"bad","sound":"http://127.0.0.1/private.mp3","color":"000000"}]}"#.to_vec())
++            } else {
++                Ok(b"audio".to_vec())
++            }
 +        }));
-+        let page = catalog.search("test",1).unwrap(); assert_eq!(page.results.len(),1); assert_eq!(page.results[0].color,"#AB1234");
-+        catalog.search("test",1).unwrap(); assert_eq!(calls.load(Ordering::Relaxed),1);
-+        assert_eq!(catalog.audio("test-12").unwrap().1.as_slice(), b"audio"); catalog.audio("test-12").unwrap();
-+        assert_eq!(calls.load(Ordering::Relaxed),2);
-+        assert!(catalog.audio("unknown").is_err()); assert!(catalog.search("x",1).is_err());
-+        for i in 0..9 { catalog.search(&format!("search-{i}"),1).unwrap(); }
-+        assert_eq!(catalog.search("limited",1).err().unwrap().status,429);
-+        assert!(!sound_url_ok("https://www.myinstants.com.evil.org/media/sounds/test.mp3"));
-+        assert!(!sound_url_ok("https://user@www.myinstants.com/media/sounds/test.mp3"));
++        let page = catalog.search("test", 1).unwrap();
++        assert_eq!(page.results.len(), 1);
++        assert_eq!(page.results[0].color, "#AB1234");
++        catalog.search("test", 1).unwrap();
++        assert_eq!(calls.load(Ordering::Relaxed), 1);
++        assert_eq!(catalog.audio("test-12").unwrap().1.as_slice(), b"audio");
++        catalog.audio("test-12").unwrap();
++        assert_eq!(calls.load(Ordering::Relaxed), 2);
++        assert!(catalog.audio("unknown").is_err());
++        assert!(catalog.search("x", 1).is_err());
++        for i in 0..9 {
++            catalog.search(&format!("search-{i}"), 1).unwrap();
++        }
++        assert_eq!(catalog.search("limited", 1).err().unwrap().status, 429);
++        assert!(!sound_url_ok(
++            "https://www.myinstants.com.evil.org/media/sounds/test.mp3"
++        ));
++        assert!(!sound_url_ok(
++            "https://user@www.myinstants.com/media/sounds/test.mp3"
++        ));
 +    }
 +}
 diff --git a/src/notify.rs b/src/notify.rs
@@ -3174,14 +3400,25 @@ index b628602..bbc7129 100644
              assert!(!is_ours(r#""C:\Apps\Discord\Discord.exe" "%1""#));
 diff --git a/src/remote_server.rs b/src/remote_server.rs
 new file mode 100644
-index 0000000..9604ebf
+index 0000000..16d84fd
 --- /dev/null
 +++ b/src/remote_server.rs
-@@ -0,0 +1,365 @@
-+use qrcode::{render::svg, QrCode};
+@@ -0,0 +1,998 @@
++use qrcode::{QrCode, render::svg};
 +use serde::{Deserialize, Serialize};
-+use serde_json::{json, Value};
-+use std::{collections::HashMap, io::Read, net::{IpAddr, Ipv4Addr, SocketAddr}, sync::{atomic::{AtomicBool, Ordering}, mpsc, Arc, Mutex}, thread, time::{Duration, Instant}};
++use serde_json::{Value, json};
++use std::{
++    collections::HashMap,
++    io::Read,
++    net::{IpAddr, Ipv4Addr, SocketAddr},
++    sync::{
++        Arc, Mutex,
++        atomic::{AtomicBool, Ordering},
++        mpsc,
++    },
++    thread,
++    time::{Duration, Instant},
++};
 +use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 +use uuid::Uuid;
 +
@@ -3194,11 +3431,16 @@ index 0000000..9604ebf
 +    pub id: String,
 +    pub name: String,
 +    pub local: bool,
-+    #[serde(default)] pub favorite: bool,
-+    #[serde(default)] pub category: String,
-+    #[serde(default)] pub color: String,
-+    #[serde(default)] pub shortcut: String,
-+    #[serde(default)] pub source_slug: String,
++    #[serde(default)]
++    pub favorite: bool,
++    #[serde(default)]
++    pub category: String,
++    #[serde(default)]
++    pub color: String,
++    #[serde(default)]
++    pub shortcut: String,
++    #[serde(default)]
++    pub source_slug: String,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -3207,22 +3449,43 @@ index 0000000..9604ebf
 +    pub enabled: bool,
 +    pub active: bool,
 +    pub volume: f64,
-+    #[serde(default = "default_monitor")] pub monitor: bool,
-+    #[serde(default = "default_monitor_volume")] pub monitor_volume: f64,
-+    #[serde(default)] pub error: String,
-+    #[serde(default)] pub last_playback: String,
-+    #[serde(default)] pub shortcuts: std::collections::BTreeMap<String, String>,
++    #[serde(default = "default_monitor")]
++    pub monitor: bool,
++    #[serde(default = "default_monitor_volume")]
++    pub monitor_volume: f64,
++    #[serde(default)]
++    pub error: String,
++    #[serde(default)]
++    pub last_playback: String,
++    #[serde(default)]
++    pub shortcuts: std::collections::BTreeMap<String, String>,
 +}
 +
 +impl Default for Board {
-+    fn default() -> Self { Self { sounds: vec![], enabled: false, active: false, volume: 0.7, monitor: true, monitor_volume: 0.7, error: String::new(), last_playback: String::new(), shortcuts: Default::default() } }
++    fn default() -> Self {
++        Self {
++            sounds: vec![],
++            enabled: false,
++            active: false,
++            volume: 0.7,
++            monitor: true,
++            monitor_volume: 0.7,
++            error: String::new(),
++            last_playback: String::new(),
++            shortcuts: Default::default(),
++        }
++    }
 +}
-+fn default_monitor() -> bool { true }
-+fn default_monitor_volume() -> f64 { 0.7 }
++fn default_monitor() -> bool {
++    true
++}
++fn default_monitor_volume() -> f64 {
++    0.7
++}
 +
 +struct Data {
 +    board: Board,
-+    synced: Option<Instant>,
++    ready: bool,
 +    revision: u64,
 +    port: u16,
 +    addresses: Vec<(String, Ipv4Addr)>,
@@ -3240,71 +3503,138 @@ index 0000000..9604ebf
 +    myinstants: crate::myinstants::Catalog,
 +}
 +
-+fn key() -> String { Uuid::new_v4().simple().to_string() }
++fn key() -> String {
++    Uuid::new_v4().simple().to_string()
++}
 +fn addresses() -> Vec<(String, Ipv4Addr)> {
 +    let preferred = local_ip_address::local_ip().ok();
-+    let mut interfaces: Vec<_> = local_ip_address::list_afinet_netifas().unwrap_or_default().into_iter().filter_map(|(name, ip)| match ip {
-+        IpAddr::V4(ip) if !ip.is_loopback() && (ip.is_private() || ip.is_link_local()) => Some((name, ip)), _ => None,
-+    }).collect();
++    let mut interfaces: Vec<_> = local_ip_address::list_afinet_netifas()
++        .unwrap_or_default()
++        .into_iter()
++        .filter_map(|(name, ip)| match ip {
++            IpAddr::V4(ip) if !ip.is_loopback() && (ip.is_private() || ip.is_link_local()) => {
++                Some((name, ip))
++            }
++            _ => None,
++        })
++        .collect();
 +    interfaces.sort_by_key(|(name, ip)| {
 +        let name = name.to_lowercase();
-+        let wifi = ["wi-fi", "wifi", "wlan", "wireless"].iter().any(|part| name.contains(part));
-+        (!wifi, Some(IpAddr::V4(*ip)) != preferred, name.contains("vpn") || name.contains("virtual"), *ip)
++        let wifi = ["wi-fi", "wifi", "wlan", "wireless"]
++            .iter()
++            .any(|part| name.contains(part));
++        (
++            !wifi,
++            Some(IpAddr::V4(*ip)) != preferred,
++            name.contains("vpn") || name.contains("virtual"),
++            *ip,
++        )
 +    });
 +    interfaces.dedup_by_key(|(_, ip)| *ip);
 +    interfaces
 +}
-+fn local(ip: IpAddr) -> bool { match ip { IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(), IpAddr::V6(ip) => ip.is_loopback() } }
++fn local(ip: IpAddr) -> bool {
++    match ip {
++        IpAddr::V4(ip) => ip.is_private() || ip.is_loopback() || ip.is_link_local(),
++        IpAddr::V6(ip) => ip.is_loopback(),
++    }
++}
 +fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
-+    request.headers().iter().find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name)).map(|h| h.value.as_str())
++    request
++        .headers()
++        .iter()
++        .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
++        .map(|h| h.value.as_str())
 +}
 +
 +fn respond(request: Request, status: u16, body: String, mime: &str, etag: Option<String>) {
 +    let mut response = Response::from_string(body).with_status_code(StatusCode(status));
 +    for (name, value) in [
-+        ("Content-Type", mime), ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff"),
-+        ("Referrer-Policy", "no-referrer"), ("X-Frame-Options", "DENY"),
-+        ("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src blob:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"),
++        ("Content-Type", mime),
++        ("Cache-Control", "no-store"),
++        ("X-Content-Type-Options", "nosniff"),
++        ("Referrer-Policy", "no-referrer"),
++        ("X-Frame-Options", "DENY"),
++        (
++            "Content-Security-Policy",
++            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src blob:; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
++        ),
 +    ] {
 +        response.add_header(Header::from_bytes(name, value).unwrap());
 +    }
-+    if let Some(etag) = etag { response.add_header(Header::from_bytes("ETag", etag).unwrap()); }
++    if let Some(etag) = etag {
++        response.add_header(Header::from_bytes("ETag", etag).unwrap());
++    }
 +    let _ = request.respond(response);
 +}
 +
-+fn json_response(request: Request, status: u16, value: Value) { respond(request, status, value.to_string(), "application/json; charset=utf-8", None); }
++fn json_response(request: Request, status: u16, value: Value) {
++    respond(
++        request,
++        status,
++        value.to_string(),
++        "application/json; charset=utf-8",
++        None,
++    );
++}
 +
 +impl Service {
 +    pub fn new() -> Self {
 +        Self::with_myinstants(crate::myinstants::Catalog::new())
 +    }
 +    pub fn with_myinstants(myinstants: crate::myinstants::Catalog) -> Self {
-+        Self { data: Mutex::new(Data { board: Board::default(), synced: None, revision: 0, port: 0, addresses: vec![], desktop_key: key(), phone_key: key(), lan: false, phone_seen: None }),
-+            pending: Mutex::new(HashMap::new()), uploads: Mutex::new(HashMap::new()), stopped: AtomicBool::new(false), myinstants }
++        Self {
++            data: Mutex::new(Data {
++                board: Board::default(),
++                ready: false,
++                revision: 0,
++                port: 0,
++                addresses: vec![],
++                desktop_key: key(),
++                phone_key: key(),
++                lan: false,
++                phone_seen: None,
++            }),
++            pending: Mutex::new(HashMap::new()),
++            uploads: Mutex::new(HashMap::new()),
++            stopped: AtomicBool::new(false),
++            myinstants,
++        }
 +    }
 +
 +    pub fn sync(&self, mut board: Board) -> Result<(), String> {
-+        if board.sounds.len() > 5000 || !board.volume.is_finite() || !(0.0..=1.0).contains(&board.volume)
-+            || !board.monitor_volume.is_finite() || !(0.0..=1.0).contains(&board.monitor_volume) { return Err("Bibliothèque invalide.".into()); }
++        if board.sounds.len() > 5000
++            || !board.volume.is_finite()
++            || !(0.0..=1.0).contains(&board.volume)
++            || !board.monitor_volume.is_finite()
++            || !(0.0..=1.0).contains(&board.monitor_volume)
++        {
++            return Err("Bibliothèque invalide.".into());
++        }
 +        for sound in &mut board.sounds {
-+            if sound.id.is_empty() || sound.id.len() > 128 { return Err("Identifiant de son invalide.".into()); }
++            if sound.id.is_empty() || sound.id.len() > 128 {
++                return Err("Identifiant de son invalide.".into());
++            }
 +            sound.name = sound.name.chars().take(160).collect();
 +            sound.category = sound.category.chars().take(48).collect();
 +            sound.shortcut = sound.shortcut.chars().take(80).collect();
 +            sound.source_slug = sound.source_slug.chars().take(160).collect();
-+            if sound.color.len() != 7 || !sound.color.starts_with('#') || !sound.color[1..].bytes().all(|b| b.is_ascii_hexdigit()) { sound.color = "#7c6bff".into(); }
++            if sound.color.len() != 7
++                || !sound.color.starts_with('#')
++                || !sound.color[1..].bytes().all(|b| b.is_ascii_hexdigit())
++            {
++                sound.color = "#7c6bff".into();
++            }
 +        }
 +        board.error = board.error.chars().take(400).collect();
 +        board.last_playback = board.last_playback.chars().take(400).collect();
 +        let mut data = self.data.lock().unwrap();
-+        if board != data.board { data.revision += 1; data.board = board; }
-+        data.synced = Some(Instant::now());
++        if board != data.board {
++            data.revision += 1;
++            data.board = board;
++        }
++        data.ready = true;
 +        Ok(())
-+    }
-+
-+    pub fn heartbeat(&self) {
-+        let mut data = self.data.lock().unwrap();
-+        if data.synced.is_some() { data.synced = Some(Instant::now()); }
 +    }
 +
 +    pub fn complete(&self, request_id: &str, error: Option<String>) {
@@ -3314,12 +3644,19 @@ index 0000000..9604ebf
 +    }
 +
 +    pub fn take_upload(&self, id: &str) -> Result<Vec<u8>, String> {
-+        self.uploads.lock().unwrap().remove(id).ok_or_else(|| "Import expiré ou introuvable.".into())
++        self.uploads
++            .lock()
++            .unwrap()
++            .remove(id)
++            .ok_or_else(|| "Import expiré ou introuvable.".into())
 +    }
 +
-+    pub fn shutdown(&self) { self.stopped.store(true, Ordering::Relaxed); }
-+    pub fn port(&self) -> u16 { self.data.lock().unwrap().port }
-+    pub fn has_sound(&self, name: &str) -> bool { self.data.lock().unwrap().board.sounds.iter().any(|sound| sound.name == name) }
++    pub fn shutdown(&self) {
++        self.stopped.store(true, Ordering::Relaxed);
++    }
++    pub fn port(&self) -> u16 {
++        self.data.lock().unwrap().port
++    }
 +
 +    pub fn desktop_url(&self) -> String {
 +        let data = self.data.lock().unwrap();
@@ -3328,17 +3665,33 @@ index 0000000..9604ebf
 +
 +    pub fn start(self: &Arc<Self>, dispatch: Dispatch) -> Result<String, String> {
 +        let mut data = self.data.lock().unwrap();
-+        if data.port != 0 { drop(data); return Ok(self.desktop_url()); }
-+        let server = Arc::new(Server::http(("0.0.0.0", 38427)).or_else(|_| Server::http(("0.0.0.0", 0))).map_err(|e| e.to_string())?);
-+        data.port = server.server_addr().to_ip().ok_or("Adresse réseau indisponible.")?.port();
++        if data.port != 0 {
++            drop(data);
++            return Ok(self.desktop_url());
++        }
++        let server = Arc::new(
++            Server::http(("0.0.0.0", 38427))
++                .or_else(|_| Server::http(("0.0.0.0", 0)))
++                .map_err(|e| e.to_string())?,
++        );
++        data.port = server
++            .server_addr()
++            .to_ip()
++            .ok_or("Adresse réseau indisponible.")?
++            .port();
 +        data.addresses = addresses();
 +        drop(data);
 +        for _ in 0..3 {
-+            let service = self.clone(); let server = server.clone(); let dispatch = dispatch.clone();
-+            thread::spawn(move || while !service.stopped.load(Ordering::Relaxed) {
-+                match server.recv_timeout(Duration::from_millis(200)) {
-+                    Ok(Some(request)) => service.handle(request, &dispatch),
-+                    Ok(None) => {}, Err(_) => break,
++            let service = self.clone();
++            let server = server.clone();
++            let dispatch = dispatch.clone();
++            thread::spawn(move || {
++                while !service.stopped.load(Ordering::Relaxed) {
++                    match server.recv_timeout(Duration::from_millis(200)) {
++                        Ok(Some(request)) => service.handle(request, &dispatch),
++                        Ok(None) => {}
++                        Err(_) => break,
++                    }
 +                }
 +            });
 +        }
@@ -3348,18 +3701,58 @@ index 0000000..9604ebf
 +    fn command(&self, mut action: Value, dispatch: &Dispatch) -> Result<(), String> {
 +        {
 +            let data = self.data.lock().unwrap();
-+            if data.synced.is_none() { return Err("Voxcord n'est pas prêt. Ouvre Discord sur le PC.".into()); }
-+            let kind = action["action"].as_str().ok_or("Action manquante.")?;
-+            if !matches!(kind, "play" | "preview" | "stop" | "volume" | "monitor" | "monitor-volume" | "enable" | "refresh" | "edit" | "delete" | "import" | "online-sound" | "online-prepare" | "shortcut") { return Err("Action inconnue.".into()); }
-+            if matches!(kind, "play" | "preview" | "edit" | "delete") {
-+                let sound = data.board.sounds.iter().find(|s| Some(s.id.as_str()) == action["id"].as_str()).ok_or("Son introuvable.")?;
-+                if kind == "delete" && !sound.local { return Err("Seuls les sons importés peuvent être supprimés.".into()); }
++            if !data.ready {
++                return Err("Voxcord n'est pas prêt. Ouvre Discord sur le PC.".into());
 +            }
-+            if matches!(kind, "volume" | "monitor-volume") && !action["volume"].as_f64().is_some_and(|v| v.is_finite() && (0.0..=1.0).contains(&v)) { return Err("Volume invalide.".into()); }
-+            if matches!(kind, "enable" | "monitor") && !action["enabled"].is_boolean() { return Err("État invalide.".into()); }
++            let kind = action["action"].as_str().ok_or("Action manquante.")?;
++            if !matches!(
++                kind,
++                "play"
++                    | "preview"
++                    | "stop"
++                    | "volume"
++                    | "monitor"
++                    | "monitor-volume"
++                    | "enable"
++                    | "refresh"
++                    | "edit"
++                    | "delete"
++                    | "import"
++                    | "online-sound"
++                    | "online-prepare"
++                    | "shortcut"
++            ) {
++                return Err("Action inconnue.".into());
++            }
++            if matches!(kind, "play" | "preview" | "edit" | "delete") {
++                let sound = data
++                    .board
++                    .sounds
++                    .iter()
++                    .find(|s| Some(s.id.as_str()) == action["id"].as_str())
++                    .ok_or("Son introuvable.")?;
++                if kind == "delete" && !sound.local {
++                    return Err("Seuls les sons importés peuvent être supprimés.".into());
++                }
++            }
++            if matches!(kind, "volume" | "monitor-volume")
++                && !action["volume"]
++                    .as_f64()
++                    .is_some_and(|v| v.is_finite() && (0.0..=1.0).contains(&v))
++            {
++                return Err("Volume invalide.".into());
++            }
++            if matches!(kind, "enable" | "monitor") && !action["enabled"].is_boolean() {
++                return Err("État invalide.".into());
++            }
 +            if kind == "edit" {
 +                for (field, max) in [("name", 160), ("category", 48)] {
-+                    if action[field].as_str().is_some_and(|value| value.chars().count() > max) { return Err("Libellé trop long.".into()); }
++                    if action[field]
++                        .as_str()
++                        .is_some_and(|value| value.chars().count() > max)
++                    {
++                        return Err("Libellé trop long.".into());
++                    }
 +                }
 +            }
 +        }
@@ -3368,116 +3761,361 @@ index 0000000..9604ebf
 +        let (tx, rx) = mpsc::sync_channel(1);
 +        {
 +            let mut pending = self.pending.lock().unwrap();
-+            if pending.len() >= 8 { return Err("Trop de commandes en attente.".into()); }
++            if pending.len() >= 8 {
++                return Err("Trop de commandes en attente.".into());
++            }
 +            pending.insert(request_id.clone(), tx);
 +        }
-+        if let Err(error) = dispatch(action) { self.pending.lock().unwrap().remove(&request_id); return Err(error); }
-+        let result = rx.recv_timeout(Duration::from_secs(8)).unwrap_or_else(|_| Err("Voxcord ne répond pas. Vérifie que l'application est ouverte.".into()));
++        if let Err(error) = dispatch(action) {
++            self.pending.lock().unwrap().remove(&request_id);
++            return Err(error);
++        }
++        let result = rx.recv_timeout(Duration::from_secs(8)).unwrap_or_else(|_| {
++            Err("Voxcord ne répond pas. Vérifie que l'application est ouverte.".into())
++        });
 +        self.pending.lock().unwrap().remove(&request_id);
 +        result
 +    }
 +
 +    fn handle(&self, mut request: Request, dispatch: &Dispatch) {
-+        let peer = match request.remote_addr().copied() { Some(peer) if local(peer.ip()) => peer, _ => { json_response(request, 403, json!({"error":"Réseau local uniquement."})); return; } };
++        let peer = match request.remote_addr().copied() {
++            Some(peer) if local(peer.ip()) => peer,
++            _ => {
++                json_response(request, 403, json!({"error":"Réseau local uniquement."}));
++                return;
++            }
++        };
 +        let data = self.data.lock().unwrap();
 +        let port = data.port;
 +        let host = header(&request, "Host").unwrap_or("");
-+        if !peer.ip().is_loopback() && !data.lan { drop(data); json_response(request, 403, json!({"error":"Télécommande désactivée."})); return; }
-+        let valid_host = host.parse::<SocketAddr>().is_ok_and(|addr| addr.port() == port && local(addr.ip()));
-+        let origin_ok = header(&request, "Origin").is_none_or(|origin| origin == format!("http://{host}"));
-+        if !valid_host || !origin_ok { drop(data); json_response(request, 403, json!({"error":"Origine non autorisée."})); return; }
-+        if request.method() == &Method::Get && request.url() == "/" { drop(data); respond(request, 200, PAGE.into(), "text/html; charset=utf-8", None); return; }
-+        let bearer = header(&request, "Authorization").unwrap_or("").strip_prefix("Bearer ").unwrap_or("");
++        if !peer.ip().is_loopback() && !data.lan {
++            drop(data);
++            json_response(request, 403, json!({"error":"Télécommande désactivée."}));
++            return;
++        }
++        let valid_host = host
++            .parse::<SocketAddr>()
++            .is_ok_and(|addr| addr.port() == port && local(addr.ip()));
++        let origin_ok =
++            header(&request, "Origin").is_none_or(|origin| origin == format!("http://{host}"));
++        if !valid_host || !origin_ok {
++            drop(data);
++            json_response(request, 403, json!({"error":"Origine non autorisée."}));
++            return;
++        }
++        if request.method() == &Method::Get && request.url() == "/" {
++            drop(data);
++            respond(request, 200, PAGE.into(), "text/html; charset=utf-8", None);
++            return;
++        }
++        let bearer = header(&request, "Authorization")
++            .unwrap_or("")
++            .strip_prefix("Bearer ")
++            .unwrap_or("");
 +        let desktop = peer.ip().is_loopback() && bearer == data.desktop_key;
 +        let phone = data.lan && bearer == data.phone_key;
-+        if !desktop && !phone { drop(data); json_response(request, 401, json!({"error":"Appairage nécessaire ou expiré."})); return; }
++        if !desktop && !phone {
++            drop(data);
++            json_response(
++                request,
++                401,
++                json!({"error":"Appairage nécessaire ou expiré."}),
++            );
++            return;
++        }
 +        drop(data);
-+        if phone { self.data.lock().unwrap().phone_seen = Some(Instant::now()); }
++        if phone {
++            self.data.lock().unwrap().phone_seen = Some(Instant::now());
++        }
 +
-+        if request.method() == &Method::Post && matches!(request.url(), "/api/myinstants/search" | "/api/myinstants/audio" | "/api/myinstants/action") {
++        if request.method() == &Method::Post
++            && matches!(
++                request.url(),
++                "/api/myinstants/search" | "/api/myinstants/audio" | "/api/myinstants/action"
++            )
++        {
 +            let route = request.url().to_owned();
 +            let mut bytes = Vec::new();
-+            if request.as_reader().take(2049).read_to_end(&mut bytes).is_err() || bytes.len()>2048 { json_response(request,400,json!({"error":"Requête Myinstants trop longue."})); return; }
-+            let value: Value = match serde_json::from_slice(&bytes) { Ok(value) => value, Err(_) => { json_response(request,400,json!({"error":"Requête Myinstants invalide."})); return; } };
++            if request
++                .as_reader()
++                .take(2049)
++                .read_to_end(&mut bytes)
++                .is_err()
++                || bytes.len() > 2048
++            {
++                json_response(
++                    request,
++                    400,
++                    json!({"error":"Requête Myinstants trop longue."}),
++                );
++                return;
++            }
++            let value: Value = match serde_json::from_slice(&bytes) {
++                Ok(value) => value,
++                Err(_) => {
++                    json_response(
++                        request,
++                        400,
++                        json!({"error":"Requête Myinstants invalide."}),
++                    );
++                    return;
++                }
++            };
 +            if route == "/api/myinstants/search" {
-+                match self.myinstants.search(value["query"].as_str().unwrap_or(""), value["page"].as_u64().and_then(|n| u32::try_from(n).ok()).unwrap_or(1)) {
-+                    Ok(page) => json_response(request,200,json!(page)), Err(error) => json_response(request,error.status,json!({"error":error.message})),
-+                } return;
++                match self.myinstants.search(
++                    value["query"].as_str().unwrap_or(""),
++                    value["page"]
++                        .as_u64()
++                        .and_then(|n| u32::try_from(n).ok())
++                        .unwrap_or(1),
++                ) {
++                    Ok(page) => json_response(request, 200, json!(page)),
++                    Err(error) => {
++                        json_response(request, error.status, json!({"error":error.message}))
++                    }
++                }
++                return;
 +            }
 +            let mode = value["mode"].as_str().unwrap_or("");
-+            if route.ends_with("/action") && (!matches!(mode,"play" | "save" | "preview") || (!desktop && mode=="preview")) { json_response(request,403,json!({"error":"Action Myinstants indisponible depuis cet appareil."})); return; }
++            if route.ends_with("/action")
++                && (!matches!(mode, "play" | "save" | "preview") || (!desktop && mode == "preview"))
++            {
++                json_response(
++                    request,
++                    403,
++                    json!({"error":"Action Myinstants indisponible depuis cet appareil."}),
++                );
++                return;
++            }
 +            let token = key();
-+            if route.ends_with("/action") && matches!(mode,"play" | "preview") {
-+                if let Err(error) = self.command(json!({"action":"online-prepare","token":token}),dispatch) { json_response(request,409,json!({"error":error})); return; }
++            if route.ends_with("/action") && matches!(mode, "play" | "preview") {
++                if let Err(error) =
++                    self.command(json!({"action":"online-prepare","token":token}), dispatch)
++                {
++                    json_response(request, 409, json!({"error":error}));
++                    return;
++                }
 +            }
 +            let (sound, bytes) = match self.myinstants.audio(value["slug"].as_str().unwrap_or("")) {
-+                Ok(value) => value, Err(error) => { json_response(request,error.status,json!({"error":error.message})); return; }
++                Ok(value) => value,
++                Err(error) => {
++                    json_response(request, error.status, json!({"error":error.message}));
++                    return;
++                }
 +            };
 +            if route.ends_with("/audio") {
 +                let mut response = Response::from_data(bytes.as_ref().clone());
-+                for (name,value) in [("Content-Type","audio/mpeg"),("Cache-Control","no-store"),("X-Content-Type-Options","nosniff"),("Referrer-Policy","no-referrer")] { response.add_header(Header::from_bytes(name,value).unwrap()); }
-+                let _ = request.respond(response); return;
++                for (name, value) in [
++                    ("Content-Type", "audio/mpeg"),
++                    ("Cache-Control", "no-store"),
++                    ("X-Content-Type-Options", "nosniff"),
++                    ("Referrer-Policy", "no-referrer"),
++                ] {
++                    response.add_header(Header::from_bytes(name, value).unwrap());
++                }
++                let _ = request.respond(response);
++                return;
 +            }
 +            let upload_id = key();
-+            { let mut uploads = self.uploads.lock().unwrap(); if uploads.len()>=2 { drop(uploads); json_response(request,429,json!({"error":"Un téléchargement est déjà en cours."})); return; } uploads.insert(upload_id.clone(),bytes.as_ref().clone()); }
++            {
++                let mut uploads = self.uploads.lock().unwrap();
++                if uploads.len() >= 2 {
++                    drop(uploads);
++                    json_response(
++                        request,
++                        429,
++                        json!({"error":"Un téléchargement est déjà en cours."}),
++                    );
++                    return;
++                }
++                uploads.insert(upload_id.clone(), bytes.as_ref().clone());
++            }
 +            let result = self.command(json!({"action":"online-sound", "upload_id":upload_id, "mode":mode, "token":token, "name":sound.name, "slug":sound.slug, "color":sound.color}),dispatch);
 +            self.uploads.lock().unwrap().remove(&upload_id);
-+            json_response(request,if result.is_ok(){200}else{409},result.map_or_else(|error|json!({"error":error}), |_|json!({"ok":true}))); return;
++            json_response(
++                request,
++                if result.is_ok() { 200 } else { 409 },
++                result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true})),
++            );
++            return;
 +        }
 +
 +        if request.method() == &Method::Get && request.url() == "/api/state" {
 +            let data = self.data.lock().unwrap();
-+            let ready = data.synced.is_some();
-+            let connected = data.lan && data.phone_seen.is_some_and(|time| time.elapsed() <= Duration::from_secs(5));
++            let ready = data.ready;
++            let connected = data.lan
++                && data
++                    .phone_seen
++                    .is_some_and(|time| time.elapsed() <= Duration::from_secs(5));
 +            let etag = format!("\"{}-{desktop}-{ready}-{connected}\"", data.revision);
-+            if header(&request, "If-None-Match") == Some(etag.as_str()) { drop(data); respond(request, 304, String::new(), "application/json", Some(etag)); return; }
++            if header(&request, "If-None-Match") == Some(etag.as_str()) {
++                drop(data);
++                respond(request, 304, String::new(), "application/json", Some(etag));
++                return;
++            }
 +            let mut value = json!({"board":data.board, "ready":ready, "desktop":desktop});
 +            if desktop {
-+                let links: Vec<Value> = data.addresses.iter().map(|(name, ip)| {
-+                    let url = format!("http://{ip}:{}/#key={}", data.port, data.phone_key);
-+                    let qr = if data.lan { QrCode::new(url.as_bytes()).ok().map(|code| code.render::<svg::Color>().min_dimensions(224,224).build()).unwrap_or_default() } else { String::new() };
-+                    json!({"address":ip.to_string(), "interface":name, "url":url, "qr":qr})
-+                }).collect();
++                let links: Vec<Value> = data
++                    .addresses
++                    .iter()
++                    .map(|(name, ip)| {
++                        let url = format!("http://{ip}:{}/#key={}", data.port, data.phone_key);
++                        let qr = if data.lan {
++                            QrCode::new(url.as_bytes())
++                                .ok()
++                                .map(|code| {
++                                    code.render::<svg::Color>().min_dimensions(224, 224).build()
++                                })
++                                .unwrap_or_default()
++                        } else {
++                            String::new()
++                        };
++                        json!({"address":ip.to_string(), "interface":name, "url":url, "qr":qr})
++                    })
++                    .collect();
 +                value["remote"] = json!({"enabled":data.lan, "connected":connected, "links":links});
 +            }
-+            drop(data); respond(request, 200, value.to_string(), "application/json; charset=utf-8", Some(etag)); return;
++            drop(data);
++            respond(
++                request,
++                200,
++                value.to_string(),
++                "application/json; charset=utf-8",
++                Some(etag),
++            );
++            return;
 +        }
 +
 +        if request.method() == &Method::Post && request.url() == "/api/network-access" && desktop {
 +            let result = dispatch(json!({"action":"network-access", "requestId":""}));
-+            json_response(request, if result.is_ok() { 200 } else { 409 }, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
++            json_response(
++                request,
++                if result.is_ok() { 200 } else { 409 },
++                result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true})),
++            );
++            return;
 +        }
 +        if request.method() == &Method::Post && request.url() == "/api/remote" && desktop {
 +            let mut bytes = Vec::new();
-+            if request.as_reader().take(1025).read_to_end(&mut bytes).is_err() || bytes.len() > 1024 { json_response(request, 400, json!({"error":"Requête invalide."})); return; }
-+            let enabled = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| v["enabled"].as_bool());
++            if request
++                .as_reader()
++                .take(1025)
++                .read_to_end(&mut bytes)
++                .is_err()
++                || bytes.len() > 1024
++            {
++                json_response(request, 400, json!({"error":"Requête invalide."}));
++                return;
++            }
++            let enabled = serde_json::from_slice::<Value>(&bytes)
++                .ok()
++                .and_then(|v| v["enabled"].as_bool());
 +            if let Some(enabled) = enabled {
 +                let interfaces = addresses();
-+                let mut data = self.data.lock().unwrap(); data.addresses = interfaces; data.lan = enabled; data.phone_key = key(); data.phone_seen = None; data.revision += 1;
-+                drop(data); json_response(request, 200, json!({"ok":true}));
-+            } else { json_response(request, 400, json!({"error":"État manquant."})); }
++                let mut data = self.data.lock().unwrap();
++                data.addresses = interfaces;
++                data.lan = enabled;
++                data.phone_key = key();
++                data.phone_seen = None;
++                data.revision += 1;
++                drop(data);
++                json_response(request, 200, json!({"ok":true}));
++            } else {
++                json_response(request, 400, json!({"error":"État manquant."}));
++            }
 +            return;
 +        }
 +
 +        if request.method() == &Method::Post && request.url() == "/api/upload" && desktop {
-+            if request.body_length().is_some_and(|len| len > MAX_UPLOAD) { json_response(request, 413, json!({"error":"8 Mo maximum par son."})); return; }
-+            let name = header(&request, "X-Sound-Name").unwrap_or("son.wav").chars().take(512).collect::<String>();
++            if request.body_length().is_some_and(|len| len > MAX_UPLOAD) {
++                json_response(request, 413, json!({"error":"8 Mo maximum par son."}));
++                return;
++            }
++            let name = header(&request, "X-Sound-Name")
++                .unwrap_or("son.wav")
++                .chars()
++                .take(512)
++                .collect::<String>();
 +            let mut bytes = Vec::new();
-+            if request.as_reader().take((MAX_UPLOAD + 1) as u64).read_to_end(&mut bytes).is_err() || bytes.len() > MAX_UPLOAD { json_response(request, 413, json!({"error":"Fichier trop volumineux ou invalide."})); return; }
++            if request
++                .as_reader()
++                .take((MAX_UPLOAD + 1) as u64)
++                .read_to_end(&mut bytes)
++                .is_err()
++                || bytes.len() > MAX_UPLOAD
++            {
++                json_response(
++                    request,
++                    413,
++                    json!({"error":"Fichier trop volumineux ou invalide."}),
++                );
++                return;
++            }
 +            let upload_id = key();
-+            { let mut uploads = self.uploads.lock().unwrap(); if uploads.len() >= 2 { drop(uploads); json_response(request, 429, json!({"error":"Un import est déjà en cours."})); return; } uploads.insert(upload_id.clone(), bytes); }
-+            let result = self.command(json!({"action":"import", "upload_id":upload_id, "name":name}), dispatch);
++            {
++                let mut uploads = self.uploads.lock().unwrap();
++                if uploads.len() >= 2 {
++                    drop(uploads);
++                    json_response(
++                        request,
++                        429,
++                        json!({"error":"Un import est déjà en cours."}),
++                    );
++                    return;
++                }
++                uploads.insert(upload_id.clone(), bytes);
++            }
++            let result = self.command(
++                json!({"action":"import", "upload_id":upload_id, "name":name}),
++                dispatch,
++            );
 +            self.uploads.lock().unwrap().remove(&upload_id);
-+            json_response(request, if result.is_ok() {200} else {409}, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
++            json_response(
++                request,
++                if result.is_ok() { 200 } else { 409 },
++                result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true})),
++            );
++            return;
 +        }
 +
 +        if request.method() == &Method::Post && request.url() == "/api/command" {
 +            let mut bytes = Vec::new();
-+            if request.as_reader().take(8193).read_to_end(&mut bytes).is_err() || bytes.len() > 8192 { json_response(request, 400, json!({"error":"Commande trop longue."})); return; }
-+            let action = match serde_json::from_slice::<Value>(&bytes) { Ok(value) if value.is_object() => value, _ => { json_response(request, 400, json!({"error":"Commande invalide."})); return; } };
-+            if matches!(action["action"].as_str(), Some("import" | "online-sound" | "online-prepare")) || (!desktop && (matches!(action["action"].as_str(), Some("preview" | "monitor" | "monitor-volume" | "shortcut")) || action.get("shortcut").is_some())) { json_response(request, 403, json!({"error":"Action réservée au PC."})); return; }
++            if request
++                .as_reader()
++                .take(8193)
++                .read_to_end(&mut bytes)
++                .is_err()
++                || bytes.len() > 8192
++            {
++                json_response(request, 400, json!({"error":"Commande trop longue."}));
++                return;
++            }
++            let action = match serde_json::from_slice::<Value>(&bytes) {
++                Ok(value) if value.is_object() => value,
++                _ => {
++                    json_response(request, 400, json!({"error":"Commande invalide."}));
++                    return;
++                }
++            };
++            if matches!(
++                action["action"].as_str(),
++                Some("import" | "online-sound" | "online-prepare")
++            ) || (!desktop
++                && (matches!(
++                    action["action"].as_str(),
++                    Some("preview" | "monitor" | "monitor-volume" | "shortcut")
++                ) || action.get("shortcut").is_some()))
++            {
++                json_response(request, 403, json!({"error":"Action réservée au PC."}));
++                return;
++            }
 +            let result = self.command(action, dispatch);
-+            json_response(request, if result.is_ok() {200} else {409}, result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true}))); return;
++            json_response(
++                request,
++                if result.is_ok() { 200 } else { 409 },
++                result.map_or_else(|error| json!({"error":error}), |_| json!({"ok":true})),
++            );
++            return;
 +        }
 +        json_response(request, 403, json!({"error":"Action non autorisée."}));
 +    }
@@ -3489,57 +4127,278 @@ index 0000000..9604ebf
 +    use std::io::{Read, Write};
 +    use std::net::TcpStream;
 +
-+    fn request(service: &Service, method: &str, path: &str, token: &str, body: &[u8], origin: Option<&str>) -> (u16, String) {
++    fn request(
++        service: &Service,
++        method: &str,
++        path: &str,
++        token: &str,
++        body: &[u8],
++        origin: Option<&str>,
++    ) -> (u16, String) {
 +        let port = service.data.lock().unwrap().port;
 +        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-+        let origin = origin.map(|value| format!("Origin: {value}\r\n")).unwrap_or_default();
++        stream
++            .set_read_timeout(Some(Duration::from_secs(3)))
++            .unwrap();
++        let origin = origin
++            .map(|value| format!("Origin: {value}\r\n"))
++            .unwrap_or_default();
 +        write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n{origin}\r\n", body.len()).unwrap();
 +        stream.write_all(body).unwrap();
-+        let mut result = String::new(); stream.read_to_string(&mut result).unwrap();
-+        let status = result.lines().next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
++        let mut result = String::new();
++        stream.read_to_string(&mut result).unwrap();
++        let status = result
++            .lines()
++            .next()
++            .unwrap()
++            .split_whitespace()
++            .nth(1)
++            .unwrap()
++            .parse()
++            .unwrap();
 +        (status, result.split_once("\r\n\r\n").unwrap().1.to_owned())
 +    }
 +
 +    #[test]
 +    fn pairing_origin_validation_commands_and_revocation_use_real_http() {
 +        let service = Arc::new(Service::new());
-+        let ready = Board { sounds: vec![Sound { id: "test-sound".into(), name: "Test".into(), local: true, ..Sound::default() }], active: true, enabled: true, ..Board::default() };
++        let ready = Board {
++            sounds: vec![Sound {
++                id: "test-sound".into(),
++                name: "Test".into(),
++                local: true,
++                ..Sound::default()
++            }],
++            active: true,
++            enabled: true,
++            ..Board::default()
++        };
 +        service.sync(ready).unwrap();
 +        let callback = service.clone();
-+        let calls = Arc::new(Mutex::new(Vec::new())); let captured = calls.clone();
-+        service.start(Arc::new(move |action| {
-+            captured.lock().unwrap().push(action.clone());
-+            if action["action"] == "import" { assert_eq!(callback.take_upload(action["upload_id"].as_str().unwrap()).unwrap(), b"RIFFtest"); }
-+            callback.complete(action["requestId"].as_str().unwrap(), None); Ok(())
-+        })).unwrap();
++        let calls = Arc::new(Mutex::new(Vec::new()));
++        let captured = calls.clone();
++        service
++            .start(Arc::new(move |action| {
++                captured.lock().unwrap().push(action.clone());
++                if action["action"] == "import" {
++                    assert_eq!(
++                        callback
++                            .take_upload(action["upload_id"].as_str().unwrap())
++                            .unwrap(),
++                        b"RIFFtest"
++                    );
++                }
++                callback.complete(action["requestId"].as_str().unwrap(), None);
++                Ok(())
++            }))
++            .unwrap();
 +        let desktop = service.data.lock().unwrap().desktop_key.clone();
 +        assert_eq!(request(&service, "GET", "/", "", b"", None).0, 200);
 +        assert_eq!(request(&service, "GET", "/api/state", "", b"", None).0, 401);
-+        assert_eq!(request(&service, "POST", "/api/myinstants/search", "", br#"{"query":"test"}"#, None).0, 401);
-+        assert_eq!(request(&service, "GET", "/api/state", &desktop, b"", None).0, 200);
-+        assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":true}"#, Some("http://evil.invalid")).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":true}"#, None).0, 200);
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/myinstants/search",
++                "",
++                br#"{"query":"test"}"#,
++                None
++            )
++            .0,
++            401
++        );
++        assert_eq!(
++            request(&service, "GET", "/api/state", &desktop, b"", None).0,
++            200
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/remote",
++                &desktop,
++                br#"{"enabled":true}"#,
++                Some("http://evil.invalid")
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/remote",
++                &desktop,
++                br#"{"enabled":true}"#,
++                None
++            )
++            .0,
++            200
++        );
 +        let phone = service.data.lock().unwrap().phone_key.clone();
-+        let state: Value = serde_json::from_str(&request(&service, "GET", "/api/state", &phone, b"", None).1).unwrap();
-+        assert_eq!(state["desktop"], false); assert!(state.get("remote").is_none());
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"play","id":"test-sound"}"#, None).0, 200);
++        let state: Value =
++            serde_json::from_str(&request(&service, "GET", "/api/state", &phone, b"", None).1)
++                .unwrap();
++        assert_eq!(state["desktop"], false);
++        assert!(state.get("remote").is_none());
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"play","id":"test-sound"}"#,
++                None
++            )
++            .0,
++            200
++        );
 +        assert_eq!(calls.lock().unwrap()[0]["id"], "test-sound");
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"play","id":"missing"}"#, None).0, 409);
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"volume","volume":3}"#, None).0, 409);
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"preview","id":"test-sound"}"#, None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"monitor","enabled":true}"#, None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"monitor-volume","volume":0.2}"#, None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/command", &phone, br#"{"action":"online-sound"}"#, None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/myinstants/search", &phone, br#"{"query":"x"}"#, None).0, 400);
-+        assert_eq!(request(&service, "POST", "/api/myinstants/audio", &phone, br#"{"slug":"unknown"}"#, None).0, 404);
-+        assert_eq!(request(&service, "POST", "/api/command", &desktop, br#"{"action":"monitor-volume","volume":2}"#, None).0, 409);
-+        assert_eq!(request(&service, "POST", "/api/remote", &phone, br#"{"enabled":false}"#, None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/network-access", &phone, b"", None).0, 403);
-+        assert_eq!(request(&service, "POST", "/api/upload", &desktop, b"RIFFtest", None).0, 200);
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"play","id":"missing"}"#,
++                None
++            )
++            .0,
++            409
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"volume","volume":3}"#,
++                None
++            )
++            .0,
++            409
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"preview","id":"test-sound"}"#,
++                None
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"monitor","enabled":true}"#,
++                None
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"monitor-volume","volume":0.2}"#,
++                None
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &phone,
++                br#"{"action":"online-sound"}"#,
++                None
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/myinstants/search",
++                &phone,
++                br#"{"query":"x"}"#,
++                None
++            )
++            .0,
++            400
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/myinstants/audio",
++                &phone,
++                br#"{"slug":"unknown"}"#,
++                None
++            )
++            .0,
++            404
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/command",
++                &desktop,
++                br#"{"action":"monitor-volume","volume":2}"#,
++                None
++            )
++            .0,
++            409
++        );
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/remote",
++                &phone,
++                br#"{"enabled":false}"#,
++                None
++            )
++            .0,
++            403
++        );
++        assert_eq!(
++            request(&service, "POST", "/api/network-access", &phone, b"", None).0,
++            403
++        );
++        assert_eq!(
++            request(&service, "POST", "/api/upload", &desktop, b"RIFFtest", None).0,
++            200
++        );
 +        assert!(service.uploads.lock().unwrap().is_empty());
-+        assert_eq!(request(&service, "POST", "/api/remote", &desktop, br#"{"enabled":false}"#, None).0, 200);
-+        assert_eq!(request(&service, "GET", "/api/state", &phone, b"", None).0, 401);
++        assert_eq!(
++            request(
++                &service,
++                "POST",
++                "/api/remote",
++                &desktop,
++                br#"{"enabled":false}"#,
++                None
++            )
++            .0,
++            200
++        );
++        assert_eq!(
++            request(&service, "GET", "/api/state", &phone, b"", None).0,
++            401
++        );
 +        service.shutdown();
 +    }
 +}
@@ -3847,7 +4706,7 @@ index 5b5f9f1..cdab5a1 100644
          link.set_sent(rate(stream.sent_kbps).into());
          link.set_target(rate(stream.target_kbps).into());
 diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
-index 597fb2e..b7f92c5 100644
+index 597fb2e..51ec549 100644
 --- a/src/ui/callbacks.rs
 +++ b/src/ui/callbacks.rs
 @@ -195,6 +195,27 @@ fn show_emoji(adapter: &Rc<RefCell<Adapter>>, window: &YapfastWindow, query: &st
@@ -3918,10 +4777,10 @@ index 597fb2e..b7f92c5 100644
 -        {
 -            window.set_camera_preview(frame);
 +        if let Some(preview) = &adapter.camera_test {
-+            if let Ok(error) = preview.error.try_recv() {
++            if let Some(error) = preview.error() {
++                window.set_camera_testing(false);
 +                window.set_camera_note(error.into());
-+            }
-+            if let Some(frame) = preview.feed.take(pictures::frame) {
++            } else if let Some(frame) = preview.feed.take(pictures::frame) {
 +                window.set_camera_preview(frame);
 +            }
          }
@@ -3943,22 +4802,35 @@ index 597fb2e..b7f92c5 100644
      window.on_play_soundboard(move |id| {
          let Some(window) = weak.upgrade() else { return };
          state.borrow_mut().action(
-@@ -2753,8 +2790,10 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2752,10 +2789,12 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         });
          if let Some(id) = id {
              let mut adapter = state.borrow_mut();
-             adapter.action(&window, Action::Voice(voice::Command::Camera(id)));
+-            adapter.action(&window, Action::Voice(voice::Command::Camera(id)));
 -            if adapter.camera_test.is_some() {
++            adapter.action(&window, Action::Voice(voice::Command::Camera(id.clone())));
 +            if window.get_camera_testing() {
                  adapter.camera_test = None;
+-                start_camera_test(&mut adapter, &window);
 +                window.set_camera_preview(slint::Image::default());
 +                window.set_camera_note(SharedString::default());
-                 start_camera_test(&mut adapter, &window);
++                start_camera_test(&mut adapter, &window, Some(id));
              }
          }
-@@ -2771,6 +2810,54 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
-         }
      });
-     let state = adapter.clone();
+@@ -2765,9 +2804,58 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         let Some(window) = weak.upgrade() else { return };
+         let mut adapter = state.borrow_mut();
+         adapter.camera_test = None;
+-        window.set_camera_note(SharedString::default());
+         if on {
+-            start_camera_test(&mut adapter, &window);
++            window.set_camera_note(SharedString::default());
++            let camera = adapter.app.state.voice.camera.clone();
++            start_camera_test(&mut adapter, &window, camera);
++        }
++    });
++    let state = adapter.clone();
 +    let weak = window.as_weak();
 +    window.on_test_microphone(move |on| {
 +        let Some(window) = weak.upgrade() else { return };
@@ -4004,13 +4876,10 @@ index 597fb2e..b7f92c5 100644
 +        if done {
 +            adapter.microphone_test.take();
 +            window.set_microphone_testing(false);
-+        }
-+    });
-+    let state = adapter.clone();
-     window.on_metering(move |on| {
-         let mut adapter = state.borrow_mut();
-         let microphone = adapter.app.state.voice.microphone.clone();
-@@ -2785,7 +2872,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         }
+     });
+     let state = adapter.clone();
+@@ -2785,7 +2873,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              window.set_meter_note(SharedString::from(if !meter::AVAILABLE {
                  "The level meter isn't available on this system yet."
              } else if meter.failed() {
@@ -4019,7 +4888,7 @@ index 597fb2e..b7f92c5 100644
              } else {
                  ""
              }));
-@@ -2810,7 +2897,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2810,7 +2898,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                      if !yapfast_core::discord_audio::AVAILABLE {
                          "Discord voice and its level aren't available on this system yet."
                      } else if meter.failed() {
@@ -4028,13 +4897,16 @@ index 597fb2e..b7f92c5 100644
                      } else {
                          ""
                      },
-@@ -2917,11 +3004,9 @@ fn composer_caret(
+@@ -2915,13 +3003,10 @@ fn composer_caret(
+ 
+ /// Films with the chosen camera into the voice settings' preview, which is
  /// about 400 by 225 points.
- fn start_camera_test(adapter: &mut Adapter, window: &YapfastWindow) {
+-fn start_camera_test(adapter: &mut Adapter, window: &YapfastWindow) {
++fn start_camera_test(adapter: &mut Adapter, window: &YapfastWindow, camera: Option<String>) {
      let scale = window.window().scale_factor();
 -    let feed = yapfast_core::picture::Feed::new();
 -    feed.show_at(Some(((400.0 * scale) as u32, (225.0 * scale) as u32)));
-     let camera = adapter.app.state.voice.camera.clone();
+-    let camera = adapter.app.state.voice.camera.clone();
 -    match yapfast_core::camera::Camera::open(camera.as_deref(), Box::new(feed.sink())) {
 -        Ok(camera) => adapter.camera_test = Some((camera, feed)),
 +    match yapfast_core::camera::Preview::start(camera, ((400.0 * scale) as u32, (225.0 * scale) as u32)) {
@@ -4091,19 +4963,23 @@ index e0a7808..8874448 100644
      let discoverable = server.is_some_and(|server| server.community)
 diff --git a/src/ui/personal.rs b/src/ui/personal.rs
 new file mode 100644
-index 0000000..55ad9f1
+index 0000000..754b875
 --- /dev/null
 +++ b/src/ui/personal.rs
-@@ -0,0 +1,435 @@
+@@ -0,0 +1,585 @@
 +//! The personal soundboard uses the native voice engine. Only the controller
 +//! page is served over HTTP, for the PC and an explicitly paired phone.
 +use std::{
++    cell::RefCell,
 +    fs,
 +    io::Read,
 +    path::{Path, PathBuf},
 +    rc::Weak,
-+    cell::RefCell,
-+    sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}, mpsc},
++    sync::{
++        Arc, Mutex,
++        atomic::{AtomicBool, AtomicU64, Ordering},
++        mpsc,
++    },
 +    thread,
 +    time::Duration,
 +};
@@ -4118,7 +4994,10 @@ index 0000000..55ad9f1
 +
 +use crate::remote_server::{Board as BoardSnapshot, Service, Sound};
 +
-+use super::{Adapter, personal_hotkeys::{Action, Hotkeys}};
++use super::{
++    Adapter,
++    personal_hotkeys::{Action, Hotkeys},
++};
 +
 +type Result<T> = std::result::Result<T, String>;
 +
@@ -4150,8 +5029,12 @@ index 0000000..55ad9f1
 +    pub(super) fn start(root: &Path, adapter: Weak<RefCell<Adapter>>) -> Result<Arc<Self>> {
 +        let directory = root.join("personal-sounds");
 +        let mut settings: BoardSnapshot = fs::read(directory.join("library.json"))
-+            .ok().and_then(|data| serde_json::from_slice(&data).ok()).unwrap_or_default();
-+        settings.sounds.retain(|sound| uuid::Uuid::parse_str(&sound.id).is_ok() && sound.local);
++            .ok()
++            .and_then(|data| serde_json::from_slice(&data).ok())
++            .unwrap_or_default();
++        settings
++            .sounds
++            .retain(|sound| uuid::Uuid::parse_str(&sound.id).is_ok() && sound.local);
 +        settings.active = false;
 +        settings.error.clear();
 +        settings.last_playback.clear();
@@ -4171,9 +5054,13 @@ index 0000000..55ad9f1
 +        });
 +        slint::spawn_local(async move {
 +            while let Some(request) = incoming.recv().await {
-+                let Some(adapter) = adapter.upgrade() else { break };
++                let Some(adapter) = adapter.upgrade() else {
++                    break;
++                };
 +                let Request::Voice(command, ack) = request else {
-+                    let Request::Shortcut(action) = request else { unreachable!() };
++                    let Request::Shortcut(action) = request else {
++                        unreachable!()
++                    };
 +                    let window = adapter.borrow().weak.upgrade();
 +                    if let Some(window) = window {
 +                        match action {
@@ -4186,34 +5073,41 @@ index 0000000..55ad9f1
 +                    continue;
 +                };
 +                let adapter = adapter.borrow();
-+                let result = if matches!(&command, Command::PersonalSound(..)) && !can_send(&adapter.app.state.voice) {
++                let result = if matches!(&command, Command::PersonalSound(..))
++                    && !can_send(&adapter.app.state.voice)
++                {
 +                    Err("Rejoins un appel Discord et ouvre ton microphone.".into())
 +                } else {
 +                    match &adapter.backend {
-+                        Some(backend) => backend.send(yapfast_core::chat::Command::Voice(command))
++                        Some(backend) => backend
++                            .send(yapfast_core::chat::Command::Voice(command))
 +                            .map_err(|_| "La connexion vocale a changé.".into()),
 +                        None => Err("Connecte-toi à Discord dans Voxcord.".into()),
 +                    }
 +                };
 +                let _ = ack.send(result);
 +            }
-+        }).map_err(|error| error.to_string())?;
++        })
++        .map_err(|error| error.to_string())?;
 +        let weak = Arc::downgrade(&board);
-+        thread::Builder::new().name("voxcord-hotkey-actions".into()).spawn(move || {
-+            while let Ok(action) = hotkey_actions.recv() {
-+                let Some(board) = weak.upgrade() else { break };
-+                let result = match action {
-+                    Action::Play(id) => board.play_saved(&id, false),
-+                    Action::StopSounds => board.stop(),
-+                    _ => {
-+                        let _ = board.commands.try_send(Request::Shortcut(action));
-+                        continue;
-+                    }
-+                };
-+                board.settings.lock().unwrap().error = result.err().unwrap_or_default();
-+                board.sync();
-+            }
-+        }).map_err(|error| error.to_string())?;
++        thread::Builder::new()
++            .name("voxcord-hotkey-actions".into())
++            .spawn(move || {
++                while let Ok(action) = hotkey_actions.recv() {
++                    let Some(board) = weak.upgrade() else { break };
++                    let result = match action {
++                        Action::Play(id) => board.play_saved(&id, false),
++                        Action::StopSounds => board.stop(),
++                        _ => {
++                            let _ = board.commands.try_send(Request::Shortcut(action));
++                            continue;
++                        }
++                    };
++                    board.settings.lock().unwrap().error = result.err().unwrap_or_default();
++                    board.sync();
++                }
++            })
++            .map_err(|error| error.to_string())?;
 +        {
 +            let mut settings = board.settings.lock().unwrap();
 +            match board.register_hotkeys(&settings) {
@@ -4229,7 +5123,9 @@ index 0000000..55ad9f1
 +        let board = Arc::downgrade(self);
 +        let url = self.service.start(Arc::new(move |value| {
 +            let board = board.upgrade().ok_or("Voxcord a été fermé.")?;
-+            if value["action"] == "network-access" { return network_access(board.service.port()); }
++            if value["action"] == "network-access" {
++                return network_access(board.service.port());
++            }
 +            let result = board.handle(&value);
 +            board.sync();
 +            if let Some(request) = value["requestId"].as_str() {
@@ -4241,9 +5137,14 @@ index 0000000..55ad9f1
 +    }
 +
 +    pub(super) fn update_voice(&self, voice: &voice::State) {
-+        let updated = AudioContext { ready: can_send(voice), speaker: voice.speaker.clone() };
++        let updated = AudioContext {
++            ready: can_send(voice),
++            speaker: voice.speaker.clone(),
++        };
 +        let mut context = self.context.lock().unwrap();
-+        if *context == updated { return; }
++        if *context == updated {
++            return;
++        }
 +        if context.ready && !updated.ready {
 +            self.invalidate_playback();
 +        }
@@ -4262,9 +5163,11 @@ index 0000000..55ad9f1
 +
 +    fn voice(&self, command: Command) -> Result<()> {
 +        let (done, result) = mpsc::sync_channel(1);
-+        self.commands.try_send(Request::Voice(command, done))
++        self.commands
++            .try_send(Request::Voice(command, done))
 +            .map_err(|_| "Le moteur vocal est indisponible.")?;
-+        result.recv_timeout(Duration::from_secs(2))
++        result
++            .recv_timeout(Duration::from_secs(2))
 +            .map_err(|_| "Le moteur vocal n’a pas répondu.")?
 +    }
 +
@@ -4283,7 +5186,9 @@ index 0000000..55ad9f1
 +    fn stop(&self) -> Result<()> {
 +        self.invalidate_playback();
 +        let active = self.context.lock().unwrap().ready;
-+        if active { self.voice(Command::StopPersonalSounds)?; }
++        if active {
++            self.voice(Command::StopPersonalSounds)?;
++        }
 +        self.settings.lock().unwrap().last_playback = "Lecture arrêtée.".into();
 +        Ok(())
 +    }
@@ -4295,23 +5200,45 @@ index 0000000..55ad9f1
 +            ("leave", Action::LeaveCall),
 +            ("stop", Action::StopSounds),
 +        ];
-+        let bindings = global.into_iter().filter_map(|(id, action)| {
-+            settings.shortcuts.get(id).filter(|key| !key.is_empty()).map(|key| (key.clone(), action))
-+        }).chain(settings.sounds.iter().filter(|sound| !sound.shortcut.is_empty()).map(|sound| {
-+            (sound.shortcut.clone(), Action::Play(sound.id.clone()))
-+        })).collect();
++        let bindings = global
++            .into_iter()
++            .filter_map(|(id, action)| {
++                settings
++                    .shortcuts
++                    .get(id)
++                    .filter(|key| !key.is_empty())
++                    .map(|key| (key.clone(), action))
++            })
++            .chain(
++                settings
++                    .sounds
++                    .iter()
++                    .filter(|sound| !sound.shortcut.is_empty())
++                    .map(|sound| (sound.shortcut.clone(), Action::Play(sound.id.clone()))),
++            )
++            .collect();
 +        Hotkeys::register(bindings, self.pressed.clone())
 +    }
 +
-+    fn start_preview(&self, samples: Arc<[i16]>, speaker: Option<String>, volume: f32) -> Result<()> {
++    fn start_preview(
++        &self,
++        samples: Arc<[i16]>,
++        speaker: Option<String>,
++        volume: f32,
++    ) -> Result<()> {
 +        self.stop_preview();
 +        let cancelled = Arc::new(AtomicBool::new(false));
 +        let stop = cancelled.clone();
-+        thread::Builder::new().name("voxcord-personal-preview".into()).spawn(move || {
-+            if let Err(error) = personal_audio::preview(&samples, speaker.as_deref(), volume, &stop) {
-+                tracing::warn!(%error, "personal sound preview failed");
-+            }
-+        }).map_err(|error| error.to_string())?;
++        thread::Builder::new()
++            .name("voxcord-personal-preview".into())
++            .spawn(move || {
++                if let Err(error) =
++                    personal_audio::preview(&samples, speaker.as_deref(), volume, &stop)
++                {
++                    tracing::warn!(%error, "personal sound preview failed");
++                }
++            })
++            .map_err(|error| error.to_string())?;
 +        *self.preview.lock().unwrap() = Some(cancelled);
 +        Ok(())
 +    }
@@ -4320,15 +5247,22 @@ index 0000000..55ad9f1
 +        let context = self.context.lock().unwrap().clone();
 +        let settings = self.settings.lock().unwrap();
 +        let (enabled, volume, monitor, monitor_volume) = (
-+            settings.enabled, settings.volume as f32, settings.monitor, settings.monitor_volume as f32,
++            settings.enabled,
++            settings.volume as f32,
++            settings.monitor,
++            settings.monitor_volume as f32,
 +        );
 +        drop(settings);
 +        if generation != self.generation.load(Ordering::Acquire) {
 +            return Err("Lecture annulée.".into());
 +        }
 +        if !preview {
-+            if !enabled { return Err("Active le mixeur avant d’envoyer un son.".into()); }
-+            if !context.ready { return Err("Rejoins un appel Discord et ouvre ton microphone.".into()); }
++            if !enabled {
++                return Err("Active le mixeur avant d’envoyer un son.".into());
++            }
++            if !context.ready {
++                return Err("Rejoins un appel Discord et ouvre ton microphone.".into());
++            }
 +            self.voice(Command::PersonalSound(samples.clone(), volume))?;
 +        }
 +        if preview || monitor {
@@ -4349,20 +5283,35 @@ index 0000000..55ad9f1
 +    fn import(&self, name: &str, data: &[u8], slug: &str, color: &str) -> Result<()> {
 +        personal_audio::decode(data).map_err(|error| format!("{error:#}"))?;
 +        let mut settings = self.settings.lock().unwrap();
-+        if !slug.is_empty() && settings.sounds.iter().any(|sound| sound.source_slug == slug) {
++        if !slug.is_empty()
++            && settings
++                .sounds
++                .iter()
++                .any(|sound| sound.source_slug == slug)
++        {
 +            return Ok(());
 +        }
-+        if settings.sounds.len() >= 500 { return Err("500 sons maximum.".into()); }
++        if settings.sounds.len() >= 500 {
++            return Err("500 sons maximum.".into());
++        }
 +        let id = uuid::Uuid::new_v4().simple().to_string();
 +        let path = self.clip_path(&id);
 +        fs::create_dir_all(&self.directory).map_err(io_message)?;
 +        fs::write(&path, data).map_err(io_message)?;
 +        let mut updated = settings.clone();
 +        updated.sounds.push(Sound {
-+            id, name: clean(name, 160), local: true, favorite: false,
-+            category: if slug.is_empty() { String::new() } else { "Myinstants".into() },
++            id,
++            name: clean(name, 160),
++            local: true,
++            favorite: false,
++            category: if slug.is_empty() {
++                String::new()
++            } else {
++                "Myinstants".into()
++            },
 +            color: clean(color, 7),
-+            shortcut: String::new(), source_slug: clean(slug, 160),
++            shortcut: String::new(),
++            source_slug: clean(slug, 160),
 +        });
 +        if let Err(error) = self.save(&updated) {
 +            let _ = fs::remove_file(path);
@@ -4390,8 +5339,13 @@ index 0000000..55ad9f1
 +            }
 +            "online-prepare" => {
 +                let mut pending = self.downloads.lock().unwrap();
-+                if pending.len() >= 8 { pending.clear(); }
-+                pending.insert(field("token").into(), self.generation.load(Ordering::Acquire));
++                if pending.len() >= 8 {
++                    pending.clear();
++                }
++                pending.insert(
++                    field("token").into(),
++                    self.generation.load(Ordering::Acquire),
++                );
 +                Ok(())
 +            }
 +            "online-sound" => {
@@ -4399,9 +5353,18 @@ index 0000000..55ad9f1
 +                if field("mode") == "save" {
 +                    return self.import(field("name"), &data, field("slug"), field("color"));
 +                }
-+                let generation = self.downloads.lock().unwrap().remove(field("token")).ok_or("Lecture annulée.")?;
-+                self.play(field("name"), personal_audio::decode(&data).map_err(|error| format!("{error:#}"))?,
-+                    field("mode") == "preview", generation)
++                let generation = self
++                    .downloads
++                    .lock()
++                    .unwrap()
++                    .remove(field("token"))
++                    .ok_or("Lecture annulée.")?;
++                self.play(
++                    field("name"),
++                    personal_audio::decode(&data).map_err(|error| format!("{error:#}"))?,
++                    field("mode") == "preview",
++                    generation,
++                )
 +            }
 +            "play" | "preview" => self.play_saved(field("id"), field("action") == "preview"),
 +            "stop" => self.stop(),
@@ -4415,11 +5378,21 @@ index 0000000..55ad9f1
 +
 +    fn play_saved(&self, id: &str, preview: bool) -> Result<()> {
 +        let generation = self.generation.load(Ordering::Acquire);
-+        let name = self.settings.lock().unwrap().sounds.iter()
-+            .find(|sound| sound.id == id).map(|sound| sound.name.clone()).ok_or("Son introuvable.")?;
++        let name = self
++            .settings
++            .lock()
++            .unwrap()
++            .sounds
++            .iter()
++            .find(|sound| sound.id == id)
++            .map(|sound| sound.name.clone())
++            .ok_or("Son introuvable.")?;
 +        let mut data = Vec::new();
-+        fs::File::open(self.clip_path(id)).map_err(io_message)?
-+            .take((personal_audio::MAX_BYTES + 1) as u64).read_to_end(&mut data).map_err(io_message)?;
++        fs::File::open(self.clip_path(id))
++            .map_err(io_message)?
++            .take((personal_audio::MAX_BYTES + 1) as u64)
++            .read_to_end(&mut data)
++            .map_err(io_message)?;
 +        let decoded = personal_audio::decode(&data).map_err(|error| format!("{error:#}"))?;
 +        self.play(&name, decoded, preview, generation)
 +    }
@@ -4439,26 +5412,47 @@ index 0000000..55ad9f1
 +                updated.shortcuts.insert(id.into(), clean(key, 40));
 +            }
 +            "volume" | "monitor-volume" => {
-+                let volume = value["volume"].as_f64().filter(|value| (0.0..=1.0).contains(value))
++                let volume = value["volume"]
++                    .as_f64()
++                    .filter(|value| (0.0..=1.0).contains(value))
 +                    .ok_or("Volume invalide.")?;
-+                if action == "volume" { updated.volume = volume; } else { updated.monitor_volume = volume; }
++                if action == "volume" {
++                    updated.volume = volume;
++                } else {
++                    updated.monitor_volume = volume;
++                }
 +            }
 +            "edit" | "delete" => {
-+                let index = updated.sounds.iter().position(|sound| sound.id == id).ok_or("Son introuvable.")?;
++                let index = updated
++                    .sounds
++                    .iter()
++                    .position(|sound| sound.id == id)
++                    .ok_or("Son introuvable.")?;
 +                if action == "delete" {
 +                    deleted = Some(updated.sounds.remove(index).id);
 +                } else {
 +                    let sound = &mut updated.sounds[index];
-+                    if let Some(name) = value["name"].as_str() { sound.name = clean(name, 160); }
-+                    if let Some(category) = value["category"].as_str() { sound.category = clean(category, 48); }
-+                    if let Some(color) = value["color"].as_str() { sound.color = clean(color, 7); }
-+                    if let Some(favorite) = value["favorite"].as_bool() { sound.favorite = favorite; }
-+                    if let Some(shortcut) = value["shortcut"].as_str() { sound.shortcut = clean(shortcut, 40); }
++                    if let Some(name) = value["name"].as_str() {
++                        sound.name = clean(name, 160);
++                    }
++                    if let Some(category) = value["category"].as_str() {
++                        sound.category = clean(category, 48);
++                    }
++                    if let Some(color) = value["color"].as_str() {
++                        sound.color = clean(color, 7);
++                    }
++                    if let Some(favorite) = value["favorite"].as_bool() {
++                        sound.favorite = favorite;
++                    }
++                    if let Some(shortcut) = value["shortcut"].as_str() {
++                        sound.shortcut = clean(shortcut, 40);
++                    }
 +                }
 +            }
 +            _ => return Err("Réglage inconnu.".into()),
 +        }
-+        let hotkeys_changed = action == "shortcut" || deleted.is_some() || value["shortcut"].is_string();
++        let hotkeys_changed =
++            action == "shortcut" || deleted.is_some() || value["shortcut"].is_string();
 +        if hotkeys_changed {
 +            let mut hotkeys = self.hotkeys.lock().unwrap();
 +            drop(hotkeys.take());
@@ -4479,14 +5473,21 @@ index 0000000..55ad9f1
 +        } else {
 +            self.save(&updated)?;
 +        }
-+        let stopping = (settings.enabled && !updated.enabled) || (settings.monitor && !updated.monitor);
++        let stopping =
++            (settings.enabled && !updated.enabled) || (settings.monitor && !updated.monitor);
 +        let stop_call = settings.enabled && !updated.enabled;
 +        *settings = updated;
 +        drop(settings);
-+        if let Some(id) = deleted { let _ = fs::remove_file(self.clip_path(&id)); }
-+        if stopping { self.invalidate_playback(); }
++        if let Some(id) = deleted {
++            let _ = fs::remove_file(self.clip_path(&id));
++        }
++        if stopping {
++            self.invalidate_playback();
++        }
 +        let active = self.context.lock().unwrap().ready;
-+        if stop_call && active { self.voice(Command::StopPersonalSounds)?; }
++        if stop_call && active {
++            self.voice(Command::StopPersonalSounds)?;
++        }
 +        Ok(())
 +    }
 +}
@@ -4500,13 +5501,25 @@ index 0000000..55ad9f1
 +
 +fn can_send(voice: &voice::State) -> bool {
 +    voice.phase == Phase::Connected
-+        && voice.room.as_deref().is_some_and(|id| Network::of(id) == Network::Discord)
-+        && !voice.muted && !voice.deafened
-+        && !voice.participants.iter().any(|person| person.local && person.server_muted)
++        && voice
++            .room
++            .as_deref()
++            .is_some_and(|id| Network::of(id) == Network::Discord)
++        && !voice.muted
++        && !voice.deafened
++        && !voice
++            .participants
++            .iter()
++            .any(|person| person.local && person.server_muted)
 +}
 +
 +fn clean(value: &str, maximum: usize) -> String {
-+    value.trim().chars().filter(|character| !character.is_control()).take(maximum).collect()
++    value
++        .trim()
++        .chars()
++        .filter(|character| !character.is_control())
++        .take(maximum)
++        .collect()
 +}
 +
 +fn io_message(error: std::io::Error) -> String {
@@ -4519,10 +5532,19 @@ index 0000000..55ad9f1
 +        use std::os::windows::process::CommandExt;
 +        let executable = std::env::current_exe().map_err(io_message)?;
 +        let path = executable.to_str().ok_or("Chemin de Voxcord invalide.")?;
-+        let arguments = format!("advfirewall firewall add rule name=\"Voxcord Soundboard\" dir=in action=allow protocol=TCP localport={port} program=\"{path}\" profile=private remoteip=LocalSubnet");
-+        let script = format!("Start-Process -FilePath \"$env:SystemRoot\\System32\\netsh.exe\" -WindowStyle Hidden -Verb RunAs -ArgumentList '{}'", arguments.replace('\'', "''"));
-+        std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script])
-+            .creation_flags(0x08000000).spawn().map(|_| ()).map_err(io_message)
++        let arguments = format!(
++            "advfirewall firewall add rule name=\"Voxcord Soundboard\" dir=in action=allow protocol=TCP localport={port} program=\"{path}\" profile=private remoteip=LocalSubnet"
++        );
++        let script = format!(
++            "Start-Process -FilePath \"$env:SystemRoot\\System32\\netsh.exe\" -WindowStyle Hidden -Verb RunAs -ArgumentList '{}'",
++            arguments.replace('\'', "''")
++        );
++        std::process::Command::new("powershell.exe")
++            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
++            .creation_flags(0x08000000)
++            .spawn()
++            .map(|_| ())
++            .map_err(io_message)
 +    }
 +    #[cfg(not(windows))]
 +    {
@@ -4532,10 +5554,10 @@ index 0000000..55ad9f1
 +}
 diff --git a/src/ui/personal_hotkeys.rs b/src/ui/personal_hotkeys.rs
 new file mode 100644
-index 0000000..db9a106
+index 0000000..0879c05
 --- /dev/null
 +++ b/src/ui/personal_hotkeys.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,147 @@
 +use std::sync::mpsc::SyncSender;
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
@@ -4581,8 +5603,9 @@ index 0000000..db9a106
 +            let mut combinations = HashSet::new();
 +            let mut parsed = Vec::new();
 +            for (label, action) in bindings {
-+                let (modifiers, key) = parse(&label)
-+                    .ok_or_else(|| format!("Raccourci invalide : {label}. Exemple : Ctrl+Alt+F8."))?;
++                let (modifiers, key) = parse(&label).ok_or_else(|| {
++                    format!("Raccourci invalide : {label}. Exemple : Ctrl+Alt+F8.")
++                })?;
 +                if !combinations.insert((modifiers, key)) {
 +                    return Err(format!("Raccourci utilisé deux fois : {label}."));
 +                }
@@ -4596,11 +5619,14 @@ index 0000000..db9a106
 +                    PeekMessageW(&mut message, null_mut(), 0, 0, PM_NOREMOVE);
 +                    let mut registered = 0;
 +                    for (index, (label, modifiers, key, _)) in parsed.iter().enumerate() {
-+                        if RegisterHotKey(null_mut(), index as i32, modifiers | MOD_NOREPEAT, *key) == 0 {
++                        if RegisterHotKey(null_mut(), index as i32, modifiers | MOD_NOREPEAT, *key)
++                            == 0
++                        {
 +                            for id in 0..registered {
 +                                UnregisterHotKey(null_mut(), id);
 +                            }
-+                            let _ = ready.send(Err(format!("Windows ne peut pas réserver {label}.")));
++                            let _ =
++                                ready.send(Err(format!("Windows ne peut pas réserver {label}.")));
 +                            return;
 +                        }
 +                        registered += 1;
@@ -4620,10 +5646,16 @@ index 0000000..db9a106
 +                })
 +                .map_err(|error| error.to_string())?;
 +            match result.recv() {
-+                Ok(Ok(thread)) => Ok(Some(Self { thread, worker: Some(worker) })),
++                Ok(Ok(thread)) => Ok(Some(Self {
++                    thread,
++                    worker: Some(worker),
++                })),
 +                error => {
 +                    let _ = worker.join();
-+                    Err(error.ok().and_then(Result::err).unwrap_or_else(|| "Les raccourcis Windows n’ont pas démarré.".into()))
++                    Err(error
++                        .ok()
++                        .and_then(Result::err)
++                        .unwrap_or_else(|| "Les raccourcis Windows n’ont pas démarré.".into()))
 +                }
 +            }
 +        }
@@ -4643,7 +5675,9 @@ index 0000000..db9a106
 +
 +#[cfg(windows)]
 +fn parse(label: &str) -> Option<(u32, u32)> {
-+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_F1};
++    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
++        MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VK_F1,
++    };
 +    let mut keys = label.rsplit('+').map(str::trim);
 +    let key = keys.next()?.to_ascii_uppercase();
 +    let mut modifiers = 0;
@@ -4660,8 +5694,13 @@ index 0000000..db9a106
 +        }
 +        modifiers |= flag;
 +    }
-+    if let Some(number) = key.strip_prefix('F').and_then(|number| number.parse::<u32>().ok()) {
-+        return (1..=24).contains(&number).then(|| (modifiers, u32::from(VK_F1) + number - 1));
++    if let Some(number) = key
++        .strip_prefix('F')
++        .and_then(|number| number.parse::<u32>().ok())
++    {
++        return (1..=24)
++            .contains(&number)
++            .then(|| (modifiers, u32::from(VK_F1) + number - 1));
 +    }
 +    let [key] = key.as_bytes() else { return None };
 +    (modifiers != 0 && key.is_ascii_alphanumeric()).then(|| (modifiers, u32::from(*key)))
@@ -5623,7 +6662,7 @@ index 142c80c..719dc8e 100644
      address: string,
      /// What the main button does, such as "Authorize"; empty for none.
 diff --git a/ui/settings.slint b/ui/settings.slint
-index 1712fa1..35a90e0 100644
+index 1712fa1..f6b2990 100644
 --- a/ui/settings.slint
 +++ b/ui/settings.slint
 @@ -444,6 +444,13 @@ export component VoiceSettings inherits VerticalLayout {
@@ -5686,7 +6725,7 @@ index 1712fa1..35a90e0 100644
                      clicked => { root.camera-testing = !root.camera-testing; }
                  }
                  Rectangle { horizontal-stretch: 1; }
-@@ -570,13 +590,30 @@ export component VoiceSettings inherits VerticalLayout {
+@@ -570,19 +590,36 @@ export component VoiceSettings inherits VerticalLayout {
          Rectangle { horizontal-stretch: 1; }
      }
      Rectangle { height: 1px; background: Theme.line; }
@@ -5718,18 +6757,44 @@ index 1712fa1..35a90e0 100644
          text: "Even out your voice";
          description: "Keeps your voice steady as you lean towards the microphone or away from it. Whispers and shouts still come through as they are.";
          checked <=> root.level-voice;
-@@ -672,8 +709,8 @@ export component VoiceSettings inherits VerticalLayout {
+         toggled => { root.preferences-changed(); }
+     }
+-    if root.discord: VerticalLayout {
++    if root.discord && root.microphone-processing: VerticalLayout {
+         spacing: 8px;
+         SettingsHeading { text: "NOISE SUPPRESSION IN DISCORD CALLS"; }
+         Choices {
+@@ -592,7 +629,7 @@ export component VoiceSettings inherits VerticalLayout {
+         }
+         Label { text: "DeepFilterNet also takes out typing and other sudden noise. RNNoise uses less processing. Off sends your microphone as it is, for a quiet room. A call going on switches straight away."; }
+     }
+-    if root.discord && root.noise-suppression != 2: VerticalLayout {
++    if root.discord && root.microphone-processing && root.noise-suppression != 2: VerticalLayout {
+         spacing: 8px;
+         SettingsHeading { text: "NOISE SUPPRESSION STRENGTH"; }
+         Choices {
+@@ -657,7 +694,7 @@ export component VoiceSettings inherits VerticalLayout {
+             }
+         }
+     }
+-    if root.discord: SettingsSwitch {
++    if root.discord && root.microphone-processing: SettingsSwitch {
+         text: "Take out your room's echo in Discord calls";
+         description: "For a bare or echoey room that makes your voice sound far away. Uses a little more processing, and your voice goes out 10 ms later.";
+         checked <=> root.dereverb;
+@@ -672,8 +709,9 @@ export component VoiceSettings inherits VerticalLayout {
              chosen => { root.preferences-changed(); }
          }
          Label {
 -            text: root.input-mode == 0 ? "Yapfast sends your voice when it hears you speak."
 -                : "Yapfast sends your microphone only while you hold a key.";
-+            text: root.input-mode == 0 ? "Voxcord sends your voice when it hears you speak."
++            text: root.input-mode == 0
++                ? (root.discord && !root.microphone-processing ? "Voxcord ouvre le micro dès que le son dépasse le seuil." : "Voxcord sends your voice when it hears you speak.")
 +                : "Voxcord sends your microphone only while you hold a key.";
          }
      }
      if root.input-mode == 1: VerticalLayout {
-@@ -726,7 +763,7 @@ export component VoiceSettings inherits VerticalLayout {
+@@ -726,7 +764,7 @@ export component VoiceSettings inherits VerticalLayout {
          }
          Label {
              text: root.gate-meter-note != "" ? root.gate-meter-note
@@ -5738,7 +6803,7 @@ index 1712fa1..35a90e0 100644
          }
      }
  }
-@@ -858,7 +895,7 @@ component ThemeColourRow inherits HorizontalLayout {
+@@ -858,7 +896,7 @@ component ThemeColourRow inherits HorizontalLayout {
      }
  }
  
@@ -5747,7 +6812,7 @@ index 1712fa1..35a90e0 100644
  // person's own. A click shows one at once. New theme opens the editor, whose
  // changes show at once too; Save keeps them, Cancel restores the theme from
  // before.
-@@ -885,7 +922,7 @@ export component AppearanceSettings inherits VerticalLayout {
+@@ -885,7 +923,7 @@ export component AppearanceSettings inherits VerticalLayout {
      callback save-theme();
      callback cancel-theme();
      callback delete-theme();
@@ -5756,7 +6821,7 @@ index 1712fa1..35a90e0 100644
      /// draw its own.
      in-out property <bool> system-title-bar;
      in property <bool> title-bar-choice;
-@@ -921,7 +958,7 @@ export component AppearanceSettings inherits VerticalLayout {
+@@ -921,7 +959,7 @@ export component AppearanceSettings inherits VerticalLayout {
      }
      if !root.editor && root.title-bar-choice: SettingsSwitch {
          text: "Use the system title bar";
@@ -5765,7 +6830,7 @@ index 1712fa1..35a90e0 100644
          checked <=> root.system-title-bar;
          toggled => { root.title-bar-toggled(); }
      }
-@@ -997,7 +1034,7 @@ export component MessageSettings inherits VerticalLayout {
+@@ -997,7 +1035,7 @@ export component MessageSettings inherits VerticalLayout {
      in-out property <int> text-size;
      in-out property <bool> link-previews;
      in-out property <bool> share-typing;
@@ -5774,7 +6839,7 @@ index 1712fa1..35a90e0 100644
      in-out property <int> animate;
      in-out property <bool> reply-ping;
      in-out property <bool> strip-tracking;
-@@ -1054,7 +1091,7 @@ export component MessageSettings inherits VerticalLayout {
+@@ -1054,7 +1092,7 @@ export component MessageSettings inherits VerticalLayout {
          spacing: 8px;
          SettingsHeading { text: "PLAY GIFS, EMOJI AND STICKERS"; }
          Choices {
@@ -5783,7 +6848,7 @@ index 1712fa1..35a90e0 100644
              current <=> root.animate;
              chosen => { root.preferences-changed(); }
          }
-@@ -1100,7 +1137,7 @@ export component NotificationSettings inherits VerticalLayout {
+@@ -1100,7 +1138,7 @@ export component NotificationSettings inherits VerticalLayout {
      SettingsTitle { text: "Notifications"; }
      SettingsSwitch {
          text: "Show desktop notifications";
@@ -5792,7 +6857,7 @@ index 1712fa1..35a90e0 100644
              + (root.matrix && root.discord ? "Each Discord server's notification settings and your Matrix notification rules decide"
                  : root.matrix ? "Your Matrix notification rules decide" : "Each Discord server's notification settings decide")
              + " which: usually DMs and mentions. Clicking one opens the conversation.";
-@@ -1116,13 +1153,13 @@ export component NotificationSettings inherits VerticalLayout {
+@@ -1116,13 +1154,13 @@ export component NotificationSettings inherits VerticalLayout {
      }
      SettingsSwitch {
          text: "Flash the taskbar";
@@ -5808,7 +6873,7 @@ index 1712fa1..35a90e0 100644
  // them, and how loud they are, all together or each on its own.
  export component SoundSettings inherits VerticalLayout {
      /// The set, in the order the choices show.
-@@ -1139,7 +1176,7 @@ export component SoundSettings inherits VerticalLayout {
+@@ -1139,7 +1177,7 @@ export component SoundSettings inherits VerticalLayout {
      property <[string]> names: ["Someone joins the call", "Someone leaves the call", "Muting", "Unmuting", "Deafening", "Undeafening", "A message", "A mention", "Someone starts watching a stream", "Someone stops watching a stream", "Someone starts streaming", "Someone stops streaming"];
      spacing: 16px;
      SettingsTitle { text: "Sounds"; }
@@ -5817,7 +6882,7 @@ index 1712fa1..35a90e0 100644
      VerticalLayout {
          spacing: 8px;
          SettingsHeading { text: "SOUND SET"; }
-@@ -1174,7 +1211,7 @@ export component SoundSettings inherits VerticalLayout {
+@@ -1174,7 +1212,7 @@ export component SoundSettings inherits VerticalLayout {
      }
  }
  
@@ -5826,7 +6891,7 @@ index 1712fa1..35a90e0 100644
  // picks a renderer once per process, so a change to that waits for a
  // restart, which this offers; encoding changes from the next stream.
  export component AdvancedSettings inherits VerticalLayout {
-@@ -1195,12 +1232,12 @@ export component AdvancedSettings inherits VerticalLayout {
+@@ -1195,12 +1233,12 @@ export component AdvancedSettings inherits VerticalLayout {
  
      if root.autostart-available: SettingsSwitch {
          text: "Start when you sign in";
@@ -5841,7 +6906,7 @@ index 1712fa1..35a90e0 100644
          description: "discord:// links from other apps and shortcuts open here instead of Discord. Turning it off gives them back to the app that had them.";
          checked <=> root.discord-links;
          toggled => { root.preferences-changed(); }
-@@ -1208,37 +1245,37 @@ export component AdvancedSettings inherits VerticalLayout {
+@@ -1208,37 +1246,37 @@ export component AdvancedSettings inherits VerticalLayout {
      SettingsSwitch {
          text: "Close to tray";
          description: root.tray-available
@@ -5886,7 +6951,7 @@ index 1712fa1..35a90e0 100644
          checked <=> root.gpu-encoding;
          toggled => { root.preferences-changed(); }
      }
-@@ -1260,7 +1297,7 @@ export component DiscordLinkSettings inherits VerticalLayout {
+@@ -1260,7 +1298,7 @@ export component DiscordLinkSettings inherits VerticalLayout {
      callback open-discord-captcha;
      spacing: 16px;
      SettingsTitle { text: "Discord"; }
@@ -5895,7 +6960,7 @@ index 1712fa1..35a90e0 100644
      DiscordLinkPanel {
          phase: root.link-phase; code: root.link-code; name: root.link-name; note: root.link-note;
          begin => { root.link-discord(); }
-@@ -1289,7 +1326,7 @@ export component GameActivitySettings inherits VerticalLayout {
+@@ -1289,7 +1327,7 @@ export component GameActivitySettings inherits VerticalLayout {
      SettingsTitle { text: "Game activity"; }
      SettingsSwitch {
          text: "Share the game you play";
@@ -5904,7 +6969,7 @@ index 1712fa1..35a90e0 100644
          checked: root.shown;
          controlled: true;
          enabled: root.linked;
-@@ -1297,7 +1334,7 @@ export component GameActivitySettings inherits VerticalLayout {
+@@ -1297,7 +1335,7 @@ export component GameActivitySettings inherits VerticalLayout {
          toggled(shown) => { root.toggled(shown); }
      }
      SettingsHeading { text: "CUSTOM GAMES"; }
@@ -5913,7 +6978,7 @@ index 1712fa1..35a90e0 100644
      for game[index] in root.executables: VerticalLayout {
          spacing: 4px;
          HorizontalLayout {
-@@ -1349,7 +1386,7 @@ export component DiscordSettings inherits VerticalLayout {
+@@ -1349,7 +1387,7 @@ export component DiscordSettings inherits VerticalLayout {
      SettingsTitle { text: "Discord"; }
      if root.matrix-build: HorizontalLayout {
          spacing: 12px;
@@ -5922,7 +6987,7 @@ index 1712fa1..35a90e0 100644
          ActionButton {
              text: "Unlink Discord"; icon: @image-url("icons/log-out.svg"); danger: true;
              clicked => { root.unlink-discord(); }
-@@ -1363,13 +1400,13 @@ export component DiscordSettings inherits VerticalLayout {
+@@ -1363,13 +1401,13 @@ export component DiscordSettings inherits VerticalLayout {
      }
      SettingsSwitch {
          text: "Mark messages read on Discord";

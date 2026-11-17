@@ -1,8 +1,13 @@
-# Voxcord 0.5.1 — native Rust client
+# Voxcord 0.6.0 — native Rust client
 
 Voxcord uses Rust and Slint for the complete desktop interface. It does not embed Discord's website, Electron or WebView2. The engine is a GPL-3.0-or-later fork of [Yapfast](https://github.com/yapfast/yapfast), pinned to `28174c7227e9b5a7a7dd222378086e88a62cbdb1`; `yapfast.patch` contains the complete changes, including branding and the Windows icon. Every build distributes the patched source and dependency notices alongside the portable executable.
 
 ## This build
+
+- Test the selected camera and microphone in Voice & Video. Camera preview tries three capture formats without blocking the window. The microphone test records three seconds and plays it back on the selected output. The sample stays in memory on the PC.
+- In Discord calls, direct microphone mode is the default. Voice activity opens the microphone on the first block that crosses the sensitivity threshold. Push-to-talk is also available. Direct mode bypasses Voxcord's echo cancellation, denoising, automatic gain and leveling. Windows raw capture is requested when the device supports it.
+- Hover over a server to see the participants in its visible voice rooms, using the Discord voice states that Voxcord already has. Names and video or stream indicators update as voice states arrive.
+- Open the personal soundboard from Voice & Video to import sounds, find clips on Myinstants, preview them and play them into the current Discord call. The soundboard controls open in the default browser. To use a phone on the same network, enable the remote and scan its QR code. Global Windows shortcuts can be assigned to camera, mute, leave call, stop sounds and individual clips.
 
 - Replace the speech-bubble face with a segmented V signal mark. A dark violet app tile and lavender mark identify the Windows executable and installer; a monochrome version is used in the UI, with a separate lower-right unread badge in the tray. The ICO contains 16, 20, 24, 32, 40, 48, 64, 128 and 256 px images.
 
@@ -15,8 +20,6 @@ Voxcord uses Rust and Slint for the complete desktop interface. It does not embe
 ## Verification
 
 The workflow builds the Windows application and test executables, runs camera subscription/reassembly tests, RTP tests and the screen media tests on Windows, then installs the EXE, runs its smoke test and checks that a native window opens. These are automated regression/startup checks. They do not prove successful multi-person calls or physical camera/audio behavior on a user's machine.
-
-The old Tauri 0.4.5 remains separate. Its personal sound library/microphone injection, Myinstants remote and phone controller and customizable action shortcuts (leave call / toggle camera) have **not yet been ported** to this native engine. This is not complete feature parity with NovaCord 0.4.5. The old WebView's error 2012 cannot be reproduced by a startup test of this engine; multi-camera behavior still needs a real Discord call test.
 
 Download the `Voxcord-Windows-Setup` artifact from the successful workflow run and extract `Voxcord-Setup.exe`. The `Voxcord-portable-and-source` artifact contains the portable version and corresponding source.
 
