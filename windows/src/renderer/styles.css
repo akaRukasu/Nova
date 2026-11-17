@@ -812,8 +812,11 @@ html.mini-window, html.mini-window body { background: #121318; overflow: hidden;
 .mini {
   height: 100vh; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; position: relative;
   overflow: hidden; border: 1px solid #ffffff26; border-radius: 18px; color: #fff; background: #121318;
-  -webkit-app-region: drag; isolation: isolate;
+  -webkit-app-region: no-drag; isolation: isolate;
 }
+/* Les zones natives de déplacement ne doivent jamais recouvrir les boutons. */
+.mini-drag-handle { position: absolute; top: 0; left: 0; right: 106px; height: 48px;
+  -webkit-app-region: drag; cursor: move; z-index: 1; }
 .mini-backdrop { position: absolute; inset: -60px; z-index: -2; background-size: cover; background-position: center;
   filter: blur(45px) saturate(1.5); opacity: .8; pointer-events: none; }
 .mini::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
@@ -824,10 +827,11 @@ html.mini-window, html.mini-window body { background: #121318; overflow: hidden;
 .mini--compact .mini-content { grid-template-columns: var(--compact-art) minmax(0, 1fr); }
 .mini--compact .mini-art { width: var(--compact-art); height: var(--compact-art); }
 .mini-art { width: 64px; height: 64px; border-radius: 11px; object-fit: cover; outline: 1px solid #ffffff20; outline-offset: -1px;
+  -webkit-app-region: drag;
   box-shadow: 0 8px 25px #0005; background: #ffffff0c; }
 .mini-art.placeholder { display: grid; place-items: center; color: #ffffff80; }
 .mini-text { min-width: 0; }
-.mini--compact .mini-text { padding-right: 76px; }
+.mini--compact .mini-text { padding-right: 92px; }
 .mini-title { font-weight: 650; font-size: 15px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mini-artist { color: #ffffffa6; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 4px; }
 .mini-controls { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -840,8 +844,8 @@ html.mini-window, html.mini-window body { background: #121318; overflow: hidden;
 .mini button[aria-pressed='true'] { background: #ffffff20; color: #fff; }
 .mini .mini-play { width: 42px; height: 42px; background: #fff; color: #161821; border-radius: 50%; box-shadow: 0 4px 18px #0003; }
 .mini .mini-play:hover { background: #fff; color: #161821; transform: scale(1.04); }
-.mini-window-actions { position: absolute; right: 6px; top: 6px; display: flex; z-index: 2; gap: 2px; -webkit-app-region: no-drag; }
-.mini-window-actions button { width: 38px; height: 38px; border-radius: 12px; background: #13162030; }
+.mini-window-actions { position: absolute; right: 10px; top: 10px; display: flex; z-index: 2; gap: 2px; -webkit-app-region: no-drag; }
+.mini-window-actions button { width: 40px; height: 40px; border-radius: 12px; background: #13162030; }
 .mini-window-actions button:active:not(:disabled) { transform: none; }
 .mini-window-actions svg { pointer-events: none; }
 .mini-layout-error { position: absolute; top: 48px; right: 12px; z-index: 3; max-width: 260px; padding: 10px 12px;

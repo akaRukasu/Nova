@@ -79,6 +79,7 @@ function MiniPlayer() {
   return (
     <div className={`mini mini--${layout}`}>
       <div className="mini-backdrop" aria-hidden="true" style={{ backgroundImage: artwork && artwork !== brokenArtwork ? `url("${artwork}")` : undefined }} />
+      <div className="mini-drag-handle" aria-hidden="true" title="Déplacer le mini lecteur" />
       <div className="mini-window-actions">
         <button onClick={() => void changeLayout()} disabled={changingLayout} aria-pressed={layout === 'artwork'}
           aria-label={layout === 'compact' ? 'Afficher la grande pochette' : 'Passer au mini lecteur compact'}
