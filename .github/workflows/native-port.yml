@@ -50,6 +50,7 @@ jobs:
       - name: Prepare the Windows SDK and native renderer
         working-directory: engine
         run: |
+          rustup target add x86_64-pc-windows-msvc
           nix develop path:./nix#windows --command bash -c 'set -e; cargo xwin env > /dev/null; python3 nix/prepare-windows-skia.py > /dev/null'
       - uses: actions/cache/save@v4
         if: steps.native-cache.outputs.cache-hit != 'true'

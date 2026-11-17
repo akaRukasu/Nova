@@ -10,7 +10,7 @@ Le moteur provient de [Yapfast](https://github.com/yapfast/yapfast), sous GPL-3.
 
 ## Installer
 
-Ouvre le dernier lancement réussi de [Voxcord Native](../../actions/workflows/native-port.yml), télécharge l’artefact **Voxcord-Windows-Setup**, puis extrais et lance **Voxcord-Setup.exe**. La version portable et les sources sont dans **Voxcord-portable-and-source**.
+Ouvre le dernier lancement réussi de [Voxcord Native](https://github.com/akaRukasu/Nova/actions/workflows/native-port.yml), télécharge l’artefact **Voxcord-Windows-Setup**, puis extrais et lance **Voxcord-Setup.exe**. La version portable et les sources sont dans **Voxcord-portable-and-source**.
 
 Le client natif précédent peut être mis à jour avec ce setup. Son dossier de données et son espace d’identifiants restent les mêmes pour conserver la connexion. Une première connexion affiche un QR code Discord.
 
