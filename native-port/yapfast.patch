@@ -24,7 +24,7 @@ index 74940f9..9e93a8d 100644
  rust-version = "1.97"
  publish = false
 diff --git a/crates/yapfast-core/src/discord_video.rs b/crates/yapfast-core/src/discord_video.rs
-index 44b95db..4697d0e 100644
+index 44b95db..9f72350 100644
 --- a/crates/yapfast-core/src/discord_video.rs
 +++ b/crates/yapfast-core/src/discord_video.rs
 @@ -150,13 +150,13 @@ pub(crate) struct Watching {
@@ -43,7 +43,23 @@ index 44b95db..4697d0e 100644
              {
                  tracing::warn!(%error, "could not start decoding cameras");
              }
-@@ -249,10 +249,17 @@ fn step(cameras: usize, pixels: u32) -> u8 {
+@@ -196,12 +196,14 @@ impl Watching {
+     pub fn ask(&mut self, call: &mut Call, others: usize) {
+         let wants: HashMap<u64, (u8, u32)> = {
+             let feeds = lock(&self.feeds);
++            // Only tiles actually subscribed to share the decoding budget.
++            let visible = feeds.values().filter(|feed| feed.shown_at().is_some()).count();
+             feeds
+                 .iter()
+                 .filter_map(|(&user, feed)| {
+                     let (width, height) = feed.shown_at()?;
+                     let pixels = width * height;
+-                    let quality = quality(feeds.len(), others, feed.shown_large(), pixels);
++                    let quality = quality(visible, others, feed.shown_large(), pixels);
+                     Some((user, (quality, pixels)))
+                 })
+                 .collect()
+@@ -249,10 +251,17 @@ fn step(cameras: usize, pixels: u32) -> u8 {
  /// Decodes each camera's frames into its feed, at the size it shows. A
  /// camera gets a decoder when its tile is in sight, from a keyframe, and
  /// loses it when the tile goes.
@@ -62,7 +78,7 @@ index 44b95db..4697d0e 100644
      let mut pruned = Instant::now();
      loop {
          match frames.recv_timeout(PRUNE) {
-@@ -274,6 +281,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
+@@ -274,6 +283,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
                      decoders.remove(&frame.user);
                      // A decoder starts from a keyframe.
                      if !frame.keyframe {
@@ -70,7 +86,7 @@ index 44b95db..4697d0e 100644
                          continue;
                      }
                      // One thread each: a tile is small, and every thread
-@@ -297,6 +305,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
+@@ -297,6 +307,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
                      Ok(None) => {}
                      Err(error) => {
                          tracing::debug!(%error, "dropped a camera's decoder");
@@ -3230,3 +3246,20 @@ index 2b2e644..60391b9 100644
          focused: root.window-focused; maximized: root.window-maximized;
          move-window => { root.move-window(); }
          minimize-window => { root.minimize-window(); }
+diff --git a/vendor/webrtc-sys/build.rs b/vendor/webrtc-sys/build.rs
+index f791c9f..f5e849d 100644
+--- a/vendor/webrtc-sys/build.rs
++++ b/vendor/webrtc-sys/build.rs
+@@ -121,6 +121,12 @@ fn main() {
+         webrtc_include.join("sdk/objc/base"),
+     ]);
+     builder.define("WEBRTC_APM_DEBUG_DUMP", "0");
++    if target_os == "windows" {
++        // The archive names the Win11 GE NTDDI level. SDK 22621 lacks
++        // that alias; keep its exact numeric value so Windows header
++        // guards agree with _WIN32_WINNT instead of treating it as zero.
++        builder.define("NTDDI_WIN11_GE", "0x0A000010");
++    }
+ 
+     println!("cargo:rustc-link-search=native={}", webrtc_lib.to_str().unwrap());
+ 

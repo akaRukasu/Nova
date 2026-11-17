@@ -4,6 +4,7 @@ AppName=Voxcord
 AppVersion=0.5.0
 DefaultDirName={localappdata}\Programs\Voxcord
 DefaultGroupName=Voxcord
+UsePreviousGroup=no
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -19,6 +20,9 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
 [InstallDelete]
 Type: files; Name: "{app}\yapfast.exe"
+Type: files; Name: "{app}\run-yapfast.cmd"
+Type: files; Name: "{userprograms}\NovaCord Native\NovaCord Native.lnk"
+Type: dirifempty; Name: "{userprograms}\NovaCord Native"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

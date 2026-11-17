@@ -30,6 +30,7 @@ jobs:
         with:
           github_access_token: ${{ github.token }}
       - uses: actions/cache@v4
+        id: native-cache
         with:
           path: |
             ~/.cache/cargo-xwin
@@ -40,24 +41,42 @@ jobs:
         with:
           workspaces: engine
           cache-on-failure: true
-      - name: Build Voxcord and Windows media regression tests
+          key: voxcord-win22621
+      - name: Apply Voxcord source changes
         working-directory: engine
-        env:
-          NOVACORD_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           git apply --check ../nova/native-port/yapfast.patch
           git apply ../nova/native-port/yapfast.patch
-          nix develop path:./nix#windows --command bash ../nova/native-port/build.sh
-      - uses: actions/upload-artifact@v4
+      - name: Prepare the Windows SDK and native renderer
+        working-directory: engine
+        run: |
+          nix develop path:./nix#windows --command bash -c 'set -e; cargo xwin env > /dev/null; python3 nix/prepare-windows-skia.py > /dev/null'
+      - uses: actions/cache/save@v4
+        if: steps.native-cache.outputs.cache-hit != 'true'
         with:
-          name: Voxcord-media-tests
-          path: engine/target/native-tests/*
-          if-no-files-found: error
+          path: |
+            ~/.cache/cargo-xwin
+            engine/.local/windows/skia-static-production/build.json
+            engine/.local/windows/skia-static-production/prepared
+          key: native-skia-22621-${{ hashFiles('engine/nix/flake.lock', 'engine/nix/prepare-windows-skia.py', 'engine/nix/prepare-skia-native.py', 'engine/nix/skia-windows-builder/**') }}
+      - name: Build the native Windows client
+        working-directory: engine
+        env:
+          NOVACORD_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: nix develop path:./nix#windows --command scripts/build-windows discord --no-installer
       - uses: actions/upload-artifact@v4
         with:
           name: Voxcord-portable-and-source
           path: engine/target/dist/discord/Voxcord-*.zip
           compression-level: 0
+          if-no-files-found: error
+      - name: Compile the Windows media regression tests
+        working-directory: engine
+        run: nix develop path:./nix#windows --command bash ../nova/native-port/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Voxcord-media-tests
+          path: engine/target/native-tests/*
           if-no-files-found: error
 
   installer:

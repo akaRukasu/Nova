@@ -14,6 +14,6 @@ Voxcord uses Rust and Slint for the complete desktop interface. It does not embe
 
 The workflow builds the Windows application and test executables, runs camera subscription/reassembly tests, RTP tests and the screen media tests on Windows, then installs the EXE, runs its smoke test and checks that a native window opens. These are automated regression/startup checks. They do not prove successful multi-person calls or physical camera/audio behavior on a user's machine.
 
-The old Tauri 0.4.5 remains separate. Its personal sound library/microphone injection, Myinstants remote and phone controller have **not yet been ported** to this native engine. This is not complete feature parity with NovaCord 0.4.5. The old WebView's error 2012 cannot be reproduced by a startup test of this engine; multi-camera behavior still needs a real Discord call test.
+The old Tauri 0.4.5 remains separate. Its personal sound library/microphone injection, Myinstants remote and phone controller and customizable action shortcuts (leave call / toggle camera) have **not yet been ported** to this native engine. This is not complete feature parity with NovaCord 0.4.5. The old WebView's error 2012 cannot be reproduced by a startup test of this engine; multi-camera behavior still needs a real Discord call test.
 
 Download the `Voxcord-Windows-Setup` artifact from the successful workflow run and extract `Voxcord-Setup.exe`. The `Voxcord-portable-and-source` artifact contains the portable version and corresponding source.

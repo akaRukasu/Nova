@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-scripts/build-windows discord --no-installer
 # Build the changed native media tests for the same Windows target and run
 # their executables on the Windows installer runner, not through emulation.
 export SKIA_BINARIES_URL="file://$(python3 nix/prepare-windows-skia.py)"
