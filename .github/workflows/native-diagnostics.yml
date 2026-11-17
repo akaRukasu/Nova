@@ -1,0 +1,63 @@
+name: Voxcord Windows diagnostics
+on:
+  push:
+    branches: [codex/native-port-yapfast]
+    paths: [".github/workflows/native-diagnostics.yml"]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 44112859988
+          name: Voxcord-portable-and-source
+          path: package
+      - name: Inspect version resources and native startup
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem package -Filter "*-windows-x64.zip"
+          Expand-Archive $zip.FullName unpacked
+          $binary = Get-ChildItem unpacked -Recurse -Filter voxcord.exe
+          $info = $binary.VersionInfo
+          $info | Format-List *
+          Write-Host "Product characters:" (($info.ProductName.ToCharArray() | ForEach-Object { [int]$_ }) -join ',')
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public class Versions {
+            [DllImport("version.dll",CharSet=CharSet.Unicode)] static extern uint GetFileVersionInfoSize(string f,out uint h);
+            [DllImport("version.dll",CharSet=CharSet.Unicode)] static extern bool GetFileVersionInfo(string f,uint h,uint n,byte[] b);
+            [DllImport("version.dll",CharSet=CharSet.Unicode)] static extern bool VerQueryValue(byte[] b,string q,out IntPtr p,out uint n);
+            public static string Query(string f,string q) { uint h,n; var size=GetFileVersionInfoSize(f,out h);var b=new byte[size];if(!GetFileVersionInfo(f,0,size,b))return "no version resource"; var pin=GCHandle.Alloc(b,GCHandleType.Pinned);try{IntPtr p;return VerQueryValue(b,q,out p,out n)?Marshal.PtrToStringUni(p):"missing query";}finally{pin.Free();} }
+          }
+          '@
+          foreach ($table in @('040904b0','040904B0','000004b0','040904e4')) {
+            Write-Host $table ([Versions]::Query($binary.FullName, "\StringFileInfo\$table\ProductName"))
+          }
+          $test = Start-Process $binary.FullName -ArgumentList "--smoke-test" -PassThru
+          if (!$test.WaitForExit(30000)) { Stop-Process -Id $test.Id; throw "Smoke test timeout" }
+          if ($test.ExitCode -ne 0) { throw "Smoke test exit: $($test.ExitCode)" }
+          $data = Join-Path $env:RUNNER_TEMP "voxcord-diagnostic"
+          $window = Start-Process $binary.FullName -ArgumentList "--data-dir `"$data`"" -PassThru
+          try {
+            for ($i=0;$i -lt 60;$i++) { Start-Sleep -Milliseconds 500; $window.Refresh(); if($window.HasExited){throw "Window exited: $($window.ExitCode)"}; if($window.MainWindowHandle -ne 0){break} }
+            Write-Host "Window:" $window.MainWindowHandle $window.MainWindowTitle
+            if($window.MainWindowTitle -notmatch 'Voxcord'){throw "No Voxcord window"}
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            $bounds=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height)
+            $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+            try{$graphics.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size);$bitmap.Save((Join-Path $PWD 'Voxcord-native-startup.png'))}finally{$graphics.Dispose();$bitmap.Dispose()}
+          } finally { if(!$window.HasExited){Stop-Process -Id $window.Id} }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Voxcord-startup-diagnostics
+          path: Voxcord-native-startup.png
+          if-no-files-found: ignore
