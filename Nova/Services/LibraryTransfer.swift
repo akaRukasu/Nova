@@ -235,7 +235,8 @@ final class PCSync {
 
     /// Bibliothèque modifiée : envoi groupé 20 s plus tard (plusieurs ajouts d'affilée = un seul envoi).
     func libraryChanged(_ library: LibraryStore) {
-        guard isPaired else { return }
+        // La fusion reçue du PC modifie elle aussi la révision. Elle ne doit pas annuler l'envoi en cours.
+        guard isPaired, !isSyncing else { return }
         pending?.cancel()
         pending = Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
