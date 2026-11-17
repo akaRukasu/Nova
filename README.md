@@ -1,31 +1,23 @@
-# Voxcord
+# Voxcord Web 0.6.0
 
 <img src="native-port/voxcord.svg" width="72" height="72" alt="Logo Voxcord">
 
-<img src="native-port/voxcord.svg" width="80" height="80" alt="Logo Voxcord">
+Voxcord Web ouvre Discord dans une fenêtre Windows **Tauri / WebView2**. Le site Discord fournit la connexion, les messages, les serveurs, le vocal, les caméras et le partage d’écran. La fenêtre de Voxcord garde sa propre session entre les démarrages.
 
-Client Discord natif pour Windows, écrit en **Rust**, avec une interface **Slint**. L’interface de cette branche ne charge pas le site web de Discord et n’utilise ni Electron ni WebView2.
+Lance **Voxcord-Web-Setup.exe** sur Windows 10 ou 11 x64, puis connecte-toi sur la page de Discord. WebView2 est installé par le setup si nécessaire. Fermer la fenêtre la range dans la zone de notification. Pour fermer complètement Voxcord, choisis **Quitter** dans le menu de son icône près de l’horloge.
 
-Le moteur provient de [Yapfast](https://github.com/yapfast/yapfast), sous GPL-3.0-or-later. Le portage, son identité visuelle et les corrections médias sont conservés dans [native-port](native-port/README.md). Chaque compilation fournit les sources exactes et les notices des dépendances.
+## Extensions
 
-## Installer
+Le mode standard ouvre Discord Web sans injecter les extensions Voxcord ou Vencord. Pour utiliser les fonctions supplémentaires, fais un clic droit sur l’icône Voxcord près de l’horloge et choisis **Activer les extensions non officielles et redémarrer**. Le même menu permet de revenir au mode standard. Fais ce changement en dehors d’un appel, car le redémarrage coupe la connexion vocale.
 
-Ouvre le dernier lancement réussi de [Voxcord Native](https://github.com/akaRukasu/Nova/actions/workflows/native-port.yml), télécharge l’artefact **Voxcord-Windows-Setup**, puis extrais et lance **Voxcord-Setup.exe**. La version portable et les sources sont dans **Voxcord-portable-and-source**.
+- **Soundboard et télécommande** ouvre la bibliothèque, l’import de fichiers audio, la recherche Myinstants et le contrôle depuis le téléphone. L’envoi de sons utilise le microphone d’un appel actif.
+- **Paramètres Voxcord** (`Ctrl` + `Alt` + `V`) donne accès aux raccourcis Windows et aux outils caméra, audio et partage d’écran.
+- **Vencord** charge ses thèmes et plugins en mode Extensions. Les réglages initiaux laissent FakeNitro et son contournement des limites de partage désactivés.
 
-Le client natif précédent peut être mis à jour avec ce setup. Son dossier de données et son espace d’identifiants restent les mêmes pour conserver la connexion. Une première connexion affiche un QR code Discord.
+Voxcord Web est une application indépendante de Discord. Discord interdit les modifications du client dans ses [règles d’utilisation](https://discord.com/safety/platform-manipulation-policy-explainer). Le mode Extensions ajoute de telles modifications.
 
-## Version 0.5.0
+Voxcord Web a un profil Windows séparé de NovaCord et de [Voxcord natif Rust/Slint](native-port/README.md). Une première connexion est nécessaire dans le profil Web. Les détails des fonctions audio et de la télécommande sont décrits dans la [documentation de NovaCord](docs/novacord-legacy.md).
 
-- Interface native : serveurs, messages, messages privés, appels, caméras, partage d’écran et soundboard Discord avec recherche.
-- Réception des caméras : conservation de l’état d’un flux lorsque d’autres participants arrivent, et récupération ciblée d’une image clé après un blocage.
-- Barre des tâches : clignotement désactivé par défaut, y compris pour les anciens profils ; réactivation possible dans les réglages.
-- Partage d’écran : FPS envoyés mesurés séparément de la cible, résolution réellement encodée et débits visibles dans les détails de connexion ; suppression du rattrapage en rafale après un retard.
-- Nouveau nom, nouveau logo vectoriel et nouvel installeur Windows.
+## Compilation et vérification
 
-La chaîne vérifie les tests médias sur Windows, l’installation, les métadonnées et l’ouverture d’une fenêtre native. La réception de plusieurs caméras dans un véritable appel Discord reste à confirmer sur les machines concernées.
-
-## État du portage
-
-La bibliothèque de sons personnels, son injection dans le microphone, Myinstants la télécommande téléphone et les raccourcis d’action personnalisables de NovaCord 0.4.5 restent à porter. Cette version n’offre donc pas encore toutes les fonctions de NovaCord 0.4.5.
-
-Le code historique Tauri reste présent pour ce travail de portage. Sa [documentation](docs/novacord-legacy.md) décrit uniquement l’ancien client WebView2 et ses fonctionnalités ; elle ne décrit pas Voxcord natif.
+Le [workflow Windows](.github/workflows/build-windows.yml) prépare l’archive `Voxcord-Web-Windows-x64` avec l’installateur, le portable et les sources exactes de Vencord. Il vérifie la page de connexion de Discord en mode standard, le refus d’accès aux commandes des extensions depuis cette page, puis l’ouverture de la soundboard et l’import d’un WAV en mode Extensions. Les tests audio et caméra utilisent des sources simulées. Un vrai appel avec plusieurs caméras reste à essayer sur le matériel concerné.

@@ -11,7 +11,7 @@ test("Vencord stream defaults preserve user choices", () => {
   vm.runInNewContext(bootstrap, { localStorage: { getItem: () => saved, setItem: (_, value) => { saved = value; } }, console });
   const settings = JSON.parse(saved);
   assert.equal(settings.plugins.FakeNitro.enabled, false);
-  assert.equal(settings.plugins.FakeNitro.enableStreamQualityBypass, true);
+  assert.equal(settings.plugins.FakeNitro.enableStreamQualityBypass, false);
   assert.equal(settings.plugins.WebScreenShare.resolution, "1440");
   assert.equal(settings.plugins.WebScreenShare.frameRate, "60");
 });

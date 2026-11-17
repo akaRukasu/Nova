@@ -29,7 +29,7 @@ fn sound_url_ok(value: &str) -> bool {
 }
 fn http_get(url: &str, limit: usize) -> Result<Vec<u8>, Failure> {
     let client = Client::builder().timeout(Duration::from_secs(15)).redirect(Policy::none())
-        .user_agent("NovaCord Myinstants integration").build().map_err(|_| fail(502,"Connexion Myinstants indisponible."))?;
+        .user_agent("Voxcord Myinstants integration").build().map_err(|_| fail(502,"Connexion Myinstants indisponible."))?;
     let response = client.get(url).header("Accept", "application/json, audio/*").send().map_err(|_| fail(502,"Myinstants est injoignable. Vérifie la connexion Internet du PC."))?;
     if response.status().as_u16() == 429 { return Err(fail(429,"Limite Myinstants atteinte. Patiente une minute avant une nouvelle recherche.")); }
     if !response.status().is_success() { return Err(fail(502,"Myinstants n’a pas pu fournir ce contenu.")); }

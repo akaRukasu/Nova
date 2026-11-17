@@ -1,15 +1,15 @@
-name: Build NovaCord (Windows)
+name: Voxcord Web (Windows)
 
 on:
   push:
-    branches: [novacord, 'codex/novacord-*']
+    branches: [codex/voxcord-web]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: novacord-build-${{ github.ref }}
+  group: voxcord-web-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -51,29 +51,39 @@ jobs:
         shell: bash
         run: |
           node --test tests/*.test.cjs
-          cargo test --manifest-path src-tauri/Cargo.toml
-          cargo build --manifest-path src-tauri/Cargo.toml --example soundboard_server
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+          cargo build --locked --manifest-path src-tauri/Cargo.toml --example soundboard_server
           node tests/browser.cjs
           node tests/native-input-browser.cjs
           node tests/remote-browser.cjs
 
       - name: Build the installer
         shell: bash
-        run: npx --yes @tauri-apps/cli@2 build --ci
+        run: npx --yes @tauri-apps/cli@2.12.5 build --ci -- --locked
 
-      - name: Collect the installer
-        shell: bash
+      - name: Collect and install Voxcord Web
+        shell: pwsh
         run: |
-          SETUP=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
-          cp "$SETUP" NovaCord-Setup.exe
-          cp src-tauri/target/release/novacord.exe NovaCord-portable.exe
-          ls -l NovaCord-*.exe
+          $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) { throw 'Expected one NSIS installer.' }
+          Copy-Item $installers[0].FullName Voxcord-Web-Setup.exe
+          Copy-Item src-tauri/target/release/voxcord-web.exe Voxcord-Web-portable.exe
+          $installDir = Join-Path $env:RUNNER_TEMP 'voxcord-web-installed'
+          $setup = Start-Process -FilePath './Voxcord-Web-Setup.exe' -ArgumentList "/S /D=$installDir" -WindowStyle Hidden -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
+          $installed = Join-Path $installDir 'voxcord-web.exe'
+          if (-not (Test-Path -LiteralPath $installed)) { throw 'Installed executable is missing.' }
+          "VOXCORD_INSTALLED=$installed" >> $env:GITHUB_ENV
+
+      - name: Check standard Discord login and extension isolation
+        shell: pwsh
+        run: node tests/standard-startup.cjs "$env:VOXCORD_INSTALLED"
 
       - name: Open native windows and import real audio through IPC
         shell: pwsh
         run: |
-          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'novacord-native-smoke'
-          $process = Start-Process -FilePath './NovaCord-portable.exe' -ArgumentList '--smoke-soundboard' -PassThru
+          $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP 'voxcord-web-extensions-smoke'
+          $process = Start-Process -FilePath $env:VOXCORD_INSTALLED -ArgumentList '--smoke-soundboard' -WindowStyle Hidden -PassThru
           if (-not $process.WaitForExit(60000)) {
             $process.Kill()
             throw 'Native WebView2 smoke test timed out.'
@@ -83,32 +93,19 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NovaCord-windows
+          name: Voxcord-Web-Windows-x64
           path: |
-            NovaCord-*.exe
+            Voxcord-Web-*.exe
             Vencord-source.zip
+            README.md
             mod/VENCORD-LICENSE.txt
             mod/VENCORD-NOTICES.txt
-            src-tauri/Cargo.lock
-            tests-output/*.png
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: NovaCord-diagnostics
+          name: Voxcord-Web-diagnostics
           path: |
             src-tauri/Cargo.lock
             tests-output/*.png
-
-      - name: Publish the "novacord-latest" release
-        if: github.ref == 'refs/heads/novacord'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete novacord-latest --yes --cleanup-tag || true
-          gh release create novacord-latest NovaCord-Setup.exe NovaCord-portable.exe Vencord-source.zip mod/VENCORD-LICENSE.txt mod/VENCORD-NOTICES.txt \
-            --target "${{ github.sha }}" \
-            --title "NovaCord — build ${{ github.run_number }}" \
-            --notes "Commit ${{ github.sha }}. Installe NovaCord-Setup.exe, ou lance directement NovaCord-portable.exe." \
-            --prerelease

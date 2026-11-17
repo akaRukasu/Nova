@@ -1,5 +1,5 @@
 /*
- * NovaCord : couche de mods injectée dans Discord avant ses propres scripts.
+ * Voxcord : extensions chargées dans Discord en mode Extensions.
  *
  * Les fonctions Discord sont fournies par Vencord ; ce panneau gère aussi
  * les raccourcis Windows et la soundboard dans le flux du microphone.
@@ -13,7 +13,7 @@
   const storage = window.localStorage;
   const KEY = "novacord:settings";
   const SEEN_KEY = "novacord:welcome";
-  const HOTKEY_LABEL = "Ctrl + Alt + N";
+  const HOTKEY_LABEL = "Ctrl + Alt + V";
   const invoke = (command, args) => {
     if (!window.__TAURI__?.core?.invoke) return Promise.reject(new Error("La liaison Windows n'est pas disponible."));
     return window.__TAURI__.core.invoke(command, args);
@@ -727,11 +727,11 @@
 
     const panel = el(
       "div",
-      { class: "panel", role: "dialog", "aria-modal": "true", "aria-label": "Paramètres NovaCord" },
+      { class: "panel", role: "dialog", "aria-modal": "true", "aria-label": "Paramètres Voxcord" },
       el(
         "header",
         {},
-        el("h1", {}, "NovaCord"),
+        el("h1", {}, "Voxcord"),
         el("small", {}, HOTKEY_LABEL),
         el("button", { class: "close", "aria-label": "Fermer", onclick: closePanel }, "×"),
       ),
@@ -781,7 +781,7 @@
     const cameraReport = el("div", { class: "status", role: "status" });
     const cameras = el("select", { "aria-label": "Caméra à tester" }, el("option", { value: "" }, "Caméra par défaut"));
     const cameraChoiceReport = el("div", { class: "status", role: "status" });
-    const diagnostic = el("textarea", { readonly: "", hidden: "", "aria-label": "Diagnostic média NovaCord" });
+    const diagnostic = el("textarea", { readonly: "", hidden: "", "aria-label": "Diagnostic média Voxcord" });
     diagnostic.style.cssText = "width:100%;min-height:220px;user-select:text";
     const preview = el("video", { autoplay: "", playsinline: "" });
     preview.muted = true;
@@ -894,7 +894,7 @@
     updatePanelHotkey();
     const sounds = await window.NovaCordAudio.list().catch(() => []);
     const actions = [
-      ["panel", "Ouvrir les paramètres NovaCord"],
+      ["panel", "Ouvrir les paramètres Voxcord"],
       ["TOGGLE_MUTE", "Activer / couper le micro"],
       ["TOGGLE_DEAFEN", "Activer / couper le casque"],
       ["leaveCall", "Quitter l’appel"],
@@ -1025,7 +1025,7 @@
       el(
         "div",
         { class: "toast", role: "status" },
-        el("b", {}, "NovaCord est prêt. "),
+        el("b", {}, "Voxcord est prêt. "),
         "Ouvre les plugins et thèmes avec ",
         kbd,
         " ou depuis l'icône de la zone de notification.",
@@ -1067,7 +1067,7 @@
   }
 
   Object.defineProperty(window, "NovaCord", {
-    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.4.5" }),
+    value: Object.freeze({ openPanel, runShortcut, captureShortcut, version: "0.6.0" }),
     configurable: false,
     writable: false,
   });

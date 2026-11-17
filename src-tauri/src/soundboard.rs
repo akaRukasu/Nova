@@ -13,7 +13,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         if action["action"] == "network-access" {
             return request_network_access(handle.state::<Arc<Service>>().port());
         }
-        let window = handle.get_webview_window(crate::MAIN).ok_or("Discord n'est pas ouvert.")?;
+        let window = handle.get_webview_window(crate::MAIN_EXTENSIONS).ok_or("Le mode Extensions n’est pas ouvert.")?;
         window.eval(format!("window.NovaCordRemote?.execute({})", action)).map_err(|e| e.to_string())
     }))?;
     let mut builder = WebviewWindowBuilder::new(app, "soundboard", WebviewUrl::External(url.parse().map_err(|_| "Adresse de la soundboard invalide.")?));
@@ -38,7 +38,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         // WebView2 shares the browser process: environment options must match Discord's.
         .additional_browser_args(crate::BROWSER_ARGS)
         .disable_drag_drop_handler()
-        .title("NovaCord · Soundboard").inner_size(1180.0, 820.0).min_inner_size(720.0, 560.0)
+        .title("Voxcord · Soundboard").inner_size(1180.0, 820.0).min_inner_size(720.0, 560.0)
         .background_color(tauri::window::Color(0x10, 0x11, 0x17, 0xff))
         .on_navigation(|url| url.scheme() == "http" && url.host_str() == Some("127.0.0.1"))
         .on_new_window(|url,_| {
@@ -53,15 +53,15 @@ fn request_network_access(port: u16) -> Result<(), String> {
     #[cfg(windows)] {
         use std::os::windows::process::CommandExt;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let exe = exe.to_str().ok_or("Chemin NovaCord invalide.")?;
+        let exe = exe.to_str().ok_or("Chemin Voxcord invalide.")?;
         // Only this executable, this TCP port, private networks and the local subnet.
-        let args = format!("advfirewall firewall add rule name=\"NovaCord Soundboard\" dir=in action=allow protocol=TCP localport={port} program=\"{exe}\" profile=private remoteip=LocalSubnet");
+        let args = format!("advfirewall firewall add rule name=\"Voxcord Soundboard\" dir=in action=allow protocol=TCP localport={port} program=\"{exe}\" profile=private remoteip=LocalSubnet");
         let script = format!("Start-Process -FilePath \"$env:SystemRoot\\System32\\netsh.exe\" -Verb RunAs -ArgumentList '{}'", args.replace('\'', "''"));
         std::process::Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .creation_flags(0x08000000).spawn().map_err(|e| e.to_string())?;
         Ok(())
     }
-    #[cfg(not(windows))] { let _ = port; Err("Autorise NovaCord dans le pare-feu de ce PC.".into()) }
+    #[cfg(not(windows))] { let _ = port; Err("Autorise Voxcord dans le pare-feu de ce PC.".into()) }
 }
 
 #[tauri::command]

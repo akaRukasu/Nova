@@ -51,7 +51,7 @@ fn register(app: &AppHandle, bindings: &[Binding]) -> Vec<String> {
 
 pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let defaults = vec![
-        Binding { action: "panel".into(), accelerator: "Ctrl+Alt+KeyN".into() },
+        Binding { action: "panel".into(), accelerator: "Ctrl+Alt+KeyV".into() },
         Binding { action: "TOGGLE_MUTE".into(), accelerator: "Ctrl+Shift+KeyM".into() },
         Binding { action: "TOGGLE_DEAFEN".into(), accelerator: "Ctrl+Shift+KeyD".into() },
     ];
@@ -83,7 +83,7 @@ pub fn handle(app: &AppHandle, shortcut: &Shortcut, event: ShortcutState) {
     let show = !recording && binding.action == "panel";
     drop(state);
     if show { super::show_main(app); }
-    if let Some(window) = app.get_webview_window(super::MAIN) {
+    if let Some(window) = app.get_webview_window(super::MAIN_EXTENSIONS) {
         let _ = window.eval(format!("window.NovaCord?.{method}({value})"));
     }
 }

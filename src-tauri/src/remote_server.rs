@@ -167,7 +167,7 @@ impl Service {
     fn command(&self, mut action: Value, dispatch: &Dispatch) -> Result<(), String> {
         {
             let data = self.data.lock().unwrap();
-            if data.synced.is_none_or(|time| time.elapsed() > Duration::from_secs(6)) { return Err("NovaCord n'est pas prêt. Ouvre Discord sur le PC.".into()); }
+            if data.synced.is_none_or(|time| time.elapsed() > Duration::from_secs(6)) { return Err("Voxcord n'est pas prêt. Ouvre Discord sur le PC.".into()); }
             let kind = action["action"].as_str().ok_or("Action manquante.")?;
             if !matches!(kind, "play" | "preview" | "stop" | "volume" | "monitor" | "monitor-volume" | "enable" | "refresh" | "edit" | "delete" | "import" | "online-sound" | "online-prepare") { return Err("Action inconnue.".into()); }
             if matches!(kind, "play" | "preview" | "edit" | "delete") {
@@ -191,7 +191,7 @@ impl Service {
             pending.insert(request_id.clone(), tx);
         }
         if let Err(error) = dispatch(action) { self.pending.lock().unwrap().remove(&request_id); return Err(error); }
-        let result = rx.recv_timeout(Duration::from_secs(8)).unwrap_or_else(|_| Err("NovaCord ne répond pas. Vérifie que l'application est ouverte.".into()));
+        let result = rx.recv_timeout(Duration::from_secs(8)).unwrap_or_else(|_| Err("Voxcord ne répond pas. Vérifie que l'application est ouverte.".into()));
         self.pending.lock().unwrap().remove(&request_id);
         result
     }

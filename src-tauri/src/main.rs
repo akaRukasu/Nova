@@ -5,18 +5,21 @@ mod shortcuts;
 mod remote_server;
 mod soundboard;
 mod myinstants;
-use std::sync::{Arc, Mutex};
+use std::{fs, io, sync::{Arc, Mutex}};
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::{NewWindowResponse, PermissionKind, PermissionResponse},
-    AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     WindowEvent,
 };
 
 const MAIN: &str = "main";
+const MAIN_EXTENSIONS: &str = "main-extensions";
 const START_URL: &str = "https://discord.com/app";
+const APP_NAME: &str = "Voxcord Web";
+const EXTENSIONS_MARKER: &str = "extensions-enabled";
 
 /// Couche de mods injectée dans Discord avant ses propres scripts.
 const MOD_SCRIPT: &str = include_str!("../../mod/novacord.js");
@@ -25,20 +28,27 @@ const AUDIO_SCRIPT: &str = include_str!("../../mod/soundboard.js");
 const MEDIA_SCRIPT: &str = include_str!("../../mod/media.js");
 const REMOTE_SCRIPT: &str = include_str!("../../mod/remote-bridge.js");
 
-/// Options du moteur WebView2 (Chromium d'Edge déjà présent sur Windows).
-/// Les trois premières désactivations sont celles que Tauri met par défaut ;
-/// les suivantes coupent des services d'Edge inutiles ici.
-const BROWSER_ARGS: &str = concat!(
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,",
-    "msEdgeTranslate,msShoppingExp,msEdgeCollections,msImplicitSignin,",
-    "msEdgeAutofillShowInlineFeedback,AutofillServerCommunication,",
-    "OptimizationHints,MediaRouter,Translate ",
-    "--autoplay-policy=no-user-gesture-required ",
-    "--disable-background-networking ",
-    "--disable-component-update ",
-    "--disable-domain-reliability ",
-    "--no-pings"
-);
+/// Both extension windows share the same WebView2 environment for audio playback.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI --autoplay-policy=no-user-gesture-required";
+const STANDARD_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI";
+
+fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window(MAIN).or_else(|| app.get_webview_window(MAIN_EXTENSIONS))
+}
+
+fn set_extensions(app: &AppHandle, enabled: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app.path().app_config_dir()?;
+    let marker = config.join(EXTENSIONS_MARKER);
+    if enabled {
+        fs::create_dir_all(config)?;
+        fs::write(marker, b"")?;
+    } else if let Err(error) = fs::remove_file(marker) {
+        if error.kind() != io::ErrorKind::NotFound {
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
 
 fn is_discord(url: &Url) -> bool {
     if url.scheme() == "about" || url.scheme() == "data" || url.scheme() == "blob" {
@@ -93,8 +103,7 @@ fn set_low_memory(window: &WebviewWindow, low: bool) {
 #[cfg(not(windows))]
 fn set_low_memory(_window: &WebviewWindow, _low: bool) {}
 
-/// Coupe les fonctions d'Edge qui consomment pour rien (barre d'état,
-/// saisie automatique, enregistrement des mots de passe, SmartScreen…).
+/// Hide browser chrome in the app window and leave reputation checks enabled.
 #[cfg(windows)]
 fn tune_webview(window: &WebviewWindow) {
     let _ = window.with_webview(|pw| unsafe {
@@ -111,9 +120,6 @@ fn tune_webview(window: &WebviewWindow) {
         if let Ok(s6) = settings.cast::<ICoreWebView2Settings6>() {
             let _ = s6.SetIsSwipeNavigationEnabled(false.into());
         }
-        if let Ok(s8) = settings.cast::<ICoreWebView2Settings8>() {
-            let _ = s8.SetIsReputationCheckingRequired(false.into());
-        }
     });
 }
 
@@ -121,7 +127,7 @@ fn tune_webview(window: &WebviewWindow) {
 fn tune_webview(_window: &WebviewWindow) {}
 
 fn show_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN) {
+    if let Some(w) = main_window(app) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -130,14 +136,14 @@ fn show_main(app: &AppHandle) {
 }
 
 fn hide_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN) {
+    if let Some(w) = main_window(app) {
         let _ = w.hide();
         set_low_memory(&w, true);
     }
 }
 
 fn toggle_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN) {
+    if let Some(w) = main_window(app) {
         if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
             hide_main(app);
         } else {
@@ -148,34 +154,50 @@ fn toggle_main(app: &AppHandle) {
 
 fn open_mod_panel(app: &AppHandle) {
     show_main(app);
-    if let Some(w) = app.get_webview_window(MAIN) {
+    if let Some(w) = app.get_webview_window(MAIN_EXTENSIONS) {
         let _ = w.eval("window.NovaCord && window.NovaCord.openPanel()");
     }
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Afficher NovaCord", true, None::<&str>)?;
-    let panel = MenuItem::with_id(app, "panel", "Paramètres NovaCord", true, None::<&str>)?;
-    let soundboard = MenuItem::with_id(app, "soundboard", "Soundboard et télécommande", true, None::<&str>)?;
+fn build_tray(app: &AppHandle, extensions: bool) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Afficher Voxcord Web", true, None::<&str>)?;
+    let panel = MenuItem::with_id(app, "panel", "Paramètres Voxcord", extensions, None::<&str>)?;
+    let soundboard = MenuItem::with_id(app, "soundboard", "Soundboard et télécommande", extensions, None::<&str>)?;
+    let mode_label = if extensions {
+        "Désactiver les extensions et redémarrer"
+    } else {
+        "Activer les extensions non officielles et redémarrer"
+    };
+    let mode = MenuItem::with_id(app, "extensions", mode_label, true, None::<&str>)?;
     let reload = MenuItem::with_id(app, "reload", "Recharger", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &soundboard, &panel, &reload, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &soundboard, &panel, &mode, &reload, &sep, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("tray")
-        .tooltip("NovaCord")
+        .tooltip(APP_NAME)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
             "show" => show_main(app),
-            "panel" => open_mod_panel(app),
-            "soundboard" => {
+            "panel" if extensions => open_mod_panel(app),
+            "soundboard" if extensions => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move { if let Err(error) = soundboard::show(&app) { eprintln!("{error}"); } });
             },
             "reload" => {
-                if let Some(w) = app.get_webview_window(MAIN) {
+                if let Some(w) = main_window(app) {
                     let _ = w.eval("location.reload()");
+                }
+            }
+            "extensions" => {
+                if let Err(error) = set_extensions(app, !extensions) {
+                    eprintln!("Impossible d’enregistrer le mode Extensions : {error}");
+                    if let Some(tray) = app.tray_by_id("tray") {
+                        let _ = tray.set_tooltip(Some("Voxcord Web — impossible d’enregistrer les extensions"));
+                    }
+                } else {
+                    app.request_restart();
                 }
             }
             "quit" => app.exit(0),
@@ -198,26 +220,22 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<WebviewWindow> {
-    let window = WebviewWindowBuilder::new(
+fn build_main_window(app: &AppHandle, start_hidden: bool, extensions: bool) -> tauri::Result<WebviewWindow> {
+    let label = if extensions { MAIN_EXTENSIONS } else { MAIN };
+    let mut builder = WebviewWindowBuilder::new(
         app,
-        MAIN,
+        label,
         WebviewUrl::External(START_URL.parse().expect("URL valide")),
     )
-    .title("NovaCord")
+    .title(APP_NAME)
     .inner_size(1280.0, 800.0)
     .min_inner_size(940.0, 500.0)
     .center()
     .visible(!start_hidden)
     .background_color(tauri::window::Color(0x31, 0x33, 0x38, 0xff))
-    .additional_browser_args(BROWSER_ARGS)
+    .additional_browser_args(if extensions { BROWSER_ARGS } else { STANDARD_BROWSER_ARGS })
     // Indispensable pour glisser-déposer des fichiers dans Discord.
     .disable_drag_drop_handler()
-    .initialization_script(MEDIA_SCRIPT)
-    .initialization_script(AUDIO_SCRIPT)
-    .initialization_script(VENCORD_SCRIPT)
-    .initialization_script(MOD_SCRIPT)
-    .initialization_script(REMOTE_SCRIPT)
     .on_navigation(|url| {
         if is_discord(url) {
             true
@@ -230,24 +248,30 @@ fn build_main_window(app: &AppHandle, start_hidden: bool) -> tauri::Result<Webvi
         open_external(&url);
         NewWindowResponse::Deny
     })
-    .on_permission_request(|_, kind| match kind {
-        // Seul Discord est chargé (les autres pages sont bloquées plus haut).
-        PermissionKind::Microphone
-        | PermissionKind::Camera
-        | PermissionKind::Notifications
-        | PermissionKind::ClipboardRead
-        | PermissionKind::Autoplay => PermissionResponse::Allow,
-        _ => PermissionResponse::Default,
-    })
-    .on_document_title_changed(|window, title| {
-        // Discord met « (3) Discord » quand on a des mentions non lues.
-        let has_mentions = title.starts_with('(');
-        let _ = window.set_title(&title.replacen("Discord", "NovaCord", 1));
-        if has_mentions && !window.is_focused().unwrap_or(true) {
-            let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+    .on_permission_request(|url, kind| {
+        let discord_origin = url.scheme() == "https"
+            && url.host_str() == Some("discord.com")
+            && url.port_or_known_default() == Some(443);
+        if discord_origin && matches!(kind, PermissionKind::Microphone | PermissionKind::Camera) {
+            PermissionResponse::Allow
+        } else {
+            PermissionResponse::Default
         }
     })
-    .build()?;
+    .on_document_title_changed(|window, title| {
+        // Preserve the unread count from Discord's web title.
+        let branded = if title.contains("Discord") { title.replacen("Discord", APP_NAME, 1) } else { APP_NAME.into() };
+        let _ = window.set_title(&branded);
+    });
+    if extensions {
+        builder = builder
+            .initialization_script(MEDIA_SCRIPT)
+            .initialization_script(AUDIO_SCRIPT)
+            .initialization_script(VENCORD_SCRIPT)
+            .initialization_script(MOD_SCRIPT)
+            .initialization_script(REMOTE_SCRIPT);
+    }
+    let window = builder.build()?;
 
     tune_webview(&window);
     if start_hidden {
@@ -273,9 +297,12 @@ fn main() {
             show_main(app);
         }))
         .setup(move |app| {
-            shortcuts::init(app.handle())?;
-            build_tray(app.handle())?;
-            build_main_window(app.handle(), start_hidden)?;
+            let extensions = smoke_soundboard || app.path().app_config_dir()?.join(EXTENSIONS_MARKER).is_file();
+            if extensions {
+                shortcuts::init(app.handle())?;
+            }
+            build_tray(app.handle(), extensions)?;
+            build_main_window(app.handle(), start_hidden, extensions)?;
             if smoke_soundboard {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -298,12 +325,12 @@ fn main() {
         })
         .on_window_event(|window, event| match event {
             // Fermer la fenêtre la range dans la zone de notification.
-            WindowEvent::CloseRequested { api, .. } if window.label() == MAIN => {
+            WindowEvent::CloseRequested { api, .. } if matches!(window.label(), MAIN | MAIN_EXTENSIONS) => {
                 api.prevent_close();
                 hide_main(window.app_handle());
             }
-            WindowEvent::Resized(_) if window.label() == MAIN => {
-                if let Some(w) = window.app_handle().get_webview_window(MAIN) {
+            WindowEvent::Resized(_) if matches!(window.label(), MAIN | MAIN_EXTENSIONS) => {
+                if let Some(w) = main_window(window.app_handle()) {
                     let minimized = w.is_minimized().unwrap_or(false);
                     set_low_memory(&w, minimized);
                 }
@@ -311,7 +338,7 @@ fn main() {
             _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("impossible de démarrer NovaCord")
+        .expect("impossible de démarrer Voxcord Web")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) { app.state::<Arc<remote_server::Service>>().shutdown(); }
         });

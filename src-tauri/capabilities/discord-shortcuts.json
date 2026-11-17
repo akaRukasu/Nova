@@ -1,7 +1,7 @@
 {
   "identifier": "discord-shortcuts",
-  "description": "Lire et modifier uniquement les raccourcis NovaCord depuis Discord.",
-  "windows": ["main"],
+  "description": "Accès aux raccourcis et à la soundboard dans le mode Extensions de Voxcord.",
+  "windows": ["main-extensions"],
   "local": false,
   "remote": { "urls": ["https://discord.com/*"] },
   "permissions": ["allow-get-shortcuts", "allow-set-shortcuts", "allow-set-shortcut-recording", "allow-open-soundboard", "allow-sync-soundboard", "allow-complete-soundboard-command", "allow-take-soundboard-upload"]

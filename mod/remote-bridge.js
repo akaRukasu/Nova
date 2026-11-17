@@ -44,7 +44,7 @@
     let error = null;
     try {
       const audio = window.NovaCordAudio;
-      if (!audio) throw new Error("Le lecteur NovaCord n'est pas prêt.");
+      if (!audio) throw new Error("Le lecteur Voxcord n'est pas prêt.");
       switch (command.action) {
         case "play": await audio.play(command.id); break;
         case "preview": await audio.preview(command.id); break;
@@ -82,7 +82,7 @@
     await invoke("complete_soundboard_command", { requestId: command.requestId, error });
   }
   window.NovaCordRemote = Object.freeze({ execute, sync });
-  const report = (error) => console.error("NovaCord : synchronisation soundboard", error);
+  const report = (error) => console.error("Voxcord : synchronisation soundboard", error);
   setInterval(() => sync().catch(report), 1200);
   sync(true).catch(report);
 })();
