@@ -106,6 +106,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Screen scaling regression failed" }
           & ./media-tests/yapfast_core.exe stream_worker::tests::aims_for_discords_bitrates --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Screen bandwidth regression failed" }
+          & ./media-tests/yapfast_core.exe voxcord_ --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Voxcord device or soundboard regression failed" }
       - name: Package the installer and test the installed binary
         shell: pwsh
         run: |
@@ -122,7 +124,9 @@ jobs:
           $setup = Start-Process ./Voxcord-Setup.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$target`"" -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Setup failed: $($setup.ExitCode)" }
           $version = (Get-Item (Join-Path $target "voxcord.exe")).VersionInfo
-          if ($version.ProductName -ne "Voxcord") { throw "Wrong product metadata" }
+          $expectedVersion = (Select-String '^AppVersion=(.+)$' native-port/setup.iss).Matches[0].Groups[1].Value
+          $binaryVersion = "$($version.FileMajorPart).$($version.FileMinorPart).$($version.FileBuildPart)"
+          if ($version.ProductName -ne "Voxcord" -or $binaryVersion -ne $expectedVersion) { throw "Wrong Voxcord product metadata" }
           $test = Start-Process (Join-Path $target "voxcord.exe") -ArgumentList "--smoke-test" -PassThru
           if (!$test.WaitForExit(30000)) { Stop-Process -Id $test.Id; throw "Native smoke test timed out" }
           if ($test.ExitCode -ne 0) { throw "Native smoke test failed: $($test.ExitCode)" }
