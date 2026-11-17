@@ -55,6 +55,7 @@
     "files": [
       "dist/**/*",
       "!dist/android/**",
+      "!node_modules/@capacitor/**",
       "package.json",
       "build/icon.png"
     ],
