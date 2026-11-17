@@ -1,14 +1,14 @@
 [Setup]
 AppId=NovaCord.Native.Test
-AppName=NovaCord Native
-AppVersion=0.1.0
-DefaultDirName={localappdata}\Programs\NovaCord Native
-DefaultGroupName=NovaCord Native
+AppName=Voxcord
+AppVersion=0.5.0
+DefaultDirName={localappdata}\Programs\Voxcord
+DefaultGroupName=Voxcord
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\yapfast.exe
-OutputBaseFilename=NovaCord-Native-Setup
+UninstallDisplayIcon={app}\voxcord.exe
+OutputBaseFilename=Voxcord-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -16,11 +16,16 @@ WizardStyle=modern
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
+SetupIconFile={#SourceDir}\voxcord.ico
+
+[InstallDelete]
+Type: files; Name: "{app}\yapfast.exe"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\NovaCord Native"; Filename: "{app}\yapfast.exe"
+Name: "{group}\Voxcord"; Filename: "{app}\voxcord.exe"
 
 [Run]
-Filename: "{app}\yapfast.exe"; Description: "Lancer NovaCord Native"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\voxcord.exe"; Description: "Lancer Voxcord"; Flags: nowait postinstall skipifsilent

@@ -1,3 +1,96 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index ec907bf..63b8b67 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -11546,7 +11546,7 @@ checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
+ 
+ [[package]]
+ name = "yapfast"
+-version = "0.3.0"
++version = "0.5.0"
+ dependencies = [
+  "anyhow",
+  "arboard",
+diff --git a/Cargo.toml b/Cargo.toml
+index 74940f9..9e93a8d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "yapfast"
+-version = "0.3.0"
++version = "0.5.0"
+ edition = "2024"
+ rust-version = "1.97"
+ publish = false
+diff --git a/crates/yapfast-core/src/discord_video.rs b/crates/yapfast-core/src/discord_video.rs
+index 44b95db..4697d0e 100644
+--- a/crates/yapfast-core/src/discord_video.rs
++++ b/crates/yapfast-core/src/discord_video.rs
+@@ -150,13 +150,13 @@ pub(crate) struct Watching {
+ impl Watching {
+     /// Decodes the call's camera frames on a thread of their own, until the
+     /// call ends.
+-    pub fn start(frames: Option<Receiver<VideoFrame>>) -> Self {
++    pub fn start(frames: Option<Receiver<VideoFrame>>, repair: Arc<dyn Fn(u64) + Send + Sync>) -> Self {
+         let feeds = Arc::new(Mutex::new(HashMap::new()));
+         if let Some(frames) = frames {
+             let decoding = feeds.clone();
+             if let Err(error) = std::thread::Builder::new()
+                 .name("yapfast-discord-video".into())
+-                .spawn(move || decode(&frames, &decoding))
++                .spawn(move || decode(&frames, &decoding, &*repair))
+             {
+                 tracing::warn!(%error, "could not start decoding cameras");
+             }
+@@ -249,10 +249,17 @@ fn step(cameras: usize, pixels: u32) -> u8 {
+ /// Decodes each camera's frames into its feed, at the size it shows. A
+ /// camera gets a decoder when its tile is in sight, from a keyframe, and
+ /// loses it when the tile goes.
+-fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
++fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>, repair: &dyn Fn(u64)) {
+     // Each camera's decoder, the feed it writes, and the sink writing it.
+     type Sink = Box<dyn FnMut(&I420<'_>) + Send>;
+     let mut decoders: HashMap<u64, (Decoder, Feed, Sink)> = HashMap::new();
++    let mut requested: HashMap<u64, Instant> = HashMap::new();
++    let mut ask_keyframe = |user: u64| {
++        if requested.get(&user).is_none_or(|last| last.elapsed() >= Duration::from_millis(500)) {
++            requested.insert(user, Instant::now());
++            repair(user);
++        }
++    };
+     let mut pruned = Instant::now();
+     loop {
+         match frames.recv_timeout(PRUNE) {
+@@ -274,6 +281,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
+                     decoders.remove(&frame.user);
+                     // A decoder starts from a keyframe.
+                     if !frame.keyframe {
++                        ask_keyframe(frame.user);
+                         continue;
+                     }
+                     // One thread each: a tile is small, and every thread
+@@ -297,6 +305,7 @@ fn decode(frames: &Receiver<VideoFrame>, feeds: &Mutex<HashMap<u64, Feed>>) {
+                     Ok(None) => {}
+                     Err(error) => {
+                         tracing::debug!(%error, "dropped a camera's decoder");
++                        ask_keyframe(frame.user);
+                         decoders.remove(&frame.user);
+                     }
+                 }
+diff --git a/crates/yapfast-core/src/discord_voice.rs b/crates/yapfast-core/src/discord_voice.rs
+index ca80252..2ff3f92 100644
+--- a/crates/yapfast-core/src/discord_voice.rs
++++ b/crates/yapfast-core/src/discord_voice.rs
+@@ -367,7 +367,7 @@ pub(crate) async fn call(
+     let microphone_thread = discord_audio::MicrophoneThread::default();
+     let mut filming: Option<Filming> = None;
+     let mut opening: Opening = None;
+-    let mut cameras = Cameras::start(call.video_frames());
++    let mut cameras = Cameras::start(call.video_frames(), call.video_repair());
+     let mut share: Option<Share> = None;
+     let mut starting: Starting = None;
+     let mut watch: Option<Watch> = None;
 diff --git a/crates/yapfast-core/src/lib.rs b/crates/yapfast-core/src/lib.rs
 index adc81d1..4923770 100644
 --- a/crates/yapfast-core/src/lib.rs
@@ -11,6 +104,362 @@ index adc81d1..4923770 100644
          .map(|dirs| dirs.data_local_dir().to_owned())
          .context("could not find an application data directory; pass --data-dir")
  }
+diff --git a/crates/yapfast-core/src/stream_worker.rs b/crates/yapfast-core/src/stream_worker.rs
+index f749b6e..cea6fee 100644
+--- a/crates/yapfast-core/src/stream_worker.rs
++++ b/crates/yapfast-core/src/stream_worker.rs
+@@ -484,17 +484,18 @@ struct Video {
+     _sound: Option<stream_audio::Capture>,
+     /// When the stream last reported how it goes out, and the bytes it had
+     /// sent then.
+-    measured: (Instant, u64),
++    measured: (Instant, u64, u64),
+ }
+ 
+ impl Video {
+     /// How the stream goes out, with the kbit/s sent since it last said.
+-    fn sending(&mut self, fps: u32) -> StreamStats {
++    fn sending(&mut self, requested_fps: u32) -> StreamStats {
+         let sent = self.sender.sent();
+-        let (since, before) = self.measured;
++        let (since, before, frames_before) = self.measured;
+         let bits = sent.video_bytes.saturating_sub(before) * 8;
+         let milliseconds = since.elapsed().as_millis().max(1) as u64;
+-        self.measured = (Instant::now(), sent.video_bytes);
++        let fps = measured_fps(sent.video_frames.saturating_sub(frames_before), milliseconds);
++        self.measured = (Instant::now(), sent.video_bytes, sent.video_frames);
+         let (width, height) = self.encoder.size();
+         StreamStats {
+             engine: self.encoder.engine().to_owned(),
+@@ -502,6 +503,7 @@ impl Video {
+             width,
+             height,
+             fps,
++            requested_fps,
+             target_kbps: self.encoder.bitrate(),
+             sent_kbps: (bits / milliseconds) as u32,
+             keyframe_requests: sent.keyframe_requests,
+@@ -510,6 +512,13 @@ impl Video {
+     }
+ }
+ 
++/// Frames actually transmitted in the measurement window, rounded to the
++/// nearest frame per second. The selected capture rate is kept separately.
++fn measured_fps(frames: u64, milliseconds: u64) -> u32 {
++    ((u128::from(frames) * 1000 + u128::from(milliseconds) / 2)
++        / u128::from(milliseconds.max(1))).min(u128::from(u32::MAX)) as u32
++}
++
+ /// The codecs only a GPU encodes, most wanted first, offered before H264
+ /// where the GPU's encoder for them opens.
+ const GPU_CODECS: [Codec; 2] = [Codec::Av1, Codec::H265];
+@@ -574,7 +583,7 @@ impl Sink {
+                 sender,
+                 encoder,
+                 _sound: sound,
+-                measured: (Instant::now(), 0),
++                measured: (Instant::now(), 0, 0),
+             });
+         }
+         let Some(video) = self.video.as_ref() else {
+@@ -865,9 +874,18 @@ fn watch(
+     Ok(())
+ }
+ 
++fn capture_slot(next: u64, elapsed: Duration, fps: u32) -> u64 {
++    let clock = (elapsed.as_nanos() * u128::from(fps) / 1_000_000_000)
++        .min(u128::from(u64::MAX)) as u64;
++    next.max(clock)
++}
++
+ /// Sleeps until the next frame is due, or returns false once told to stop.
+-fn next_frame(started: Instant, frame: u64, fps: u32, stop: &AtomicBool) -> bool {
+-    let due = started + Duration::from_secs(frame) / fps;
++fn next_frame(started: Instant, frame: &mut u64, fps: u32, stop: &AtomicBool) -> bool {
++    // Skip missed capture slots after a slow encode or a window switch.
++    // Catching them up in a burst adds latency and is not a higher real FPS.
++    *frame = capture_slot(*frame, started.elapsed(), fps);
++    let due = started + Duration::from_secs(*frame) / fps;
+     if let Some(wait) = due.checked_duration_since(Instant::now()) {
+         std::thread::sleep(wait);
+     }
+@@ -887,7 +905,7 @@ fn test_pattern(
+     let mut frame = 0u64;
+     let mut rgba = vec![0; (width * height * 4) as usize];
+     let mut picture = I420Buffer::new(width, height);
+-    while next_frame(started, frame, sink.fps, stop) {
++    while next_frame(started, &mut frame, sink.fps, stop) {
+         let shift = (frame * 4) as u32;
+         for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+             let (x, y) = (index as u32 % width, index as u32 / width);
+@@ -1012,7 +1030,7 @@ fn capture_screen(
+     let started = Instant::now();
+     let mut frame = 0u64;
+     let mut reported = None;
+-    while next_frame(started, frame, fps, stop) {
++    while next_frame(started, &mut frame, fps, stop) {
+         run_glib();
+         capture.capture_frame();
+         if let Some(next) = &mut switching {
+@@ -1595,6 +1613,21 @@ impl Drop for Worker {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn screen_fps_reports_transmitted_frames_instead_of_the_preset() {
++        assert_eq!(measured_fps(24, 1000), 24);
++        assert_eq!(measured_fps(30, 2000), 15);
++        assert_eq!(measured_fps(0, 1000), 0);
++        assert_eq!(measured_fps(60, 1001), 60);
++    }
++
++    #[test]
++    fn screen_capture_skips_missed_slots_without_a_catch_up_burst() {
++        assert_eq!(capture_slot(1, Duration::from_secs(2), 60), 120);
++        assert_eq!(capture_slot(121, Duration::from_secs(2), 60), 121);
++        assert_eq!(capture_slot(1, Duration::ZERO, 30), 1);
++    }
++
+     #[test]
+     fn the_worker_is_the_running_yapfast() {
+         // Here that's the test binary, which lists its tests and exits.
+diff --git a/crates/yapfast-core/src/voice.rs b/crates/yapfast-core/src/voice.rs
+index b507945..60dfc77 100644
+--- a/crates/yapfast-core/src/voice.rs
++++ b/crates/yapfast-core/src/voice.rs
+@@ -156,6 +156,9 @@ pub struct StreamStats {
+     pub width: u32,
+     pub height: u32,
+     pub fps: u32,
++    /// Requested capture rate; fps above measures the transport instead.
++    #[serde(default)]
++    pub requested_fps: u32,
+     pub target_kbps: u32,
+     pub sent_kbps: u32,
+     pub keyframe_requests: u64,
+diff --git a/crates/yapfast-discord/src/call_connection.rs b/crates/yapfast-discord/src/call_connection.rs
+index d709450..d9bd66d 100644
+--- a/crates/yapfast-discord/src/call_connection.rs
++++ b/crates/yapfast-discord/src/call_connection.rs
+@@ -86,6 +86,7 @@ pub(crate) enum Order {
+     /// Ask for these people's cameras, at a quality from 0 to 100 and the
+     /// pixels they show at; no others.
+     Want(HashMap<u64, (u8, u32)>),
++    RepairVideo(u64),
+     Leave,
+ }
+ 
+@@ -349,6 +350,7 @@ impl Media {
+                                 call_video::Sending::clear(connection).await?;
+                             }
+                         }
++                        Some(Order::RepairVideo(user)) => self.watching.need_keyframe(user),
+                         Some(Order::Want(wants)) => {
+                             self.watching.want(wants);
+                             self.watching.ask(connection).await?;
+diff --git a/crates/yapfast-discord/src/call_video.rs b/crates/yapfast-discord/src/call_video.rs
+index 98067c0..6d61b51 100644
+--- a/crates/yapfast-discord/src/call_video.rs
++++ b/crates/yapfast-discord/src/call_video.rs
+@@ -239,8 +239,8 @@ impl Receiving {
+         else {
+             return false;
+         };
+-        self.incoming.retain(|_, incoming| incoming.user != user);
+         let Some(video) = data["video_ssrc"].as_u64().filter(|&ssrc| ssrc != 0) else {
++            self.incoming.retain(|_, incoming| incoming.user != user);
+             return false;
+         };
+         let video = video as u32;
+@@ -253,6 +253,15 @@ impl Receiving {
+         let rtx = stream
+             .and_then(|stream| stream["rtx_ssrc"].as_u64())
+             .map_or(video.wrapping_add(1), |ssrc| ssrc as u32);
++        // An announcement repeated as another participant joins must not
++        // discard this camera's partial frame or keyframe reference.
++        self.incoming.retain(|&ssrc, incoming| incoming.user != user || ssrc == video);
++        if let Some(incoming) = self.incoming.get_mut(&video)
++            && incoming.user == user
++        {
++            incoming.rtx = Some(rtx);
++            return true;
++        }
+         self.incoming.insert(
+             video,
+             Incoming {
+@@ -269,9 +278,27 @@ impl Receiving {
+     /// Sets the quality asked for each person's camera; those left out get
+     /// none.
+     pub fn want(&mut self, wants: HashMap<u64, (u8, u32)>) {
++        for incoming in self.incoming.values_mut() {
++            let was = self.wants.get(&incoming.user).is_some_and(|&(quality, _)| quality > 0);
++            let now = wants.get(&incoming.user).is_some_and(|&(quality, _)| quality > 0);
++            if was != now {
++                incoming.assembler = None;
++                incoming.reorder = rtp::Reorder::default();
++                incoming.asked = Instant::now() - KEYFRAME_REQUESTS;
++            }
++        }
+         self.wants = wants;
+     }
+ 
++    /// A decoder lost its reference picture. Repair just that participant.
++    pub fn need_keyframe(&mut self, user: u64) {
++        for incoming in self.incoming.values_mut().filter(|incoming| incoming.user == user) {
++            if let Some(assembler) = incoming.assembler.as_mut() {
++                assembler.wait_for_keyframe();
++            }
++        }
++    }
++
+     /// Asks the server for the cameras wanted, at their quality, and none
+     /// of the others (op 15). Everything else, everyone's sound above all,
+     /// is wanted in full: `any` covers every stream left unnamed, and 0
+@@ -285,8 +312,6 @@ impl Receiving {
+             asked.insert(ssrc.to_string(), json!(quality));
+             if quality > 0 {
+                 pixels.insert(ssrc.to_string(), json!(shown));
+-                // The decoder starts from a keyframe.
+-                incoming.assembler = None;
+             }
+         }
+         asked.insert("pixelCounts".into(), Value::Object(pixels));
+@@ -338,6 +363,18 @@ impl Receiving {
+     pub async fn repair(&mut self, connection: &mut Connection) -> Result<()> {
+         let now = std::time::Instant::now();
+         for (&ssrc, incoming) in &mut self.incoming {
++            if !self.wants.get(&incoming.user).is_some_and(|&(quality, _)| quality > 0) {
++                continue;
++            }
++            // Retry even before any packet arrives: the first IDR after
++            // subscribing may have been lost or may never have been sent.
++            let waiting = incoming.assembler.as_ref().is_none_or(Assembler::needs_keyframe);
++            if waiting && incoming.asked.elapsed() >= KEYFRAME_REQUESTS {
++                incoming.asked = Instant::now();
++                let mut request = rtp::picture_loss(connection.ssrc, ssrc);
++                connection.transport.seal(&mut request, rtp::RTCP_CLEAR)?;
++                connection.udp.send(&request).await?;
++            }
+             let Some(assembler) = incoming.assembler.as_mut() else {
+                 continue;
+             };
+@@ -384,6 +421,55 @@ impl Receiving {
+ mod tests {
+     use super::*;
+ 
++    fn camera(receiving: &mut Receiving, user: &str, video: u32) {
++        assert!(receiving.learn(12, &json!({
++            "user_id": user, "video_ssrc": video, "streams": []
++        })));
++    }
++
++    #[test]
++    fn a_second_camera_and_resizing_do_not_reset_the_first() {
++        let (frames, _) = channel::sync_channel(4);
++        let mut receiving = Receiving::new(frames);
++        camera(&mut receiving, "7", 101);
++        receiving.want(HashMap::from([(7, (100, 921600))]));
++        receiving.incoming.get_mut(&101).unwrap().assembler = Some(Assembler::new(Codec::H264));
++        let mut packetizer = Packetizer::new(101, Codec::H264);
++        let packets = packetizer.packets(&[0x65, 1, 2, 3], 3000, true);
++        let packet = rtp::parse(&packets[0]).unwrap();
++        assert!(receiving.incoming.get_mut(&101).unwrap().assembler.as_mut().unwrap().push(&packet).frame.is_some());
++        camera(&mut receiving, "8", 201);
++        receiving.want(HashMap::from([(7, (90, 451584)), (8, (90, 451584))]));
++        camera(&mut receiving, "7", 101); // server repeats its announcement
++        assert!(!receiving.incoming[&101].assembler.as_ref().unwrap().needs_keyframe());
++        assert!(receiving.incoming[&201].assembler.is_none());
++        let packets = packetizer.packets(&[0x41, 4, 5, 6], 6000, false);
++        let packet = rtp::parse(&packets[0]).unwrap();
++        let pushed = receiving.incoming.get_mut(&101).unwrap().assembler.as_mut().unwrap().push(&packet);
++        assert!(pushed.frame.is_some(), "the first camera still decodes delta frames");
++    }
++
++    #[test]
++    fn resuming_one_camera_does_not_reset_another() {
++        let (frames, _) = channel::sync_channel(4);
++        let mut receiving = Receiving::new(frames);
++        camera(&mut receiving, "7", 101);
++        camera(&mut receiving, "8", 201);
++        receiving.want(HashMap::from([(7, (90, 400000)), (8, (90, 400000))]));
++        for incoming in receiving.incoming.values_mut() {
++            incoming.assembler = Some(Assembler::new(Codec::H264));
++        }
++        receiving.want(HashMap::from([(8, (100, 921600))]));
++        assert!(receiving.incoming[&101].assembler.is_none());
++        assert!(receiving.incoming[&201].assembler.is_some());
++        receiving.want(HashMap::from([(7, (90, 400000)), (8, (90, 400000))]));
++        assert!(receiving.incoming[&101].assembler.is_none(), "resume needs a fresh keyframe");
++        assert!(receiving.incoming[&201].assembler.is_some());
++        camera(&mut receiving, "7", 301);
++        assert!(!receiving.incoming.contains_key(&101));
++        assert!(receiving.incoming.contains_key(&201));
++    }
++
+     #[test]
+     fn learns_cameras_from_op_12_and_forgets_stopped_ones() {
+         let (frames, _) = channel::sync_channel(1);
+diff --git a/crates/yapfast-discord/src/rtp.rs b/crates/yapfast-discord/src/rtp.rs
+index e31fa6c..650011d 100644
+--- a/crates/yapfast-discord/src/rtp.rs
++++ b/crates/yapfast-discord/src/rtp.rs
+@@ -605,6 +605,11 @@ impl Assembler {
+         self.waiting = true;
+     }
+ 
++    /// Whether an independently decodable frame is still needed.
++    pub fn needs_keyframe(&self) -> bool {
++        self.waiting
++    }
++
+     pub fn push(&mut self, packet: &Packet) -> Pushed {
+         let gap = self
+             .expected
+diff --git a/crates/yapfast-discord/src/stream_connection.rs b/crates/yapfast-discord/src/stream_connection.rs
+index 0020234..e9ca8cd 100644
+--- a/crates/yapfast-discord/src/stream_connection.rs
++++ b/crates/yapfast-discord/src/stream_connection.rs
+@@ -117,6 +117,7 @@ struct Shared {
+     /// Sending: the video's bytes sent so far, resent ones too, as UDP
+     /// payloads; the keyframes viewers asked for; and the packets resent.
+     video_bytes: AtomicU64,
++    video_frames: AtomicU64,
+     keyframe_requests: AtomicU64,
+     resent: AtomicU64,
+ }
+@@ -132,6 +133,7 @@ impl Shared {
+             offers_changed: AtomicBool::new(false),
+             chosen: Mutex::new(None),
+             video_bytes: AtomicU64::new(0),
++            video_frames: AtomicU64::new(0),
+             keyframe_requests: AtomicU64::new(0),
+             resent: AtomicU64::new(0),
+         })
+@@ -265,6 +267,7 @@ impl StreamSender {
+         let load = |count: &AtomicU64| count.load(Ordering::Relaxed);
+         SentSoFar {
+             video_bytes: load(&self.shared.video_bytes),
++            video_frames: load(&self.shared.video_frames),
+             keyframe_requests: load(&self.shared.keyframe_requests),
+             resent: load(&self.shared.resent),
+         }
+@@ -287,6 +290,8 @@ impl StreamSender {
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+ pub struct SentSoFar {
+     pub video_bytes: u64,
++    /// Complete frames sent, excluding retransmissions.
++    pub video_frames: u64,
+     pub keyframe_requests: u64,
+     pub resent: u64,
+ }
+@@ -560,6 +565,7 @@ async fn send(
+                     connection.udp.send(&packet).await?;
+                     shared.video_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+                 }
++                shared.video_frames.fetch_add(1, Ordering::Relaxed);
+                 if reported.elapsed() >= SENDER_REPORTS {
+                     reported = Instant::now();
+                     let mut report = rtp::sender_report(
 diff --git a/crates/yapfast-discord/src/token.rs b/crates/yapfast-discord/src/token.rs
 index c0ee52c..83a90d3 100644
 --- a/crates/yapfast-discord/src/token.rs
@@ -24,21 +473,1063 @@ index c0ee52c..83a90d3 100644
  /// The linked Discord account, set by linking by QR code or by the developer
  /// probe's store-token command.
  const ACCOUNT: &str = "discord-token";
+diff --git a/crates/yapfast-discord/src/voice.rs b/crates/yapfast-discord/src/voice.rs
+index 8046204..b1b4700 100644
+--- a/crates/yapfast-discord/src/voice.rs
++++ b/crates/yapfast-discord/src/voice.rs
+@@ -180,6 +180,12 @@ impl Call {
+         let _ = self.orders.send(Order::Want(wants));
+     }
+ 
++    /// Lets the decoding thread recover a failed camera independently.
++    pub fn video_repair(&self) -> Arc<dyn Fn(u64) + Send + Sync> {
++        let orders = self.orders.clone();
++        Arc::new(move |user| { let _ = orders.send(Order::RepairVideo(user)); })
++    }
++
+     /// How the call's connection is doing, as the call measures it.
+     pub fn stats(&self) -> Arc<CallStats> {
+         self.stats.clone()
+diff --git a/packaging/icon.svg b/packaging/icon.svg
+index 67fe81c..921f3fb 100644
+--- a/packaging/icon.svg
++++ b/packaging/icon.svg
+@@ -1,6 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="12 12 78 78">
+-  <path fill="#ffbf47" stroke="#ffbf47" stroke-width="3" stroke-linejoin="round" d="M50,14 L58,27 L73,19 L72,35 L88,38 L77,50 L87,62 L71,64 L69,78 L56,71 L38,88 L40,71 L26,74 L30,60 L14,52 L27,43 L18,29 L35,31 L37,17 Z" />
+-  <circle cx="38" cy="51" r="5" fill="#1d1607" />
+-  <circle cx="51" cy="51" r="5" fill="#1d1607" />
+-  <circle cx="64" cy="51" r="5" fill="#1d1607" />
+-</svg>
++<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><mask id="mark"><rect width="24" height="24" fill="#fff"/><circle cx="8" cy="10" r="1.7" fill="#000"/><circle cx="16" cy="10" r="1.7" fill="#000"/><path d="M8 15q4 3 8 0" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/></mask></defs><path fill="#7c6bff" mask="url(#mark)" d="M6 3h12a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4h-3l-4 3v-3H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z"/></svg>
+diff --git a/packaging/windows/yapfast.ico b/packaging/windows/yapfast.ico
+index 0387573afa220361664daa9490ad9004498f8b91..900694944674ebe515db241372eedc96e549d44f 100644
+GIT binary patch
+literal 26178
+zcmbrkV{~Or6F+)l<HU9{F($Tc+nQiv+qSKVZQHi(WRi)^xq05_UH8LX|9jsLx7XSG
+zRCV><r%v~;x~gjx0007j0U#p-z8Vq08WaFX`J&L!{^ei4cu+6^01NA1-s_8ghxi&v
+z^e->?MZ3WO0F;#f^1hG&KpP?ez{vP7j{^k&aG(PK0s{Z?*{}eB5*`5H=l3ta`Sm+j
+z6#vlwG$Md2H2^Td4FH5I$cZDs;(Uz;AV^AxD1CkZqaiZ%*ZTp4cYh7P)MAzt5ma%@
+zicaj4R#8M7_C4ujpT-SUq@s=Z1pR>0QjNrTfRczLqJm)7X-PL2by$!hp+)<yO#xo5
+zeN^roN59AhAt}OgHrdJUc*RR+R%|wyhctbh^_K0}{k8>%-<e(;_E+Re^EaIe1)b!y
+zVyT)u1tOC0YxM8{t7Hdfm5NMXA&=GF_kOvHxGjyf$e@`nAdP2}u#0I>_HE@<pk$E|
+zH2~@OkD5hXlNQ+Idj2{;FF3M=cpV_rnSzi%aRt`E|9tu&yQB<OvU_XLbJBCNGFutq
+z#DXh!q!ls`K%xOHQisAl<3eh>7S&E&5Rs-hqm+_u&aJkO{OlO+9VrGZXKbn^V>au=
+z8SN85WK<)h8;j~!L3?oA=gSU(IFNH+jwsi0={8PwDB>|!7v2?Pl=0k*>_8Fe<<v<q
+z=Ne<ywGwCu2E!U<(xbknpCFq0ab)B`vZ@aQ!aAT5zCiKTgQ#&IV_ho2qeAu=Q|Zxb
+zv~HrGyb4d+*rp339!~;kfd>rk-2lihMA1-4C~Q~Q>m_IM#feIR;yJT1-i%8v%uydo
+z-g1gbi?S_gxW>R$MJ=GXX;Rm7#u+!peY4=w($fS%Wnu;bJA7B@5s%w0@CGoD6+__Z
+zvpI)$pK=S$tVMt#QcXE^uZO{2jLbkko5Ta#9<Ld;1RnE+r10RA+oG1`BPShXtG_T#
+zUT|+L%gt2p2EPx~*;ZDH6w5R^n}Va8tOP~+Z~Xs?l)QvLBMeZ$F(1HM9Dbn)ASo&*
+zQY~Z<@PEMCKj=sM57wf?@e#hT*7q;gs*>s=@m0UDw$sIIE5=?7G%~Uv27yDj--we^
+zl8jIn7ZiDP4j{2M*$%V@5=%vFB||7ivM|Wbl6-==P*u{(<g+mW7voyHy=_mnJ!voD
+zdDzXu`@q1Srn9ax9eb`eNmB|eCP5H)AAb%K+wX%f(=C`3+zSYaKWfxPss1(kuIS-A
+zrKdsVPA8TV;o=som*)6q8g$32vFOSZ5h3)rMo(48cVrrY+9e{O&$o;o{P791v+Jg;
+z8xL{n1XldfI*72V1U4Q+IE*X~zf`3k9)5th@;ZsB{`z{;M7f8<FHNJ0rW_eM0L3oY
+z7?6ZAbPJZW#r};_m}n7Q^}Am1wBiI=8+{(F9kD%BuW1`Xt&Ob2CRJqA1!D@W^wFy^
+zpg$}SMaYDvF^kMz&8W_46C%7J|HvfF8o>b@s4&vUuO(`LGB|j@A9Ja@y4-}^c8=$O
+z7(BWKx6$rmFaBg?L~T0xUA(T7Y0oI2-~RXe=&)H974OJ~z*!+jcehz4$_m6m+V|u9
+zAU`W@N@+bRxb7Gr#v7UQdb7U@g2r7=6Pv&WC=@hdD?UmiorUdm6>@&HohE{cdMmQw
+z7uQVwTVIR6<4?V^hRcHIBwmTpzLU&m95f0sh0Wlgg=5w&-^pWI%r8f5o8d)v1dv+L
+z>ehg+8`CO2_aNiy!}Ko-BgP#>ebfxRJ{)BeT)`J=Mf~w)j<l00_hhns(l=x3nX11f
+z;B@z>{aEyyMx$nEd&t|<i;=OmEn76F{}}wRank3mE>g|Npwzf{yg?DATQ_Z==d)vK
+zF0e=1?VC&D%@R`2?Tu3gE3Z?*y}gggP8Cm|bOSFRr`Fw`XX^dRfJ5r~@FI&FBK%}=
+z9m(ggwd=GtZsu#{41^|s+&5H`QMaTYI5d1%YYTvZ{1=%={z0c7pNhAikgS{R!&!n)
+z{{I8{|LpTv|3Ut)EAKM^04Dq|@{3ZsZ1F^~hJCLleV(mJI_!Yu0#<X%eoC_>IE6G8
+z^WgYY0klDVFqov@z=@^9gTPXD86<>(ROo2XFoL0BI<wbESYwKZ+E;(3`OrE}HeU`7
+zduggzGETD1x83<yI8;sMe~)S!K^ip3BZN8(<ZnhQ&hXhL?hc2r0`#ja^X0~J_;?9#
+z_DRUl_kPiFb4;5i;^ubNtlVbJ7!RCVrYTn#Ft-9n0giYcBetev=K5Y%^21rn^s~_*
+zG}Cv|Idv)_cO9lmxA5h?KKSmAcOV@D#K$hKOpGwylgue%5T@1&)(TNuD_J-A1L6>-
+z8Fgf>aK&3&^p6!4TBqpm7d#V80oWA8QL8U~nX(;cEILBl!l-LB9-Zw?rcf{f4f54l
+zXpHbM*8~$vD1Hip);UlIw4KU~g6n@0!Jw+|w(j21ZxJQ`L`zl2NL5SyarT^t$KyT0
+zcBB{qGZmXunkT7sG2iHh(&#B(m42xXTLfrIDWO$vy_n(fTbKHmaXrt72J`2xhhs`S
+zD-c7u@_z_)H|)EVYOR1}1xtUc;k5?|8G^ivIno=C0e41_Wxiy;SjV1lq~bPHSW*_u
+zNl?}`5lG#+s8~;33ZM+z!ub(yY+dofVh=Foh(D0cG0fjrD{Z}uGBV6Dp&ytreGYa<
+zF-Oba_b6>mHct~_9%DLo0@#Gl=LN9MO|GNeg|M|;`1na55wlnH9#CJm@*JA^NoQ`j
+z?6|g@iAz!kj?*cEYV<Jtz0Mzc@F$pha`RMC08Pi1&DpES$d$FW_WH>$tHse-++qU1
+z5Hw**B*j5A`7|mH5o^O=>-y^bVq#kKGYpb2)t~*?Q+#SV6!tc1qBoWu@>Tp=-TZ=v
+ze$VtO4}MoClh<8L5AqRVS)jRoen>1KJ)L5MmBcn^?sb{b!+reSZJsrNs~(C2EbEtD
+z%+AP#$7FgVMtb|_2e_N7!|ovn4Rhfr$+cCE0}~rh1ukFIHCXRHM8*Nwh_%r!-b)j%
+z>wyJJFv7hOOAa}V?{a8oOPjH8)@-`{XWA%PdK^MLYW<!7<_c81>rn)~lL<^CS3*>S
+z^q$vu&dI+sv3)YXpN<{^Qa<6}e>}OTgyq%z58EU9k`w*M_8dJt?g0P@=znc*C{;g9
+zMHO#^zsGT=tKpzpYZO*c9wxILS)yA+p<jsC1fs7xERM*i5w%Dpzm+4V=>u4ZrX9|B
+zP2B%5^w}k%$a_yF1zVv+QQ*HiE8N<_{1xw<tPEsZjAW<lt_=Fv?KxatWnDczo%qaf
+zUh`*8erSqb!S;ftViPV3sGbnJz7>~$=PMQLux%c~M&~3(^nco!9r8hWd%_20fRI5d
+z3)=+8E1jGcQ%;Hw6MaH+YGAUqm&&D%H;aKA4_n4WBSs9;@4EioE$mQ<T@vmmRTp-j
+zD?UwkqT!k&D+ycHk=Uv|1&OScR(`!k>Raz_#HvM|Ph<%ghGHs8cy{cHx_4@@aLC}0
+zvzyMJ{yQ>~Zy%7EMREDtY@tn0Op5&GATW&<shotQy&-P`^vJ>B)Sf`(duWGg`E#$|
+zoebAr{u5t9kBaJKcs~4S@4C)l0%tGgEltyNgh5v57uS1D*&9wAm9CNf;O};cDj1(K
+z2Fn2yL027`K`)}F4ggdKhvkt_QaypmREm8@t9;*0k;4>p0Qyr){)nG7YLul{A#O~Y
+zB`GIs3(J!$bRH`vI;m*DAub#I1I<H|eL!{6hPF<-emp81$u(0%wr3%$p&Gen6I4hJ
+z*H9@MmVqIAr@JbZEWeGNh;%-X>e^Mg5#V>FeGsr%cd<o!E9`x^duezv;mV{_mJrc6
+zawY)~0B6klS{s9cRGzNEq_()i!eQicvpMWQNu>mdRs~v1k@V6YnWM_Rs7X?Ne3&qz
+zY5(5gd{hUtG;l1c(~#=0T8slffB?EW;l{O#BqAtN?<h_CT$^<j1S%jvD@qIqMhfvE
+zw+H8+EapZfr(knIi2AJ*h!};|D8E<GduP}yKqn^pqXRf44giwH%;^mJF~I{=tS)p_
+z1&L3`nc#PM7yC|V`?J7t$Sj$t43L%3HYCYaZ<4i+!Jg%!SFG>GtEe?1MZ<)pO_=c|
+za0?cYzo{x^{uT&A){gvHf{71P+FUG!P8b}=C8w<s&(R!VXRJtoE1E_m5C8}#nJnN@
+z3&IUIt_VgiJ8(kVF2}s6HA`a5^LA!tnm>m*nj3Insje+fsa@febC+N99N)GtPpM_E
+zt~I-_#p}vZU`t<bni6DA3FaCI3eVWjL?R&3bQK3$5h71x=r6HLhaOtxfhR?XUVu_2
+z7p|u%)1G?3zsdHNb6EAK6A4-}<s^l_#$oyyDaw|S`8?J7tYx39jltFd3yzh7h{XUW
+z&oFzf(EQ9pgaD_zJnC35VSht>fvnxkzAls}T9S;6<BB;Z_iF#OMKEg0V9V%=trvKm
+zK8t2l%Y=kMDoNz)!lo$B5eE8^WR?;1D^A?tD2Nbe`z?9!pOa9h)2ONyI-*o8gl<21
+zg9#R+2;!}3Z0Ej-JojSdz+A{+q$%=_y6{QjM@F0c^(vCW3l`A@?)}O5MrDt8H<e^Q
+z;!o-@ML$zelWIDQV^OwJKZ8Z!B8BPq6ivz}1`&Fz@nbEgun<(R8;)6budw&TGA?gh
+z+g|~FZ$C%)cEdUf0~8@Nz0#>UKA<|5M6Q_1ALJ@Y*A_qJBm14ZYD1ACQk3=MBz`!&
+zY>YOp{W}A#ZvRbY;`=2^bBqry|FWRWU-w3)n$PMx2&WA-+HwdicTN4xrwpHtFT>3k
+zx$-x~&jK;O%C6RZ3YpgJ6sAYhGON~fwfPJ1>?x>juHCHs9~<aDhfvD@Y@kt}tv>+(
+zNU?u6(2F$PFkN-@5nroZ$H%Vp3~*tCGvS*u%f)#=NUgZpMS;as5;GMg;-c<VFX(v%
+zGW`?1J3&Uef)_00LTIU<LWF05kHn2h5si68QZltmDf@wjl(NQWlUcD{fBCXJ7c$4P
+z)45+Lz3uvV?KrKnAGrT^&1iYrKKE>;tx?Jek-pIJw*77oB-hNLIl}0BsMpA$Nj{!o
+zx*r}4N?0hNyZ?K_-Bh5PsM9W~LF2!cG|OxDH=W_6)6aWESKIk*Rf<5+OE#Vxe2ww%
+zISaPR@pCG(&y&y8;la0ye#X%Xl;bv?7AyOwr^YeQoXPKeiYv(bvi%vx;eoWl_4_*w
+z4Ln|lCyzS0dpNy(AKe%2?2_)lcvXMcc!0}7<9VisI;jZ^wwP-2rt6RSPmWR(hANo=
+zxzI|V&=oCgtB8d4sCx=y1aoxfi9`(alZB<q3#ZaafDGd9BKY(qTFL6-V<nYTe<%c$
+zftXfOP_wx#>ktL=LKzI+tj_1-n%LOs>M33UKY*}$jMF40I`Hd3#}gc)Kzob5H45VJ
+z(Rn=~6h$o#v3~ersPs)$#K<I|paklqIR|qkR68{GTxGZ<s*Ig%m3CO))CmV|^M&MD
+zuZpT8Tg1HQrck-WsHYB^sj6dhj7$?RjI@F;nLv1&sfMNlOV|uqMcW36mGIQWHj=s$
+ziAQX3Mk-xBo95J(#dyg?#xG5_jMrbFAt@ut<P7*6hOzkRjgcqQhEU%wy!`0$&4xLn
+zDpcbgHK1jnRvql-r*pYOoqa8@@Hxz4lhGNPcw$6DJjn!Lie$_95>KS=bUyDb;N0n5
+zPg}dtNo)&Y*f<uuu;BcC@wjYkkJ@w?hS}ker^zG_TnGFBbyPgAE*)xMhp4w(^y4k%
+zKZo6{A+78jw4)4$-MUpTY%q^dZvk7?OJUrs`?NZZSefyY7=vV{cRAws6E-W;_g5Be
+zh>hQe%`^LR;0HDEVSdg${~6(cZm#gmKrz^1^IlV8o52|DOFM@Imx&Je>G<w*<-&{5
+ziQq*gsi~hd+R7F$sFXBn&eQJNu?*r1;0wQz6`>%;%^!$eoSv*jj>ER-7z#8)21O&E
+zv+lDnGL^J;U;YMjPM$_bG(5K}2Kh%AG=r`b2qeWf4V$zx70oLwc29Rw;n2{^7c-cS
+zcbAv$k6xD~%X(_eBGs<c)@9ENQi5V~C@Xa%m(6@6S48?f^|7t}2A^7_p?D(|r6aZV
+z<H&T(&x|Mx!+m!arlSPbI%YrDctXNE<kw4@5z?|(2(GqR`Di9_?aP;Vgaiq?fKG70
+ztc`UkQFk%Ye!0t#*Q-B=ih5ZUqC@CVHR}6>on}KErSRcWfx(LP6edzutvSG>4sIV?
+zCGcxTo^;z@UcGEr7%I2#th<GgK=8iSKKtM?sLDu}<Wgx0a>?3mpI&>Yoe;m}Ta3)Q
+zs9zWNecTfd_j9GyZbrz<Fp=_KnwYM0+lh$j+L}srO9>Rd98;b)-;!?Q>*tPZp%yEM
+zYmY0}A(u-PD|BmQo{S>v%Clk~1k^rwnu-v^xZfGF3zt7%r*4_Lo!v9$v3<f4`orkt
+z3!t5MD+liaR<i6th$1!+mNV>qGp^ko6_UUgD@jlIm?Iosus&~D<O%sKb_nV%EagzR
+z@GE(T#?ymNHhwODx@NeEZdK@EdNj={iKi5+?}FG>+n0eQv4Q{@H+godJAT5ma}Vg#
+zdtU0-1w3)#o0xs5e&%s~XI?<+u27vA;V>J<$erRhe^o$Hnfl~>Bv{qwqqH~S!zHkS
+zRD}@adH7`E_PK@gY?)y!9m)zK<oNT}-MveqAAMa$sU@5Uok$$$i8_MsynrHGptnqs
+zP31N+2nVP~VsR3S$MSU@c6{?S^UcZh)D!q2*TBWe);gd+>0-N5V`Fu<dk;?@7ehDj
+zWm_2NNQCK)?3fW#j%{+72;3K1wG>Bfc#bYU!n7d$`Xlb;$+yw<!=_Y={)D+by_efU
+ztl79bJ8GczR6?|Ca<Y^ls|~U}e6PY5f8}&nyL9zKX~f;6&z>AFin9sQ>O6{f<-c%r
+zE$PWUlbiwE#VBXa7!znV&+Purly3^?@*WXiuyK;GO=mS|xov$WwfqZKFoBKfKdAV>
+z&d&ejJQ@Gve$+u<LciS4-hbUsx~#R%KknzGJND&zm#kPyI%p6ULl2xxD*hC<&1eY$
+z&UHaW5Qd3(*C!5N@iwg(u_7*o3xvCsL<ys`Asieo&dwlMfCYtWS5$*YwUiEqgQaPN
+z`KrqkDU#iopPOJN^nxw&o!ocqYV(c%q|@;-{cmunTi8#*S9guM?i@n2fYTT{3{lGh
+zi4T13+9&T1N~ML1Hae1W6j6yLY8&S{NqqWZH^M*gBX6}(Kb}|5&K+!>XC!2sBIb!{
+zGP&|f8yDPOgM8MW@mylQp%Vz-aIake(1_99^n>^d?T$9jZ%3lD+Bxz-3qp~sZkPvj
+z82jyaLKg!ZpZL3Q86iQD63{BY8(-cSJw&jqZ#LTrn0nzcb4eNeou~<kh@xAv_XC3`
+z>cDtYg{|1ZH~7i{IRv_2CGvFD3Mf_V-O5$cB;44`R8g>X4Ok_k7)v`F0i&RO&P$*>
+z-pM6=W{SA%iw4s^kZP7KjYdXR98*|t&z3BWdj8^j^W48UW+Z?TbUbxG!9rAC9gI-v
+zbGa&RTRH~oK#GYo7Ys82pYt>m_-t+g1+e}|IS%m4t^JSziiN}5do_Z+KeBd3PS->E
+zVN3V>0jMSKTfRYoFUvMWuKn~%imSE_zWmU0w!+qG?QfcepjKHcxwXz-5mlwG`8Dn9
+z*#McIwX=!tAyJ6fSC471Xy|f|odIycW{U&?OHbdUW~*HB9mLXoSYiq}_Z7Amd_ccC
+z90Vdu=9c7FCxlEEyjc$&)cPUn1S`YtkB0zSP!VxwGISp`=ob&>OBtgjzT*r`o7$3&
+zk7hgtQEwzkrR}P}vBD=c<F|uBkboskO&)iNT$-z+l&hPvMYBL@@i(N`ma8D2dDB3E
+zqG@;6%b!ZJhK2+gnICqa<+K&w3BjQaT>E@B5CK*{4+I6TSc%*u13day$Ar0@d|WQj
+z)3TEf4~g+n3~415z-tn_;4OP}p}@)NT8&2iZwac!7=CL3y9-I_&FHT=XT$8x5=nH-
+zdukfIdqin#9}S7Q%1JHaeceKU=k<G@zXZDx3aoxI{;|J{c@#WhE6>XjtTdjpy<R)Z
+zqHX4U@<t3Z$dJvtvL}Le$EXi1T^V(5B;1Af1CciZ%2?W$;aexIR(lhG$!ESGcwVgG
+z{vm&Q>*Z-CPfdzQ_x_dMwec}2M3UC|k%zSif-b0z(@7kFGr%-6Fvvuu-HCVs(}=uZ
+zf`KDTUqLc#CxUM12lR<Eq^Co_$wW9VrXOSSQ{Gw94?7S)Ldlh1kdajwn*R*T@m_xD
+z2OPYmaqJbVcC$MxR)b~n<)cM<ITi_0&l8qB#8W30RP~>cTsBoOM6hIKq?~t-piWVY
+zWIG6hONn+m!1U<!Goasy^ir{B$j00e$jiu1JW$Rv_Na+BwuTu|CH8BTzyFC%kzwjb
+zac#Z8CaA+OO-zc|WzT5sJs3@w^d>9?ea{mk8HHy=<*k8AOk?19cA}B`tJJFbQTLUM
+zR4s$O_S{UD<h9zBAhr6HU9iIkWy9P*U(W6R1!$ip>fgUnxs+*{6!m{+$kCz4bL@pQ
+zWN~>a`Yh1Jxr-#evIdt4jULcMPX#u$$0wvnKS!gR&FCfAHnj;=Lt<dmi)ijSBrp<h
+zO-P>6tTG-(iakH1OJ=*qu=7mVR`4fpWG3*Hy)}(t^#hIFVEtcV)!HZdNa&K~TC+~Z
+z#cDP@CdzEjWs3R-=fBrM@2N$$a7CgCiGc5?b->ylv<C0(05}MSt~qxNh)r@qrzoVB
+zr`n?l>`lY$+{4q=eMm;`GG@IIDXC|ojKwCvtNR%yOmnofE(NtF_v2w?A^ESFy&JMc
+zmt@ps=`>a{9?%<xw5;a$k<HwL-LHgm^hy&uH3yDFw`D_E(c@EE-(cvm7D`$xs<w2O
+z>D1WAb=c|pWO!>F52HbL0vpLMyB%XOYjonpGB?_t*-vH#_0$O#^rjJq0G@0ySk*;h
+zZjcE{9qp107!so2-E|T8`QI|$El5kM5gRqEJ^K7(XS$~7GMI!Q)cw4duTz-*Sj8Td
+z7X~BmaGr%9xL4?aQL;G5!Glr#Zf4-P{h@o8=CW}HG1tJAb$OJVV@TG-0YaC0y&se*
+zInF+<o6vJ#TZ7c<1%PrOiY1_b0iPx08yUT2Y!O+FG>U+bKsipiyzPIfsLy(^w=Nmz
+z&Xw-&K8~@0qlqBG2`&efWEv!cnXsRPW00S~GpTCNp2|kncNO=p-t`k#p4h3pJ)Bth
+z{&d{xk(Y3_$L+6cPoxH0-uXHm>UETC(S|L0#;=UJQHD&&ad_qG*>>(t1QfO8E6@B0
+zedf6FrMoMkl<u!G`X2`~fiJnhe>`Kkh5a@F0BiDJ&zPwjrK|eS!R*R$x@(~fje5ue
+zemKZa3&Em_C+|ljh;W!JjvWqa?tT8eTt&WW9sEE#7~L!^iw0E@(tcq0I;>O#1#*$V
+zH3$R*KLrXY6>+hCNUYBkufFGt-E{W0+?C8#mt%=?)8A0ZOJ4Juu4Uhvu1Br&OaD8L
+z*ssrDV~G=C)kaSb8JJ+8xgfr3GNVdOkN!oY{4&Ms+fqorNBR14LG$}<wNDd`i}d#M
+zOLSz~NA*x6vtdg<r_BvF9&U~H!O57N7^sS>2<(%VZ=~LL?p+G!&Ae--l1cP5MO%f@
+z=<8-^(q86-Ten7G#OM`o61PNNcwttO{eFe$?x_}kXa5m$IpUd_@oFm=vDQ_sYR3Ls
+z4J-n!U)ob|Yf3A;5reWUE<#A9NSoKH*(Wo{B}=fmHA8VHCeQ&Selp}yE)ZIu=xCx<
+zLltUy7<bklQ4Bk8X?QtNLB(ek<?u+PysX=<?;JC#G_*X5q@p(_$FezS<&;8f6%m9Z
+z?-ptdD=})ETs%>18;G)CtJjPuqWdufM|C;WaPm<Ju+Jy$Hvp0_KVPGyMlI91xnDdO
+zqWdACndd(1sU0q5x^+Ug8&LPh+pzqE(UKs(>#Vs1g-fuX;b{z8ceOlvEmb$c3(%z<
+zzAkC0fquaj5yl~;A82uJd=!#yOPM1j89xJ+n+32Rmhg?@%{7zAdVOnd0Bn-I4YUzR
+zbrK>h@DFI2BO?H?U3lpLfL}^NxFeoBvL7og6~DX`0I>gDnnP;t#hwQ%_9D?>UV?mm
+z6Mw71s$++7&sCvdh{&?4QBVeTnp8gMh>E(lI3*;eI;Jv$HQfZqRG1WxiHhb3(A~(>
+zB^E$O7xXB1>kfrReqOcoQ#I}9>4a#j#xVdRr185#cMKy!5Rr#brVv1Xfc+(I#iTtS
+zMGmW83^TD1rLP7G?<5jX0iMQkG{$1s)}L%KoS-#{;jcJzjtG;e7HA%TF%(*U8^dL@
+z*{Z8&>GqDfJC@J-n%!&e_!V4ek?J(D@EtUF_!4Ok^ZM*{R6K+WJU2Dzq@9SqZj>P?
+zlK}c&2%1xBZ5CYIEiSaG@HhmT4M4^nu~LN4#!~t~x{9?7HR&iY(|PKY$ZOPUn}T>V
+z2~y|`O9^H`r0q#bCG-imy*Cbv`apEm5uOz<N7IGsmzh9{&NsCB{o6n~A`%h{^QCwD
+zi_U`cGu|1w{Y>Zkxt4aA`bi%u={)ql=MZMDeM#VAYR@myrgBE0>MO$pvsdTr;gS2+
+zjP5hfTgHE&<;!Z3(MJqwPIR|EG_DWBnDl3wBJk7ugoy#$eJY|NYG*QpQspjA(*UZ2
+zRHffty?k^>MxjwczT!2!84S-3h_>m5UC!g6{EYbcV;bBL%dGD$i}?pwjOa*=79nu7
+zsY9U}@CAlFkl%I`exDCSlGuxBUSdKx)6g7w5jvQ<qlKTJ4+JJ=ZyO=bJtIeg#ZJsu
+zKJ2c;D|10YENaLYxc~T?IgyScJ0}$Zrwz97P_^Hx-KKdM2h(T(5Ruv@tP@Xo_^SDe
+z=AVgQ_6GqoXCt{>y(DGeK8h73!$g&_PNnciT^*+NwIFK;v1)Duk>cIwL{8FHyUdZA
+zkKM49Fn{HU4vN|yF)Cl3C#Ty{U}c0#-g=wrs!FHq^Bq>5%KFBux_XFX0kka9upFEy
+zfJ*XNCgpCQC)O7p@f7Hf^a|o_0eK;20VJDHuxcAcdNxFS`jYf0&?~fVHXvgT%X7wO
+zeg`S)FP3o{d}`AH*Fm%ws*d=57=|Kvi|34Zg8dp*B;Q2DOy5~XW8tL^?H2&<S0AkA
+zMZT&w{V8bzYtVp4&hXeSVICwGR1H)RZ&5SLn%rj(v*>mDsAk9iD75&k=$!0V&!wzf
+zsj(exS(Ox@`n^fp)DB;lQ~;d^i79|%WUhBaE3(vO8%>eC1p~&b(h-j}Aj#BjWwt6L
+z?2bnzxn(}92%}m;S&bO)cbP%c)TP45M-D8;o<vsddOy0ww36yJ^~o8>Ut5uufIK*!
+zPE=O5t+%kn^JaY4%>qx<+&3CNeQ*gS1#%j0u4sQ*QP?MpzKUm2heQ*eBc<*pi_lKJ
+zZdU`lCYuaZQ}LAeg<uG4sa_RNcf(RuqDT^Vd=0insZ{J-?dZLADZdk)o4a-z-8E<<
+zIxH}I&^BX+>s{TA!!o5DC^tp2rkG@EkMNQ`G|<oHJPn{CVzawXCYflJ>GdPXhcMb0
+zp<;6K+fpunE>DCBQmy$ZZaaru8*qfRT&EbV$`b18D8?6O&z1W9tomw#MnT2v?a4Sa
+zbWDV-!&`vg0wGW`Vt)8cdd~_9_ve?2W5CXJxjbN>3Fn!o&Ka&=r(-l?crB~YJfjL~
+z2#$i=AdSElN33f)LT@l$Bnh^5etqYopY<2MTrX9aS@K$N2E>3K^OapPwT(wjW;4U6
+zyW>4G%SM*N3RJP#%&&pa31%F|r)A)qxz$I<f=(O}huB2^^-0;mYx=~oB$EEF=LhQ5
+zD!x8ZN8t1kWM#3~IJ4(N$Pj$$BQUL<Rk!NVeP1u*$l)CtZr?r-zkjOO>e9aDRy(h@
+zO#Yn1Nte*>Q<^9)Rt?^~!9{mTiz@kb;ZTVVvS*ncy$1)|qA~G6BC4y1vweH4LVjMh
+zAHBTVWzkVty0QE`Z4pAJ;TI6m1Yd$Z5#7f@2m6k3f*xNW16hb-mkqr_9@7#6=~M&F
+zP<l{<h<Mn~1gMx~oBb9dPwBPX*VH`|3SK%S>aZlmu!nXKxs=L6>YQSzKxK_vV%^Z^
+zTnwrHyM3*T$IdHBg}a9!5lkcULAreb{x(X(uu-L8#6txq*Icwj{CD1gHbIG|Ez;)=
+zYUM_&ZZn(qhr{J@=}r@_P7%`Mqr-W)qKb26)fOAjbbo(bvkF+~GhZ5@oRp~f>vwG_
+z&Vs!flEXWPHajoLIYkFMM;S4~jX~E*-Pm2}AWUlk=8lgLwehd0(J_pAnLOz(#2>2d
+zOsi4=O}VThc$-anB$>wBXlmJrc0YuQd#N2`u<?4LJav;lZWg!}urJssn!%em*0cQ=
+zh3)i`<Mv>l^+9iJeAG4BV{Sj@l5rt|cNUQn?>I|nMOp_f&M`|xfDr_rB~^R#)&YEb
+zU&T2u?BjYMDjA+xK&2#M>P|~K1`(t&z8@d$))Ss>+rRixe^u?qfPC0D^{WpP);&0Q
+zs3B2Ey7S4stb50f;$DniUa5B&fN-r{%!)PQPma@0_5N<5)AED3<)1nDcHjuF>M&ze
+z70hzt>C4|6veiM3B>W&IHv1_V#8%i+tvYbdQNb=aESCcEp(!7X?hL9jR*v3Ddr~{`
+z^16jI!GM;$SKC_4na$<g^=*|Ri`qsFN$=N0XubzZJoD7>06a<_qB*?(l^~sk-3$2{
+zD~8xYbUJaKoqOUjo{X|uwv#)n`GQ*-F(^1afvg*+-09AH=^yS)dj0_gkmSB44`JV)
+zM?jFYQ}My<q+x+4#NRtgc-yO<j_CuQX=ANx!nb`$qK*h8zW))N`hCg${u7)I@EJ~g
+z75@DCZ*ZFJ8Aq<_-s`*bd!&oGBcfJl8A{CvR^7#Yuy9cQcYsk`Xz}7EYjR$t(MA9C
+z<*R`7s=9mw5(b#qYPKnHM2aE{bDfCdL7@4N6a+OnhzYb9t#Th`EpZYz_tW+zpZ@3R
+zWxC<!R-3EY<z~o6PkC8(_S@;g$=meGiPy<nHyHW<Tbt1?<W5xunZ4BMw3C4q#ORd9
+z5CK6;j>kFPI~qNu<oZrBCZzM!CRSBEeS0(-q1eb4kPM*^7DFviRV;^~;f&=EW!2b&
+zn8T4K*PMU)BcMtMZJR8#xQ9(g*&O`z(C>E`=%VEry!_nmuCWImOie7E?Vv+DP)@}(
+zT&PE)g+O@dD`4Uv>j$ZLM+$)&ysfFTySgOi1e8JOstz~_0gs#R(3ATBFv4{JZT3@5
+z&<ga=O-GG04uhYMzw(aA001B(=x`ywB&gyfYVQ+*7t<z<D=4^sMjvwajQBt&)jw)h
+z=l6MdSHNaQ?^RWUO+hDs!)bsEHk>~`pXLfQywv8cT@Bkac0<{NmT#IGyV&e}bM0+-
+z^QfMT1Oz0Xg*-`kz4+1JAgo{wSdz~EDDZ=jsmXkGQOrK&E_=pOtxaKIq0QaoC4;)<
+z%RP5K<^h2VXe7>LSYlVhyR34nj3KcmB>@VG*h%fR%p`R)M~4++8+zv=eM!5Fs=BE<
+z#rKI6T&GvkCqe@SwiuJ#?uxV=c|Qe%q|ktoj3*(<?|kKhIiXg`W@vYx6^~<f^nq(W
+zCza?#?1Jh#1-`mv*U4lc6=a~();$d-W@sp+9MxbCkiL#fK5eG-v4NUY0(>xQUS&BK
+zFJ26i$X0@dEi3nM!PLuGc6cn7w=vo5qZbX?Sj}{`L<-E`0}z%^Y4B2O%J-A{^)*Bo
+zmjkF{4sM$aesvqUf#ZU&H^Z-g_MTFL7Q|1Sc*kOnFiBFq2aAKFj*xYaBv2mT1^l4S
+zeEcD8H;|sb#+HZqpw8*pDMzcsch?aNJ?)m=+B3eE33Xo(50nhCT2J9wpT$B~#lkaC
+zB#GieWQa9x#QWG1ML%zo$hvO*MN5chBm=IsrD?6{Cg?{>f&+*7pvu7%Q&)7|5erQb
+zQRj^=*BF8n76vJJuGVG>mskFsBMg;)?4x@mf^t}i{v|?azb(ydP+sn<K624gBi_9c
+z(3Da9>o3f-ovxgPm;lu~$sP;o7w!G5?^YG|qiU#4KpM8z>t*nG3ZffI0DD%E2W2O4
+z@K!F3qyhVfBnaey$}UMKr=$}9!=DY!c^Hv6GW-<V5XtnZ!6?|gQs{yX{-Tl6+cOT3
+z>`>Xlgcs316YY_2zLwDhq!Jib4o+rhhX!#mk2m&mXolfUM7nSkbet&tLEN9M<$EG&
+zNn3MiiXaYGO4gixjzHBvo0;14FyC|i!uP=cE3-`0_laU6QWA5-L<cTnA*W*Y7ygM6
+zo0xI<<<?-MIo5A<qwQ_QnSO3B1#$X+U$9@*r*xcj0i%aIEN?ye9G}ptwQVc#^@A(4
+z!#$%N#lb3mn=8AXSSx)pCO}hcmhxHafTB0S(u}73vx6_N%AcAv%V!BNOI?+OMJRAU
+zD3IUq;(_mnLE!-TS;oPrd5VN`Nwb0+F#0#j3G}+=x>~_it(yWCqQWv{F9llRj(RG;
+z(~n11*|n2)Zas102b*QkD3<Cj3Q_q{OX{!Z|Dv{TcVO7z>hFFmsaY*8L2f8g+Vh^G
+z$UtZhw)jSrw**TOfu&|T5<~2M%4qvhUq0R(twUs|svnGg5N$*yXox0|Tv!vaV14Uc
+zSJ~~5i?`V=P7b}O%f$8D+lyoCxY3Z3ALP^W+~Xtuy!KlinHm#Zt$e;%ZA@Po`&z4`
+z#G?QX9YWggpXkIOZ9liTy3U8jG2f^=TO_0upuhfXnVKCALU)UI7*5zRHiO})Au7S`
+zSLyCrheh_hx}p3pNuiSy@Z~4FVO;CgCizFR-<oU_VSIo1BwZMw1g$n8pXHkR+a3Za
+z1y|4o(9b!(0EtSmM<Ve{(@e@$id*MlnDwk`>zijw<pMJe`u4_H%oKXl_U?Jd<JdOt
+zN@)ulSq>F|8J>I^m3<gRcZ={Q?!e9~!HK`R9=btE`v%yggL;|zEkIyvnOR4~))xnk
+zI;NH?;zt^yODRwWZB8OcHbTndV%g|QOpFW$)VXGhL4GyJibn61@?1q*yJ!P8Z+JIm
+z1=}&G#$@Q%`dLz=alD;`Plm?jqqhh*a(!{!Ghc$n<u)%FKR$e%W}%U$g5rew8NzT>
+zU(rNUeR~yP*-<bVYJm6!JtOn6nJJINE|f_ILnlq1Wy_Ma|02DhdCS$15+hibeVjqn
+zeN>vTSGNgNR}~;j2k12h3{;q{<TxGESqA5lH#0Lux=&_n`9KyZo4;K!+Q;@A4;Okf
+z)*$>$ywvjhvn-008(V{F+PSb*Cgh#dO<e`Md~}_0N!=S1n0o*aGkal8w*>%W&I{Qk
+z!0`s^lxx=LUwEl$C3_k>-mtft0ThzIqEbsH3fp**L^<g;XwshSiz0CR2OVB@y3I|%
+zwJXX3>v<#%3JlazPs>3~+<%^N&}ug)EvPKe7HWDWBY?7EOvf&`yMMc!Fd@D<F_kNA
+zPHs|D7DrE^J7O8xQ&j{>u<Gc7{aR&Dtjud5aLzdPXN_!n>J*#Lggbh!a)zRL77a<7
+zSy0t$77qUICL<bdrFD(O!tGI5SSf|q;uE82SnXvyXxQ!|uEx&Mhq_L=`Ib|n2z&Kh
+z3aEl|Eb*8r<{8P%5za>V(GE*x0iurQT5vmMXK0~nr1JsJL%+iQ6qrZxiGyKtq-J{n
+z@z#zy^2|{RUFvDN)zieUM7~F-aQ24}<wp=Bh2Q)k3@-!|To?MOi>PTTG_(gA-QbH3
+zNQ8-RAj(%V0W6#Yl?deP4&n5U@GX>@>vACdny~o*_n3~WI<#Ew7R1vt#w5byniJ6y
+z5VdF-n@(%33Whr`n|q#V!WxFjV=1$`gl_7qwdS0SeTkKz{P*wPs-~?eT1%ayj^(|p
+zG?4cfF?(=EZj#LXF7u{ah`|bgwCe`#m7^k~=e}ixSJ7Xay~6Jtc=2v$DE4<AAEe@%
+zMg1eXsi+tpo~q#Hoq|daobr1k8<6+R`?s-s&bN`Oq=`1C21V^z<GEUUDE>$!7ETI^
+zK}ZlvfHX?4LK2Cl{xh@0B@ftGYrXu~h_AvJT8sgjA%_h8q8e<$uC?r1Mv#(iGJE)M
+z&wL#t=ipy%N-$|e1WWnIjfNJLqitWXi>WS&HtIUx02YvFv$<K=LI3S7B=PQ~s0n%K
+z_jw^ms&1wP42NVu%r_0=(>onKbNHG-C%r_Cu!AvADkClLJv5?knAT{9zd9qDWlShs
+zRj-xDg3d|{rYNfda)+W|BEry0szQI&!p1Sz6*FwEzVL$Ek^TL7)&o(jF!L)RxJ1Q|
+z;Qw@;aQ*^lULQK<3naU6&o<!0)&Ml4dbl9t?*|79^YAOBJd`qw<KF*n*(}PSX@RKJ
+zsS=K04Ql16k)KuUVhLJ<6j(S^8i~er!^Tj@H}U+0S9-9IKz?v!fvo_PuSUdLh;5>X
+zcM^vr+G)&1wc_m=u=2_<6?ZHPsD@XdNA+qj?>peB4caN;-GrD8(sk=c&DM}Aj&=da
+zrTeYxT~Fey({ATMcF%TEKIGtY&#w-g4<1-79P`<AZpVo}yj!Ozp2T3Rs@nw#vX+;9
+zH|q6}RA{UzrP!{WU`qh7XE<46gSKZgb}uH+n34o~=pna>TCzL0XGPWyc=WFL)DIMr
+z-EYftk5m|f6?}48vp-l`U*mV`9Zf_slm}MpmAU`)1?mU}W}MfuH2;`8qs5d10i3sU
+z*ayB<f7C~rS}ZXMe7zOivR@&icQ*y$RW^E6^~POXjeFGW$oj;yk-R+Y$~a0O>6&-L
+zWFh9mfxpl`LRoozAdZLJ%leM1Yo_YDx>d7NS#2GgF4#TBv<ZYvqwF$<*Wqun=g}tR
+z9xvP8c0}yWM`NODc*Dt+^)XC&#MCkNGl5)FKpo7}Fz~AT)`Qb^#HWoP0YN?8RLM$Q
+zq9UPDYyv}IFOPoGX=0EmY%gkpeo-{?Z`zHulkB;{+%>`ed+i`&k}Y6ol`HQGV}J{|
+zy{z6BoyZa(L7dL<Zt!~Zpvln&%~b@Sec%~(Zg3{cBH6kH%Wl0hP^Afx_}(sF@m24q
+zTO3)~hi(5_9V6ea+DC0%)$J<=F&fAe?Lfp&Tabvv1QJdsxny2OFmTBz^UYtJ3x`!b
+z>iywDxQxVlEw9Ex<h@918cOb>qOcE#jW;AaeBQB8kynhUA_P(3mn6!!D2kK~mFE&W
+zdCRjqtKhwOD=-;v?+K5t^8Gp|e<RF=KjeE<Kj>B*#2_@fdGPTigGY+S(u_4s?(#|y
+zi3`U_&~qO)*iQFvnAkoqrfxe};KB~=R5=}vu&T?Hafc&DKYBlUkLk{xL>CX6!f(xC
+zzkx|Z=oLy47Ossky%S#Jl1AY?*8wkaJ9ETusZGnNNh=sD#K<@u455>WdSQga`Co{=
+z1$RiQUGdcz6i~u&1W_gg<=ycpOkG*DFpQ8(!*dV$y<(NQlYN}A5-cIUMYt7WGutg8
+zIA9hE>9Gns$C!VM<-t`=miG$y9FpH#qWSR-x^Go|6o)5P7n5~=V_n>AaSo|V)z7zM
+z>fTjH6kIVsK*A$~b`$5x<2!$rRY(poO5^eqd-f}x?nN2tpc{uCL|u2arxjU#?HbLc
+zuIHV|g9>gbCaz7j@I5^{@nbKne=^zZ*1IP+nI&6GHhXVz|3|H${tv^<-Vyvj7SjFT
+zKPBDNa$VC?+>c|Sj_FhPZOu65d%3D@Zo~tbqIQ`;HGy((FP$V;8|@lFtZ{W>^z}J(
+zK^A>Jxlh?|=P%zmVPn+JesVQsa80ECGNcTLw$`q>QeM@&;V9b{Xn-|<Yo5$W+oaz4
+zdG1)%B?}?K-y{}m&+Bu>g-7@e&etu8y6$8j2Wmf!TXYTkGMW2sMVob{p~uI=<7_d$
+z$vH5GeB5m1;3u1|J?&~~?hnk;bAhaD6TF-93fly8hc9*4QXta!57=r}W**g_NAquj
+zdlb`X$#f-G4mFP6NOTDG7*I3#hmu-MhGQL?%3@>9sg{>Pc*WsyqwR9+^X5+V1b?XR
+zfAVb#ALz6==6W?Ib1KPAfO>J{D#Ci6AuQwcsdIJUaNxN^u`8|Al&NuyP@h<D<o%5~
+znut!b4at8Gpep8JUa2=i!za$hM?#b<o62Y82#bm#X}Z@lbwbO|*o3KlQR1EBcn|J{
+z!V6u&`8sJy%`d6gvIdl~mmSnXsSwy0KISf@TvJr`7J2CU^5c#Shs$DC_Nsh`ihU*+
+z{!;QVuUEI+YXi%tai5)M{p?5Dw4H2r=wH9Y$~`)xHi6{iWLO57d6er2gAToFABTHi
+zmlM7h4enor>tAvD+t5Mh=;KWuQzr|(Kssug8%rq@M|UchQ~kr!uU@cn9!kW&=`1fz
+ziijFVc`ad(0xV)f(2-TOgRPxtrs>cnASD$JN=*S37HzJT<o?sPTunkQa(QGa`l2u;
+zYI3{jeS(cki35fh$J|e?KigGiYSf-xm`Nz`Aw<`X#^tYwr0Iv8m4a(E>&>jg{X$HD
+z+!@V1`#3x+vb+K1zYUS>vuxPSnYV?qm4rMD8aJ#RK4ZLZw@BTkV}~nkC^X7!++qha
+z>F4ZjjGFOrz6A*7(4@URItC*{7~hiqD4qmKYJ89Mo8kkD7)$9C1-_~jeDZY$LbW-p
+z_`o=%H@=ZKd^g_XB@@iMto}g3!#TP8@OBdr`Kkn&|D$8qfF4Pz>5ftH!)Sr9qO3q7
+zXP2sV%{+o--!Vz%+4x|y)2attFwe$q=FdKoxwm7)xPf0#{wf{VYuhI^CSiGr=dq|8
+zA0Ocy%cH_u1;>H2%{CtyW(jvugZ|mHmO_I2YJk904DrjgTlVae9Zw5#oyQEjO7f~R
+zQ+KGct(__TdmrZu=kZWy(R9KjO6P=g>-638zzt-n?6)w{%BUM1q6)W+u-!-1eC(SY
+z$^Kz{;oGXVnD;DqRGIEiJgixAX*{;@`sF8$#VDd?3r0vZ4<%J_7Swj~DF!=gK9&qT
+zrRTRgNNzsIL>|`6wa@r8bwQb*8jN{0{dVE~)H6q>BynWFW0xea)`jNs+s3>oe6UEv
+z4*U)ZCuYqiYecY``#<ql#(vGNtGRJczDcO4h*?_ff(u*&y@4qWs+=SJ*yWw`OtjN0
+z$8e&0I+i&Ks*U@`#|H!sxxz-Al>IXZo94k+BTTM;x&?DWXlG5qJzLX)+h&=7U%3|a
+zU!zVxw;ILt_c=Q82JCx{mJmCXAcVQ7yc17u=Gq_|e&j%?h$2Qi(u}X*K~-jN6|%$a
+z@`N4vCI*eTZjtrmyuSWp0}DS-Vl*aWV*55p0Fx!ZEmP^hJOqbMn%nT`Qf<X)$d>CZ
+z-t=DXdDu}Uf)QuKf&AGJIZ<V${pG4@>yx%Q40uHD*Wi}uxi!;DAS~Rg^U=mW1mrrM
+zjuMxMpsbtGn)dyhshy+(IGW&&*=sEWpjU^IdPJP*7r%)vzUwHfMN8D1W>1d?9aHr5
+zL~Mk$I@20mG`$^#8yty@E_J3K+n~kL8<{B>rdi&O;974pk*Nz~Jo3(W?{tMF(Qgd=
+z(u^yDd*_kk@EnQL!3Vcgab`P#z(`R7DUJ`#dQi8|1h#xukKwu?j%}rnwOssZ;>V;U
+z1W`VPNaW9+2Q9ph8q1ZNp%JJ_fB$`dPnw4*`|0Gd1bScj)y+UHAfNfwy+|sMJcz{;
+zzs>rx@S7aY;H{j4GWMbVp9d-Z{JVt@-ggZWSDxy}t_0^*t|y?JBtPG1kxJ>^`SQw5
+zd5mle614pi{vS>6@GppHzNs8-ET`lDcWx8pOAG?|Pi|Akq0|fjpyvB;Zgb1C(?r#I
+z_hx7PEvvjeTIg3^^9?YxbQUWd6$O=?4SOyMHQ7W$m-UY67&TGs6@;YJz}2z+6tZ9t
+zc#7$iV@82wYl;QV%#0m9Pnm)IA*0a2#36>SKdK$n-7;-l^Ky{ocvWO^y0NADq}bG*
+zE8k<YqwQ>&+pwbPnfn1Sj$#_d`u~5M1jYyR`Ms2oKBrG@hST2zCrgN{;i)A9>}X<`
+zL7=l^f`WM|8qmnXxq9ts>?raV1VdRF;S~X;)I1zH1@$c(XX^B%KI<^go`n5$+-7Ox
+zy?E6hvH3GxIoGEjXm5{+&K*j4f8L4%K?l&0Q{IR4bJOI+Z`bsDu7&WqT_P|~`sHal
+z2jLhLj@+rU0JNA#Sixzxg&A|`;NQ^+zz8sod=$HJ@pdp;H=w#-B_eBl4@tjszJ(@;
+zkcJRd=+uMcZK?G*kaN9(>v(i`Phxgr>@DHA6+zELlN4}(szQSVr1-AnhwT*Wi;U~b
+z^|sw!X(GDIRgXVq9}q%sR$o7Tid>f0bdV{w*b?5Fqz@Ri9D)jTRQb3V+VZIDSLQg1
+zxS{sXG~o=E$DNp(BKZTr0YDMwS7x|+aJb(4WVyd;pY#FcN;?EujvU{RMUOD&li>Fz
+z%HP>*oVdA<{w~)z?>4oe(WamCOD;}zZ`f*-m~(QlgKu*z7pQ`dGD9om0EQ%Aey2>D
+zvqUD8gDP!_^o{`CkP?+;#B$`pkA7)4PwXu7+wC^Br_sHR=a*W`#kC8tS1sr}$2=8O
+zMvzD_L;K^|kw8oDGN+SQO(O?5ibP{YfCe~J^s{O=kB#KRgJyD<(%w$@i|T5cm8jrO
+zFQ~iEn4P$1C)V%NpeecR)1A#2hNMt~qpesIl`Eim)k9l%8I^28GR~>-cZX#{L^kf1
+zHg2@qs7E|iE~BOlIf-yE#Kh@EfKnTEJ(=Ao&}BkTLDEkMCSSZUbNzL1+0@@2g^s+L
+z+bgILSu*DR?NYRQPydlz!v5k_F@~dBn5q~?r1mmpL>hqF_wXH7wQ<R0YawIv)8F+s
+z?ip=!doyOTXfnuT;X8HavVF2+r@kNUH%wx!(*tI+YL&5rFbQ;_KByiSLfm#;DvXW9
+z08v!HS-?xLr7m#j-Tv1YZm|dW()V`y`x|V>RuveMS<C%mrO)b;_vt0>!?#E(Xxa#X
+zf@_k_E4{ZS-c6lYU~;0e%L@B|U~=aY*|@{yC4|pGAon3nWRas?-&N%pb@XtDl1{yr
+zFH_7*Qf%dI<{pU<%M$5ROll)u?xtN%w`C`dXuTBXJC6P=JdtLRqIv8g?(!*i{D~Pb
+zX2t;)_%1|{$`qI<1r&D+4iy?-)2>dPp?9LFH2^VapYpB#^jh5Y<=Vsknvz=OqA-$9
+zNP?^YcCQ~Dn{{#Cpm6ix5-84F)o7`m%D&?xn}>Ka5{?0?KFohat~KTCa?BfdixDaw
+z3cpq-*h7Tl>L;=)x`4YzYG?rNK^S^hRKMmCJ83@*{RCA86OF>Bwu668n>#aqz)P+$
+z<BXzs(Z*1C*fFQ?s`d3kSCUTcxUE>E-&N6JG)2h~wl5ip#~GhVcWPzk3SideV0ffx
+z)h<VmXZeu5vSlagJFsAk>b4H!M5kSh0q06;&Su6oJFDe~va6Fdm%OhU2_Mv;C=+ks
+zOj>+lgoixf`xK|~1pUjrmkaE)^if60J>N6YjXgweByQHWG|aTvGj^cRT-c4pFu&+G
+zJIJ`16_tJWGQTah>V<f_N(aG;q2Cr#Hpx3_34Zd*5o(FK6IVy?a^ga+IT@f}zKLXt
+z?AzpIC+Bb?Z7i}dcQ@U`v`h&_;P%#ED)aevN~gt&2i~awMH`}`t0*QS4IE#hIpd(K
+zp?_42IRqozHM#T(yaC3W=4Pd5j*=*kr3D(aqF1;+qufc*K~y~~c6WS!VCqYo(S@=@
+zgLR=^ZG`%jx@|95&z7s5HjUd(_DMnqsU@m`V+Q=t423i|0Lde`>@bY(RtRdjSCamS
+z<|ONTP+H{NZvX1Dn;i&(dh9Pzi<idhVO>77aCu@so;9I>bK|;pNh^~E^XL&&0GWF@
+zZ+f{8;KpTQnED=I3K+)ApeBy7*BsWJ3xAg>A+^vgdHv7>D~m&2VxBa1R2u?*jg$Tx
+zolXPP$;nszziRoeu%^0h>kx_{(iB0Y7wJW55(pgx=_T~~f^?B4J#-PIx6q{bUPU?t
+zc%_6UA|ldDKspIE)PH~9e{*in#ktwfleJe?lAX2Y9CM8E%zt@s-CacXJFs4|FM2WV
+zJ`9CFJ5Qh3ZYmW<vr`VuMZoj%MDb9tXHG7~63Ia_YbDUuljY2TLbYgi^Yr6W+ML14
+ztvtRtmTbJB`n1=2L<o1bdL*W(sNp}eo`sK+Qm&S`-HOQKi+ES(6Y0KS4DF|@CDNMt
+z5n`M0fmgXYEEehjv)Ty^VpIYVgYK8_7R?inWIj_ikOP++-5p#-BW22|4X$LTxO?-3
+zhVt}<UGC_;ly-tcyR7qN!=@z}N3IqrzR$*(EMvHsHz3@yCIk(HvT+b$HdQLQRj%eh
+zKk>1jjltV4peM{iRzl?0X<l)2|1#Sq#8iYw*fnl(WLDbV{FtS6nGMm+W5#6(q{hEc
+zd4-@<E;xc`8Vp^Q)Z?w_4`tMI^?Mb2R%(+1&o@^X1Tf|z-ZfU2mo|KcI-EBs5&pxM
+zWwHds{UX+ejJv5lM4>@fW%x*sJ|?`U)3gQ_lH~R?jWWQOFm7*xN_dD~;W`H6I^<_6
+z!=U*>EUy}GLu@aVoseUiU#*B9g5Jo`h`zL^PIDnB!hfo5%YG6^_YV!|e{q>oU`A5v
+z7*MiSFg@2Yqol4(S8mRtic&GqB|wLIK9+}h=%rU6c6A#-?jNdV62ggfH~Ip*yjYqA
+zhbU22%ArLSKB^D9ek%v++*fOl>pEw`kb96X)Ibedc&Cf_jSM`IbN$UKgJ9%8RT+?2
+zTk{Q%Zl(>wWuf~$L~yfJst+)04a6f#t%rWE89dCXsY>an!@{xT_F<q3;qn#f9;!!Z
+z$QwdgUa)U59Dg;~`e7-nJO7bFWNPlwf?+JT5X-1egQg>S24N^f4;A}`YMp9W<jfut
+z@(6N!-bi);Ka4^*M%<XERH!qrDS_)J%Kg}nHVtDP?CGcpBZ-59Wk=SE)N~EtvUBTw
+zmWiK3wFxG-=!d+l%GvK(7z&ycYm@dnU6uQF(@uP{)q0#{*-qMGoG$i~2DB-MSYfD}
+zLORghMPrkh?HAetTi-PI3cdd60f3y<pFw|@5RTq>ca&{ZZ7)oUC$~@i%8`V%oLpL`
+zDAM$)PHTh5t}RF1Oy}B~jf`mRuX`znW4C1-y1qboJXHH&7A8Uh;G_vHf9f{IwxCnz
+z#Y_HGO)bAW<J5d@5#qkH;!ILfP*i~$5Z?UzZbeIvTbMmHTlsk8QXC0BXqE4kRPhE{
+zPp(_aQ~&+yVNuYme}Gr_`>69Wqte~3xzDVbK|xNX^mRduWR$2)$?UqV<=pQ%o;z9q
+z`cOQddPY2LCuvKO_SshB5U~XuoKX5yCAR}<Bq2Cs=*4K$m~agsA|Fvx$JpcN(=Hgi
+zxjsX@9A?xpyw-{;TBt<plysSPqM1I$pf(LICYVQFhP7IJedYFOQY^VVnRXy#R_~c#
+zB7PJ9)}op3uom~|`(yk2R6Hv>+et9I*0<?lYAGw#$Cy?1iRpO;_?NkrG|N}4#*}`-
+zib0KxWRXP%W!Hdn676lY#NwOg3rAoTq?(iy38p5PMpBg)mCSC?Qg%k!9_0Or-9yr=
+zx@(lW%H2bsj@F@DIRf)`TS{g@DHXf#IcOn2B1@EZt#de@-rNe}%K6v5ody|ei7Xq*
+zob%%dLnDYyea=qxdUozFog~w51U`DSlUTOKTrr*ed<nt!TJ-W}7yZa&a9-&zM7u(g
+zAu1+ZQrlg@l=^xT(YcX6$?-Jax74pGp@)5HTUF*o;VlYS<6H1jraiorYCXbL&r62}
+zL|zc{ifP1)>EB~!soBx){jZl854vHClIdjlsdIe&!n2Uio90gfyB@55<OQ>yU5KuS
+z*Gg?Xsy1@D9`$loVC=zo@EF$q_**55xDs8@fo|Onvk&B0F!GRsv`d!Q+naoLy|Jep
+zQx)@!8tD4{CCxmJrxq>xKBoa1qV#?<tFO%rMtjmK(-JM()$6n$#`_%FvmkoEmcO-E
+zHgij=cbNz{r2P22S<;jS#8mGn?%{+IFxpS*&2yY}x+@rY?_fynp)0hGcj!LQ&|1XX
+zCuI)2$To+au0#dD^SF5fY#pvYJFS*NA-VPoKi;l2+=dP{f}Y2Qj*2v?&Jj1XPP#P6
+zB7l^evLZFV(P`>#QT#&Gm)})1iL&hsl{kD}wRGuE`gT8S+*#a?uJX6oorK{N5$vl+
+zJm8nUJ|h{`dE2-i{ChekG+qNgsVV#t9Z2rs34GQMc8<BX_TpV;`_&}#wkiO3%vwit
+zS>4qi8w-$D7=tP*)?yfPu(~=B@8xR>)b@K00F9E(j!@t)EJTl<9mAPbmeV3CbkOU$
+z6u_S%PD%yCW2lh05Sk$<N`B%lMoR-yW5u>Xx9(|OJcv&4r7gSZ_Iw8Bo$&CoG`uOz
+zCgff@2E*FuV5mv)J4wd-l)2e!(<T$rx)4gIk@NbK2tp7lp^6*)_}$@NnhLOI;qUbr
+zHG&!wAU#QT&^75MSat8YYBnbN)wLqT*rBkAPS*fYeWw&0hsAMcXU#x%_(34H3g4A9
+zscInszxKCn34w$MXYT?y*HVgLcD(TYs@*o<!bFGTO=pP)_i~|GS7T2*Nn+CALLs86
+z3;rn3@&`}O<$lKaiXuHbmSuPHq-TDu4;5OHhF+3iXpk1kls~+f<rkX7DKL)O*x-RE
+z`_P1Ko~tAsq;Tls*@=JqG9-QFhWWeaGv>&9D<1hy@;|p=kyo)r&@EDbXl&$T1%qxF
+zD|aes&~s2=^+XeLO(L&Yltd)osgTf4c#Pm@=@Zi{6j)9fg?E8bU><tAMl*|Hpt3N}
+z@AJ1Yp)PdvXaMPmYqab<G41(&PoD&&1<}G+_o`*#Y3B7{FbcAhzk2a!CjX(arFV_s
+zOv*kVDF~!SrM!|x3t|YlR!EOklQw>}8Y%w|Pn{bVOCbm>^dZ2G*`i?*Q@N8<g$?Hh
+z@4aBL##`~A)*|xzTNv3ZQP-oIsEgiU19cEgrmn?cap)0Ri;^M!lU3lCnfoVbI&E7R
+zN33EQC@mM?RST8h363pRS)8WJLPz*=)*;GaP1LjZsY|$Zwv4C#OgcS3p4-e<Yvoh!
+ztd-$**Z^Q<=UJlysEirE>XDX=KcOr>FR5>1dd|_MJ-!KQ)WpDrH^!@r$^OskaV<21
+zmn#?9dzz535xLK-)2vYOGuF^?!i@GEGDfXcUG>i&?ler7wNu%hn81(`byzEht83aZ
+zA59gr+)t?`;kU8147H_!9;f-E!g79B2$$2WM-~bYF6&zjjTJdj>0~PxF+ZntfqjE;
+zWp|TTj^YrL{P8&!)8Ii|D#s2dC-I20wEW7xNqg!*iokSmb9e=8JhW(LV=l3eP|qIk
+z*ia@0wbbpH;y6H(@mDVg<W6aNV@M#V`OtN5QC*DRZ%Kk`3c9vfOEihX|E5P?bz@J6
+z@vF;tm~)h;J~@NP)oO>I!@Dq>252?N97TJ<%*x{#4}RS7I>GEHaV=;4@P9#g|E9sQ
+z2zjrCz_!nJfW<cB;ej2&UUmorUz~|j5}O=@M_eMVxTKa0G}E`#m}2nM`%JZG8+tP*
+z!TGv*d%yo<cxVY-pUQig21D(`y=16KDgI(wnT*5hA~NQS0q(WTBI9gZUZN2&60b_i
+za4HV>&7Dn3l96Q5!@S>GIPBBc%l{-3u}cPqkZ1ibSkw9(DGysIm69ltkaYix(et{Q
+zEuS-0OE>&qZX`P$>;EZb*DSxjr0=TA(3NnQy$Y+5BUeD4>&3iEU0!T3loee<6h(Xp
+zwrY6Y@?sEo_|t(l;q%iMLK88oZ;NAAnsSP!R=x?WuG7{}ZN0CK*S*Ba0I7f+UB>tM
+z*Y@E{vujJCmi@lGxP7vV4Y*LLqnO`enRh@=Am^?W<7*(o&Rc{td@Jtnuqp%+$GU$&
+zjNfes)iJh`wO5Dm8fH>fo{AYc&n;iiO;`}Ch9>wCY@X!BS^(LSepSBCMJZ=qo#)A#
+zurv_m^Rf?1smD31r?33y2E9A%;hhU4_kf028P)~DQ-kAwgmXrJZO>EIeS%JA@5B#k
+zeFX<ssZ2%tXCd?AT}~Hs6Rw|)y(P3vpv^SP`Xxo6uHt!?<Yr!89(nKglB4^pdI!Xv
+z4nK$?`|y-|E!qf8Xmx=!?G`tv+kd~2cS--p^_0(ut^7dIL5NdNDBNT}pn83Vyl+JE
+z21ogOg?-7K`nx(wu@26K?Lw5@Z}L;)mXLVOR4W9H)l#{wyk#;#1klw7H5)oQ>(>c1
+zxH13PSJOSD%&D2$qV6{hBVCWSEejaP)jW+Q3~k4lXtDPHHjYp?A9Qmwt`1pEtCLE;
+zo8DHvgvl;!%Qaahl7-EFI{F1YVm8xUfYqCpITO!cN3n(T-T%T}Ft-uk&2;zAv}CvL
+zYJJxc50yVbUR%)bJy2(Gw|EBawFcgL<WasUS>EC(@+(2U6e-AS%V4T9jS`ag=w+K@
+z)leYz3iqeX`_hDLK>+AYb;J(lX?P$(wW^GCQeL5DpS*v_TJju`@CtPY+u>q#GN6gi
+zT;>M%CU0F^uS?!Q-MNl5bq`2U90?x@((#3q{3?kibXGU)G&#ntoAwkv3~^f%VB{(l
+z&uqtR*IsR+%_I*{z=8ZHPJ|z=A*G_(hzqZK`Bj?3t!cL(`Ef_^#l%ASilV)801y$y
+z7FykLF9?>-lV+Dq`y8T7exXZIq0$dVQdJz7Qx%vb*yBzv@p^iyokELPO6c(9b<9sg
+ze3F@Ri2Vq#;BovgPbs&Ti%LIuqc^8h{d0)fY-TaZP2p0KdImfA^GBvP`JZol3+aA|
+z_)UjlF?NO-PK<C(<~Z}MX=vllQix$0zBL{)lgj@8_)=YcHXC*|H>Z$(^AB2*B^~c1
+zjJHZntL1Hr7dpR+ATpfG61n*uR;crAOi*7AHeyh#an%P#PVuoN#<fH%$svYf!d1eB
+z9}l$|;%oa)F=2kq7MJnzIf)&4#F3(4x<}ExiJy?hvE01AWZdMZrkj-}k5;%V9-3;x
+zh0ynu6BDbBUdOld3HtFzJ!%f0jt#fMU-}X4;beb>#}vb>%s%J<$+m~{BQ+&@p7aG}
+zZ9N%**i{YfhWd)q*JSQcz48E@iH$&A1|tF3GELkulX<`?Iqnv38B2Ubwqgr}jx#p*
+zapTx&u5y$HQt;1EwMa=Ljf^HPg_!p3oM0>Sk!vDI79?}C)Y74;SLZB#QR^J&%{R#o
+zWX56YaiX3K%qpMH@Hf!wqN$#szyA`*6QmG8yqTMPpZ(b$-XC$cn9;9$`>#1AH8yAA
+z><eF|o)Xm(L{-FRiP`UNA{XnJQt_Eb5%zd+$OAalxe0J)zoEgF0PW_!D}G`Ix=s*9
+zs=`zp#tF4-(Woz&=U83O>raj*&j964XmA;H*7h`;o#7w$>_NLN*kl%*G1rw;lSE9u
+zvy&HE>DatlDYRPwZ*u~)F5U{^il=ig3d4xKjdwZuVjp3(ZAble7rRO~LVD;Z;qI?x
+zsMJMKK>A)1o5lzSsIP(_@2Y#@8SjsCjL!8sfTtJZUR6AsWw3Z^F%!2#lZa6_^F=KK
+z1ho#&=-$Y<pcgZy2g>E`Bh4(%*D#>}?~8|Nljh#JaLDVQj5`XstU#QZ0#>xifIIB^
+z&>faum+{_7{_5A4K70CiN(g-Fz~Hi~+r#J?e2m=}4*r%u+{%UO3<hOQv-e=?s9zV=
+zdF8^}iT6I)1`4~k)sVP9f$1KG#m&p@y7p1*Vk}!b9PuO>an-TQh501fTvV$T@x;sO
+zQOzbg<yYfGGUHR0iMw2g(L3w%1^tX6KZm-$6AyDbsrK<e%W@uGaSg`_AmlP-Y!w_W
+zVg<e5*y`?_co)?MUl)5)xG$9+{^+Gv%_g&~zVD<J#-=V!S@Dn(sHBxygxU=7KYu+)
+zo0K;oQZd9hP${2C`I8$P1{xFT85dEr{k~{bd~&E(Si$kBqZ*(fEqg2`?xW0Nk-4WV
+zPYn9?7?fa%;c>;D&tX&-TSY5?^ptAVV^a<neEpM$ciroqLOi#Cl&qcHjZy>&D2Z&%
+zn>LJ6ndPXfip2dV!4yyxbk;J##I5+41BorO?7GzP13zn;7e65AAo%!rcEGnqH$MD9
+zSdbH{-IJnz?`<kc=D{k3@X*&=h9yItJZ1!LFNHMSD-FCiKfCNt8AJwZT{7*-<4qm-
+z{os*&j4*j`*-pjI{5L}%&KRvPGj8*o-J`9eWEB0AXL`Zq#PAmhqlJw#3=wcDJ3>=C
+zp7!CBBMTm|RSwGdW}VsdGM%xha~ko!sFrDG^3O}}@>Q3ZBB)9bd|z1}ly(#0w+}Eo
+zB9k?@Y)}p`TkPdKZw`2Rp_at)kK<D`P}yG=9b{m3lK*K^D|VeP@%=`Qo9;YVrTwxp
+z+Z<;Wo|4cKz2+zR`&XZ}%xFNz5B!HiZH+X##3d#Z<H{?u2OUvXZ8n|Pt12DBSv5bR
+z@k*{v^&`|LXEOqas`wS@nmj;k)4AC|1C0=P$nIW&B;Fy#eN!JBG6blQZi<+P8GI|9
+z7NJKjMzeAh?Q@nCfl{J3GRXNH`dPegN}r3%KUN}m5n}l(?h_V_ErNfw98d8&9c!0i
+zOfsyeSE8hXQ?n)yoeFc`?@1|L;OHL`T;>eiWmbC_FUc4)k>{BNlYRC{@(dAj4q=XY
+zD*DlbC5iVTH31XIxUr}=tOuaUewkJGaxag1JsJEYq=2ian_DpgNZIP4*3rPix3g!E
+z7DA<=PFO^=JNmip9I5%&fR=auKB-2UTG&GmK#l=U_($Rm2zBAxBtB~Hm^A!tm;+dm
+zF{h=g<jbWgZZaz$!=`Gnsu(KDH7;_XC30)T;5ACYiR(XDOhMF_3d<zy`jDLd9S;61
+zt>!*pdZWX>X;f8+9PsTXkpWbPLtx9aM&l#193GzSg|Wc-MoF~XXPTP|QTR&k29#}n
+z(*e?}$trC}e-cpxXht_m+HS{IGZ~Z0ysS<w6=7?N2CmmXAD?@uWn<NeW$RIsg*h8g
+zTMw~88G?$YrfsWxaL&qXSBbDoho%P#*21K4cA<;%f(0t6ck4<AOOm_IoS$CFQ6?in
+z_trJO%q04jwyiLBT>rMksqW$SS@Z4{fK#?UfP2UqJncg8<*fM1s$!xYJ;MZrJa1<p
+z2^9ZafRX&l)t|IQdTPRaUFTS>KnM=`%XtooOkutX&OxZ)-x|wW%zfkJZ#is74_6|K
+zpcMZ^@(#tiGoUgR9<V6f*8t0cnH1VpA`d0eX7cUyZM!|;fjgaW*P_}U()XQX{wGVx
+zyq`_Dqu)trTcO!~#B3~OW{Rzcf83h<gp_dmJr9UWm1IUl?MnWtfBDzz8w?MqUp03x
+z;0zd2C-E;+beUPbmeeQI;%;*j_vA%QN~c)<^k{ohr*LQ_YQU>jQaPSVV~H_dj0a0m
+zsAFu+I>|D{2iwGFfmIL6CS*|O+<dmZvLk(C?<`$St7&5$s%f(adV0cn3r$tlNX>kY
+zc7hGBO_vYH_DN0`J$S@xr}t|)UCy=1@4grrgnPBwKj@A#I|h_w3n8o8!yh+?^b#9X
+zBYTz2Gqm}_&&R~8i$nrrj^PFura%tbIS2Ur8HCJchy9q#bd!nj&zCgZ`A7Wp?AbYQ
+zhJNKX)zz8Zz!Q6n#t?zkL+N2chLdAammKnQTm>;&XT-Hc4)@__O)VWbETg%RHYoe=
+zkD)N3C}`2;)D#}==mL?DL70uC@z`BzP8N~}4CHLd4+8Pg=v4g=&Oyk+-a1f5hGOqQ
+zXjaF}?90FBq(69sa?IOnGk$oH53MnE{}N&g&qr~GqCFy91kHvV1WjstfA6cY&amVY
+z$|&W|*GKC6aHflJ$u^j3FMlz->!E7aw8p{IbS<<8{*;S;mW)ytDT7DMhi-SwXyfw^
+zW3`$+1oC6qEfHwNMcrcpQyB%)aZlGyjnzL27vBx$H)NjtWFIJX^~o~F`UC;s<WQxJ
+zCBYFU!m(=*rlJh6k=<$Y^}l%>e%`p;1gD0T=)MjYlETNC9jdIK$$o}SP6pBusx3IX
+zdpx-Fo5Nj_b4T_6N)4sCG^RC8snE|g0lfjxZSA0^%<@~TWd+gs@CmXkxiBr!CU^aj
+z&TQo^{ZB&U38$z;?bBfk|8wRRiO^7^?;||-sVu1>w|h;em+hLnCuFA_EHj>^1(7np
+zaE3;Jq!S+P*koxHG8fQYONG(p>U!f@#V{lBmi=l|mGPpIDT@Z)b@@k*iI0N6>enRS
+z%bFQ&G5YIHOE(D>=WzqEG(&o_ob(9KTf@~If%!MuH_~X9j6PX?D~Z$Zn^}`>PTh4W
+z$jCLwJVZ6>y?h#=cuc)r3y_xa{-)&*ILvM)#Tyh3e5z*+Z>jfp+fJTUK6Tpqk(Tt>
+zaRX<NW+r4--^#Ij!e7A!{sbKSfuB&IWrWoE&VSeKc$>Qv?dh_xvezXy?X0xSZFCz0
+zi|xCn8>>>s_b(3PkrGIm>8Odm@TA7LH8HfLO4Wkk>~)-2WclNFZRf|==ZjXnDhrzR
+z@J^2A@a^On(?nU-hw=T2U9Z!Y75x<%6omw~_~IO^?g*+rNW5ywaZ{ozM^wM2D8r{D
+zf*aKhxw@Gb)3%si%g@k!eI%_Ogn7Bvlv*;}CPEyN?BBuMW!Pg7Vig!5cw<9OWLN5@
+z?;ui2ky9<Z3SD2j*dIRjq*86(o|NHDJl#}6*wjQGp0>G<lDC)DDMkeJhS9+1e8S#H
+zYfpl$;-x1?1xWpbBY6P?yfpA8QH61#sDJrn@M2@eXf$!x&AfuOUHfE1F)39kBl6yb
+zU8FdwUW}fB77SAyh<djaEL-ugh<L=S=aGMKM{_)Lb$`L1yXO?itqIojzjppK63uf3
+zrV~OD0Ui`vsG5T8<a3J;W;!yf()qh@Q&sHmGys7ft@fs2z$gEC*9D1UZ0c#i+w^1g
+zHUC_KB?jfL;VaKq{}c{14sWwmrl*dU1=O_Ll<#FHV%YF0KmgB8;6E7g?>Wu2ZE>Gd
+z_m>=A=-+e8H5h9_+c3Mw1Hd0Jah`irS#TYJbUoi(2wLIq#zq;4yVZgBYa0$t9HkNO
+zk2km5@21^gK^6t(zVFc8#12{^-4eeo9049UpX>U~B<3kCCR@kdkQ%cfku75wxgF}}
+zbgNH1W0|TiecO)Vw<Os(PF@@zeO<{uS0;98%8VI-rqQ0kyYKXjq!sv;j+PL8a*qRe
+zvicXvZ*~7;D9E?V>+D%vUyUG)EN%>F8RTOa+Db@O_KQT0h8cln9}kJ<Rv(<;)%r*_
+zEnT<kf1rez(@5;b>|?iaPX#319yi>|0op(P;GnT9W4MaF;qxS37M<FU>h<^Vm>#3=
+z@b1|9TVXi7{`327LRe_cQG*fZh^iBSZN85%PvyipiGFwyhW79Cq~I#LCO9%*iA1U!
+z_=QE3i+x64jhp&cSjLPc{)z4mu8_Jt)Ak$ySapkI2n@cYWr#>Y{ifCqIeBpq4HX*s
+z2(JzGf8K4#3<m3VXD6Pc^Br-SFN9D$U*rVQ?8Bk3;!)~yJC(e9Y+LThQ59+nilIfB
+zEmf2oGi?*W_0kfaRYSpolWp@uT`6d2lfQ`Ma6<3gW-WGx`ELpZDpB-kf>O1+KBHDd
+zMYSqSBsopLQ;a(s{h>0==8gk*%YzkVPwO6$*m8`v9fKrzB$ONVCU~G{pU(WW{}I;^
+z5(5Wj!PJt`A9UjFsiT#mt5#eQcf<x}<4(jS*~b$TE!gJ|zRups9S36pD&KLEX#@yB
+zr?s53ny16n@+>~AWJ~5k{8F?L<p%X3qI0%42r0Wji<g_nESu6dOU+R>MYXpvj7_f2
+zF}oRJpI&(c?h&$iUE2|9AZ$!x0jA;9=pb$Xk?U#T*;t6QaZ;*<>{I9|Y=f`W!?wBa
+z^SO3%C##j@*ptwLjZssjRGybAlN$^yZx0HNTWx;E5yqaKa`(jw+RQcaymJ<V?7koc
+z+YiqmdS}<CDYzXD7e;I&nD)<MG&T1ul|)}BQG^&Xc~R|;r1e_;V$;i<6;FC`tjsD~
+zrg0^^&V<g%l|oN({9~;jv}GgD+~+O%Fh$8?%hcbmX=D!g<iwU}>&y107wVSX&Bw;E
+zj=bp2B@PE)RQ#LEuF{27GipW|Z}~6tJKDkG^G~U^O6g3wofSWh>y?=vl>dIq(jB)e
+zd-eF&;T${8rsBFm6%0xX0_%vAiPy}uEMce)qo?0qoIid(@EXCEfMHE?S_v}q85TP&
+zsfyINaxfG1HA?mrxB?`&Z{%~j)H#pAR+ZTV_=|26nZbI`xIX}uGr<8$*s{|u%3QyG
+zyTO<juy#MN{u*!}6A2J{P}jIxwwx`-l6FlVu~?&S1~_}a3xwc`;)Xio{jD(*!%07r
+zinA^e$nRPblTkM_`z>$Oc2bC%5O(#znB{q_Lia~S>Q#0MlfH~E)&uE`Sl@=W^DyHt
+zcm<-()9=DN++}+CP~YM+X}2J6Ab9ewCOpkRFZ?Q121IK4j~q8JbI;cC-qOvpkrbsx
+z1+t^8>Swx6_A1}c>wm4UMK60KEXT5Gg?VB=Q4UvUIng{AEBJ}9%%%M1f%^vC+C|n`
+zqVnPHt=Gi%*^Q*W6<*CBc-6Yg;3gHcU%mG-9lR1ES_#oLhN-WJr~3+)7Jjf!lP>cY
+zPCC<sc@~xgbcji8xqA?-70j}GC(LtSGzWU#UL7npF{dvrk*hc8RdA35pUIrj&;G3>
+zc6)U}@l>LFt^j>A7XFxZ?EQCD#8=H;^DHs`PpM+}`X8ER7E5vw^8bcZj8<Pq72GEm
+zn1#5L?+_Yc!A)tep;j<-i0Vput(2YHO*62o_x%^~I%H{Xl(8FmZKDs6>E4$`Of?EP
+zleB3AKN1vHqF-6JUG?M6n517viPmi4Ck>(TmI@x~rB(W={#VP}Ck^I0kp<}Z;vK61
+z<FpX@i<Exa;vDH*di!+es8Zh{+3yd@K_WYLO%4u(&k!5n1X3O@r}mne;~9*`il23s
+z90Tf`K>EgrR1$ZQ8f!n@5+>C@OmI-6!1Ctn?0VGwka{%M{y3N%Ms=@UfwSM1fa#&1
+z9OCdkd|vG0)s|`Sduz0yFC<{CYFK@$s8b?gVodTBAV4z|xW-uE*15Mh<FWa2J*;zS
+zfwDXxIsb{qn4t0~Jq~`kpsi>w+sN&JLjLeX?=NXPh2kBV2}nW*(k1aaN&lQR(1=a;
+z0?+f8;s-$;p;T!l2Fj)@T)i#X($`FIr~(x*ZJ6{H84{^3706M4CTjfs7+_3)5XpE$
+z-+jA(^8XcVlevE~d9TAhLP2rq0pTMby)S8NGndWz@d~tX%{hSz6Mt$uHwNcyp){8l
+zud?DxMDX>;Kk)H|pz=oIL|PA0=yzXW3~{te;meF;?t0v8R%O@Sak58N=pWV9X(5f|
+zv5d+zAdTg5EnMt-A5?wabR()a)A$kcB);@oJ<$$SCd7}n%H{`U7TfdO{jk#ndHo9v
+zT=L^TSNT`(b`_ur8N}6bQBh)eV>u=$SvYXR%ZBI9y$NJZJ_1Yt-f>*Qk7f=|$IFap
+zN(&J+20hod=DGXZz!{naEcv(b0TPssP2>gK8hW=>_L`wo_B_3f53H3;P;N*tQne{<
+z`DYEua|M3%%X>}0urbPw9B?xbH>52?>0H1MUaI59^?@6zPAn3ItKFs7n<FNmCkpqK
+zt0Ms+@dj%5-y!2i*2JHh;7vn}yy;ka5gV9z&2;mxFQ-l*Z}iK-xJ(Y+(W5vzF}rU@
+b^OuYNO9v)R>m7wcY}Lk4LYBb)w4MGxT2$)<
+
+literal 55403
+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
+T6X^z*00000NkvXXu0mjfm^tMj
+
+diff --git a/packaging/windows/yapfast.rc b/packaging/windows/yapfast.rc
+index 33bfbcc..45f42e8 100644
+--- a/packaging/windows/yapfast.rc
++++ b/packaging/windows/yapfast.rc
+@@ -1,3 +1,22 @@
+-// Yapfast's icon, which Explorer shows for yapfast.exe and its shortcuts, and the
+-// window loads by its number (src/icon.rs). scripts/make-windows-icon draws it.
+ 1 ICON "yapfast.ico"
++1 VERSIONINFO
++FILEVERSION 0,5,0,0
++PRODUCTVERSION 0,5,0,0
++FILEOS 0x40004
++FILETYPE 1
++BEGIN
++  BLOCK "StringFileInfo"
++  BEGIN
++    BLOCK "040904b0"
++    BEGIN
++      VALUE "FileDescription", "Voxcord - Native Discord client\0"
++      VALUE "ProductName", "Voxcord\0"
++      VALUE "ProductVersion", "0.5.0\0"
++      VALUE "OriginalFilename", "voxcord.exe\0"
++    END
++  END
++  BLOCK "VarFileInfo"
++  BEGIN
++    VALUE "Translation", 0x409, 1200
++  END
++END
 diff --git a/scripts/package-windows.py b/scripts/package-windows.py
-index bb309c1..f8b99aa 100644
+index bb309c1..df354c6 100644
 --- a/scripts/package-windows.py
 +++ b/scripts/package-windows.py
-@@ -143,7 +143,7 @@ def main():
+@@ -84,7 +84,7 @@ def compile_installer(package, version, flavour, output):
+                     f"/O{windows_path(output)}", windows_path(ROOT / "packaging/windows/yapfast.iss")],
+                    env=environment, check=True, timeout=1800)
+     subprocess.run(["wineserver", "-w"], env=environment, check=True, timeout=120)
+-    return output / f"Yapfast-{version}{FLAVOURS[flavour]['suffix']}-windows-x64-setup.exe"
++    return output / f"Voxcord-{version}{FLAVOURS[flavour]['suffix']}-windows-x64-setup.exe"
+ 
+ 
+ def main():
+@@ -130,7 +130,7 @@ def main():
+     ))
+     version = next(package["version"] for package in metadata["packages"] if package["name"] == "yapfast")
+     output.mkdir(parents=True, exist_ok=True)
+-    base = f"Yapfast-{version}{flavour['suffix']}"
++    base = f"Voxcord-{version}{flavour['suffix']}"
+     archive_path = output / f"{base}-windows-x64.zip"
+     source_path = output / f"{base}-source.zip"
+     with tempfile.TemporaryDirectory(prefix="yapfast-windows-package-") as temporary:
+@@ -139,13 +139,13 @@ def main():
+ 
+         package = temporary / f"{base}-windows-x64"
+         package.mkdir()
+-        shutil.copy2(executable, package / "yapfast.exe")
++        shutil.copy2(executable, package / "voxcord.exe")
          shutil.copy2(ROOT / "LICENSE", package / "LICENSE.txt")
          # The source snapshot goes beside the packages, on the release page,
          # rather than into every install; SOURCE.txt says where.
 -        source_url = f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
 +        source_url = os.environ.get("NOVACORD_SOURCE_URL") or f"https://github.com/yapfast/yapfast/releases/tag/v{version}{flavour['suffix']}"
          (package / "SOURCE.txt").write_text(
-             f"The source code of this build of Yapfast {version}"
+-            f"The source code of this build of Yapfast {version}"
++            f"The source code of this build of Voxcord {version}"
              + (", with the exact source of\nthe libraries it includes under the AGPL," if rtc else "")
+             + " is published with it:\n\n"
+             f"  {source_url}\n  {source_path.name}, SHA-256 in BUILD.json\n\n"
+@@ -155,9 +155,9 @@ def main():
+         )
+         if args.flavour == "discord":
+             first_steps = (
+-                "3. Link your Discord account: Yapfast shows a QR code, which Discord on\n"
++                "3. Link your Discord account: Voxcord shows a QR code, which Discord on\n"
+                 "   your phone scans (Settings, Scan QR Code). Discord doesn't allow apps\n"
+-                "   like Yapfast on personal accounts; linking puts your account at some\n"
++                "   like Voxcord on personal accounts; linking puts your account at some\n"
+                 "   risk of being suspended.\n"
+                 "4. Open a channel, or a voice channel to talk.\n\n"
+                 "No account or saved session is included.\n"
+@@ -173,31 +173,31 @@ def main():
+             secrets = "password or recovery key"
+         edition = f" ({flavour['edition']})" if flavour["edition"] else ""
+         (package / "README.txt").write_text(
+-            f"Yapfast{edition} for 64-bit Windows 10/11\n\n"
++            f"Voxcord{edition} for 64-bit Windows 10/11\n\n"
+             "1. Extract the entire ZIP to a folder.\n"
+-            "2. Double-click yapfast.exe.\n"
++            "2. Double-click voxcord.exe.\n"
+             + first_steps +
+             "No Rust, Visual Studio, or separate app installation is required.\n"
+-            "Yapfast writes diagnostics to yapfast.log in its data folder,\n"
+-            "%LOCALAPPDATA%\\Yapfast\\Yapfast\\data, or to the console run-yapfast.cmd opens.\n"
++            "Voxcord writes diagnostics to yapfast.log in its data folder,\n"
++            "%LOCALAPPDATA%\\NovaCord\\NovaCord Native\\data, or to the console run-voxcord.cmd opens.\n"
+             "Windows stores session secrets in Credential Manager and app data\n"
+             "under your Windows user profile. Keep the first verified session.\n\n"
+             "Voice: select a voice channel and Join voice; the gear chooses devices.\n"
+             "Use headphones for the first two-machine audio test.\n"
+             "If anything fails, record the error text, Windows version, GPU and\n"
+             f"audio device model. Never send your {secrets} in logs.\n\n"
+-            "If Yapfast closes immediately, run run-yapfast.cmd to keep its error visible.\n\n"
+-            "Yapfast switches to software rendering if the GPU cannot start.\n"
+-            "To choose it yourself, run run-yapfast.cmd --renderer software.\n"
+-            "To retry the GPU after a fallback, run run-yapfast.cmd --renderer gpu.\n\n"
+-            "Yapfast is free software under the GNU General Public License, version 3\n"
++            "If Voxcord closes immediately, run run-voxcord.cmd to keep its error visible.\n\n"
++            "Voxcord switches to software rendering if the GPU cannot start.\n"
++            "To choose it yourself, run run-voxcord.cmd --renderer software.\n"
++            "To retry the GPU after a fallback, run run-voxcord.cmd --renderer gpu.\n\n"
++            "Voxcord is free software under the GNU General Public License, version 3\n"
+             "or later, in LICENSE.txt. Dependency notices and original licenses are\n"
+             "included; SOURCE.txt says where this build's source code is published.\n",
+             encoding="utf-8",
+         )
+-        (package / "run-yapfast.cmd").write_text(
+-            '@echo off\ncd /d "%~dp0"\nyapfast.exe %*\n'
+-            'if errorlevel 1 (\n  echo Yapfast exited with an error.\n  pause\n)\n',
++        (package / "run-voxcord.cmd").write_text(
++            '@echo off\ncd /d "%~dp0"\nvoxcord.exe %*\n'
++            'if errorlevel 1 (\n  echo Voxcord exited with an error.\n  pause\n)\n',
+             encoding="utf-8", newline="\r\n",
+         )
+         skia_location = os.environ.get("SKIA_BINARIES_URL")
 diff --git a/src/autostart.rs b/src/autostart.rs
-index 94c8830..ffe325f 100644
+index 94c8830..c72138e 100644
 --- a/src/autostart.rs
 +++ b/src/autostart.rs
 @@ -11,7 +11,7 @@ pub const SUPPORTED: bool = cfg!(any(target_os = "linux", windows));
@@ -46,15 +1537,120 @@ index 94c8830..ffe325f 100644
  /// installer's, which writes the same one.
  #[cfg(windows)]
 -const NAME: &str = "Yapfast";
-+const NAME: &str = "NovaCord Native";
++const NAME: &str = "Voxcord";
  
  /// Whether Yapfast starts when the person signs in.
  pub fn enabled() -> bool {
+diff --git a/src/tray.rs b/src/tray.rs
+index fca515f..23f4e2c 100644
+--- a/src/tray.rs
++++ b/src/tray.rs
+@@ -63,13 +63,13 @@ fn logo(size: u32, unread: bool) -> Option<slint::SharedPixelBuffer<slint::Rgba8
+             &format!(r#"width="{size}" height="{size}""#),
+             1,
+         )
+-        .replacen(r##"fill="#fff" mask"##, r##"fill="#ffbf47" mask"##, 1);
++        .replacen(r##"fill="#fff" mask"##, r##"fill="#7c6bff" mask"##, 1);
+     if unread {
+         svg = svg
+-            .replacen("</mask>", r#"<circle cx="74" cy="74" r="21" /></mask>"#, 1)
++            .replacen("</mask>", r#"<circle cx="20" cy="4" r="4" /></mask>"#, 1)
+             .replacen(
+                 "</svg>",
+-                r##"<circle cx="74" cy="74" r="15" fill="#f0545e" /></svg>"##,
++                r##"<circle cx="20" cy="4" r="2.8" fill="#f0545e" /></svg>"##,
+                 1,
+             );
+     }
+@@ -195,7 +195,7 @@ mod linux {
+         }
+ 
+         fn title(&self) -> String {
+-            "Yapfast".into()
++            "Voxcord".into()
+         }
+ 
+         fn category(&self) -> ksni::Category {
+@@ -208,7 +208,7 @@ mod linux {
+ 
+         fn tool_tip(&self) -> ksni::ToolTip {
+             ksni::ToolTip {
+-                title: "Yapfast".into(),
++                title: "Voxcord".into(),
+                 description: if self.shown.unread {
+                     "Unread messages".into()
+                 } else {
+@@ -231,7 +231,7 @@ mod linux {
+                 }
+                 .into()
+             };
+-            let mut menu = vec![item("Open Yapfast", Choice::Open)];
++            let mut menu = vec![item("Ouvrir Voxcord", Choice::Open)];
+             if self.shown.call {
+                 menu.push(item("Disconnect", Choice::Disconnect));
+             }
+@@ -333,7 +333,7 @@ mod windows {
+                 let window = CreateWindowExW(
+                     0,
+                     w!("YapfastTray"),
+-                    w!("Yapfast"),
++                    w!("Voxcord"),
+                     WS_OVERLAPPED,
+                     0,
+                     0,
+@@ -360,7 +360,7 @@ mod windows {
+                     hIcon: icons[0],
+                     ..std::mem::zeroed()
+                 };
+-                for (place, unit) in data.szTip.iter_mut().zip("Yapfast".encode_utf16()) {
++                for (place, unit) in data.szTip.iter_mut().zip("Voxcord".encode_utf16()) {
+                     *place = unit;
+                 }
+                 let added = notify(NIM_ADD, &data);
+@@ -488,7 +488,7 @@ mod windows {
+         // this thread.
+         let picked = unsafe {
+             let menu = CreatePopupMenu();
+-            AppendMenuW(menu, MF_STRING, OPEN, w!("Open Yapfast"));
++            AppendMenuW(menu, MF_STRING, OPEN, w!("Ouvrir Voxcord"));
+             if call {
+                 AppendMenuW(menu, MF_STRING, DISCONNECT, w!("Disconnect"));
+             }
 diff --git a/src/ui.rs b/src/ui.rs
-index ee2e4e0..6120cc5 100644
+index ee2e4e0..b4d132e 100644
 --- a/src/ui.rs
 +++ b/src/ui.rs
-@@ -1702,6 +1702,7 @@ struct Adapter {
+@@ -995,6 +995,8 @@ struct Layout {
+     /// A message that notifies while Yapfast isn't in front flashes the
+     /// taskbar; on unless turned off.
+     flash_taskbar: Option<bool>,
++    /// Quiet taskbar defaults have been applied once to an older profile.
++    quiet_taskbar_migrated: bool,
+     /// DMs pinned to the top of the DM list, by room ID, the first pinned first.
+     pinned: Vec<String>,
+     /// Message times as 9:41 PM rather than 21:41.
+@@ -1192,6 +1194,11 @@ impl Layout {
+             .ok()
+             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+             .unwrap_or_default();
++        if !layout.quiet_taskbar_migrated {
++            layout.flash_taskbar = Some(false);
++            layout.quiet_taskbar_migrated = true;
++            layout.write(root);
++        }
+         if layout.notification_sound.take() == Some(false) {
+             layout.adjust_each_sound = true;
+             layout.each_sound.insert(Sound::Message, 0);
+@@ -1234,7 +1241,7 @@ impl Layout {
+         self.apply_custom_games(window);
+         window.set_show_idle(self.show_idle.unwrap_or(true));
+         window.set_hide_blocked(self.hide_blocked);
+-        window.set_flash_taskbar(self.flash_taskbar.unwrap_or(true));
++        window.set_flash_taskbar(self.flash_taskbar.unwrap_or(false));
+         // Before the first frame, which the event loop draws. A window made
+         // again, after closing to the tray, keeps the theme this way too.
+         let (id, chosen) = theme::chosen(self.theme.as_deref(), &self.custom_themes);
+@@ -1702,6 +1709,7 @@ struct Adapter {
      /// The soundboard's sounds as its rows show them, and the pictures'
      /// revision then, so the rows are made again only when either changes.
      soundboard_shown: Option<(Arc<[voice::SoundGroup]>, u64)>,
@@ -62,7 +1658,7 @@ index ee2e4e0..6120cc5 100644
      /// The same for the entrance sounds Settings offers; the servers it
      /// offers them for, "All servers" first as none; and the soundboard
      /// volume shown, so the slider moves only when Discord's does.
-@@ -1927,6 +1928,7 @@ impl Adapter {
+@@ -1927,6 +1935,7 @@ impl Adapter {
                  preview_camera: None,
                  frame_ids: vec![],
                  soundboard_shown: None,
@@ -70,11 +1666,125 @@ index ee2e4e0..6120cc5 100644
                  entrance_shown: None,
                  entrance_servers: vec![],
                  soundboard_volume_shown: None,
+@@ -2300,7 +2309,7 @@ impl Adapter {
+                     // Only while Yapfast isn't in front: there the lists show what's new.
+                     if !FOCUSED.get()
+                         && !alert.call
+-                        && self.layout.flash_taskbar.unwrap_or(true)
++                        && self.layout.flash_taskbar.unwrap_or(false)
+                         && let Some(window) = self.window.upgrade()
+                     {
+                         attention(&window, true);
+diff --git a/src/ui/appearance.rs b/src/ui/appearance.rs
+index 43ba7a3..e6afbaa 100644
+--- a/src/ui/appearance.rs
++++ b/src/ui/appearance.rs
+@@ -4,7 +4,7 @@ use super::*;
+ 
+ impl Adapter {
+     /// Shows the window in a theme, built in or the person's own, and keeps
+-    /// it chosen. False for an id Yapfast doesn't know, which changes nothing.
++    /// it chosen. False for an id Voxcord doesn't know, which changes nothing.
+     pub(super) fn choose_theme(&mut self, window: &YapfastWindow, id: &str) -> bool {
+         let Some((id, chosen)) =
+             theme::lookup(id, &self.layout.custom_themes).map(|(id, theme)| (id.to_owned(), theme))
+diff --git a/src/ui/away.rs b/src/ui/away.rs
+index b3803bc..b606ea4 100644
+--- a/src/ui/away.rs
++++ b/src/ui/away.rs
+@@ -1,8 +1,8 @@
+-//! Whether someone is using Yapfast, judged as Discord's web client judges it:
++//! Whether someone is using Voxcord, judged as Discord's web client judges it:
+ //! a key, a click or the wheel in the window counts, a passing pointer
+ //! doesn't. Once nobody has for [`QUIET`], Discord hears since when, and
+ //! goes AFK and then idle on its own clock; see
+-//! `yapfast_discord::settings::Away`. One timer runs while someone uses Yapfast,
++//! `yapfast_discord::settings::Away`. One timer runs while someone uses Voxcord,
+ //! and none once nobody does.
+ 
+ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+@@ -12,14 +12,14 @@ use yapfast_core::application::Action;
+ 
+ use super::{Adapter, YapfastWindow};
+ 
+-/// How long without input before Yapfast tells Discord. Discord's shortest AFK
++/// How long without input before Voxcord tells Discord. Discord's shortest AFK
+ /// timeout that matters is a minute; its timeouts count from the last
+ /// input, not from this.
+ const QUIET: Duration = Duration::from_secs(15);
+ 
+ pub(super) struct Away {
+     last: Instant,
+-    /// Discord heard nobody is using Yapfast.
++    /// Discord heard nobody is using Voxcord.
+     inactive: bool,
+     timer: Timer,
+ }
+@@ -35,12 +35,12 @@ impl Default for Away {
+ }
+ 
+ impl Adapter {
+-    /// Whether nobody has used Yapfast for a while, so animation holds still.
++    /// Whether nobody has used Voxcord for a while, so animation holds still.
+     pub(super) fn is_inactive(&self) -> bool {
+         self.away.inactive
+     }
+ 
+-    /// Watches for nobody using Yapfast, from now.
++    /// Watches for nobody using Voxcord, from now.
+     pub(super) fn watch_away(&mut self) {
+         self.away.last = Instant::now();
+         self.wait_away(QUIET);
+diff --git a/src/ui/browser.rs b/src/ui/browser.rs
+index cb618a9..3415b21 100644
+--- a/src/ui/browser.rs
++++ b/src/ui/browser.rs
+@@ -13,7 +13,7 @@ pub(super) fn open(page: &str) {
+     }
+ }
+ 
+-/// Starts `xdg-open` without `LD_LIBRARY_PATH`: the libraries Yapfast was
++/// Starts `xdg-open` without `LD_LIBRARY_PATH`: the libraries Voxcord was
+ /// started to find, as from its development shell or a Nix wrapper, are
+ /// other versions than the browser's, and Firefox exits at once on them.
+ /// A thread waits for `xdg-open`, which waits for a browser that wasn't
+diff --git a/src/ui/call_link.rs b/src/ui/call_link.rs
+index 5b5f9f1..cdab5a1 100644
+--- a/src/ui/call_link.rs
++++ b/src/ui/call_link.rs
+@@ -62,7 +62,7 @@ fn show(link: &CallLink<'_>, stats: &LinkStats, others: bool) {
+         link.set_encoder(encoder(&stream.engine).into());
+         link.set_codec(stream.codec.as_str().into());
+         link.set_picture(
+-            format!("{}×{} at {} fps", stream.width, stream.height, stream.fps).into(),
++            format!("{}×{} · {} fps sent / {} fps target", stream.width, stream.height, stream.fps, stream.requested_fps).into(),
+         );
+         link.set_sent(rate(stream.sent_kbps).into());
+         link.set_target(rate(stream.target_kbps).into());
 diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
-index 597fb2e..467d4d5 100644
+index 597fb2e..89bff2d 100644
 --- a/src/ui/callbacks.rs
 +++ b/src/ui/callbacks.rs
-@@ -2596,6 +2596,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -1330,7 +1330,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+             state.borrow_mut().action(&window, action);
+             return;
+         }
+-        // Discord's own links open their place here, when Yapfast can show
++        // Discord's own links open their place here, when Voxcord can show
+         // it, and in the browser otherwise. An invite shows its server
+         // first and joins only when asked, whatever the text says.
+         #[cfg(feature = "discord")]
+@@ -1482,6 +1482,9 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         layout.notifications = Some(window.get_notifications());
+         layout.notification_text = Some(window.get_notification_text());
+         layout.flash_taskbar = Some(window.get_flash_taskbar());
++        if !window.get_flash_taskbar() {
++            attention(&window, false);
++        }
+         layout.sound_set = chosen(&SoundSet::ALL, window.get_sound_set());
+         layout.sound_volume = Some(window.get_sound_volume().clamp(0, 200) as u8);
+         layout.adjust_each_sound = window.get_adjust_each_sound();
+@@ -2596,6 +2599,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
      });
      let state = adapter.clone();
      let weak = window.as_weak();
@@ -90,10 +1800,175 @@ index 597fb2e..467d4d5 100644
      window.on_play_soundboard(move |id| {
          let Some(window) = weak.upgrade() else { return };
          state.borrow_mut().action(
+@@ -2785,7 +2797,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+             window.set_meter_note(SharedString::from(if !meter::AVAILABLE {
+                 "The level meter isn't available on this system yet."
+             } else if meter.failed() {
+-                "Yapfast can't read this microphone. Check that it's connected, or choose another."
++                "Voxcord can't read this microphone. Check that it's connected, or choose another."
+             } else {
+                 ""
+             }));
+@@ -2810,7 +2822,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+                     if !yapfast_core::discord_audio::AVAILABLE {
+                         "Discord voice and its level aren't available on this system yet."
+                     } else if meter.failed() {
+-                        "Yapfast can't read this microphone. Check that it's connected, or choose another."
++                        "Voxcord can't read this microphone. Check that it's connected, or choose another."
+                     } else {
+                         ""
+                     },
+@@ -2972,7 +2984,7 @@ const PIP_HEIGHT: f32 = 180.0;
+ /// Opens a web page in the browser. Only web pages open: a message can't
+ /// start other programs.
+ /// The web address a link in a message leads to: a masked link's, behind
+-/// the question asked before leaving. A mention or Yapfast's own link has none.
++/// the question asked before leaving. A mention or Voxcord's own link has none.
+ pub(super) fn web_address(link: &str) -> Option<&str> {
+     let link = links::masked(link).unwrap_or(link);
+     (links::openable(link) && mention::target(link).is_none()).then_some(link)
+diff --git a/src/ui/menus.rs b/src/ui/menus.rs
+index 8c63485..ce10fad 100644
+--- a/src/ui/menus.rs
++++ b/src/ui/menus.rs
+@@ -36,7 +36,7 @@ fn thread_more(id: &str) -> Option<(&str, &'static str)> {
+ pub(super) type Menu = (Vec<MenuRow>, Vec<Vec<MenuRow>>);
+ 
+ /// What a server's, conversation's or person's menu offers; nothing for one
+-/// Yapfast doesn't know.
++/// Voxcord doesn't know.
+ pub(super) fn menu(adapter: &Adapter, id: &str, person: bool) -> Menu {
+     if let Some(place) = id.strip_prefix(BELL) {
+         return Notify::of(adapter, place)
+diff --git a/src/ui/messages.rs b/src/ui/messages.rs
+index e0a7808..8874448 100644
+--- a/src/ui/messages.rs
++++ b/src/ui/messages.rs
+@@ -647,7 +647,7 @@ pub(super) fn message_row_within(
+         Delivery::Sent => ("", false, false),
+         Delivery::Sending => ("Sending...", false, true),
+         Delivery::Waiting => (
+-            "Not sent yet. Yapfast sends it when the connection returns.",
++            "Not sent yet. Voxcord sends it when the connection returns.",
+             false,
+             true,
+         ),
+@@ -1267,9 +1267,9 @@ pub(super) fn emoji_card(
+         None => Default::default(),
+     };
+     // What Discord said of the server, which its card's counts and note come
+-    // from; before it answers, the note follows the features Yapfast has.
++    // from; before it answers, the note follows the features Voxcord has.
+     let preview = server.and_then(|server| state.server_previews.get(&server.id));
+-    // Discover lists a server whose preview says so, and Yapfast keeps its own
++    // Discover lists a server whose preview says so, and Voxcord keeps its own
+     // word for a Community server either way: a preview that answers without
+     // the feature would otherwise take the note away from a server that has it.
+     let discoverable = server.is_some_and(|server| server.community)
+diff --git a/src/ui/placement.rs b/src/ui/placement.rs
+index a9b8e03..6f0606f 100644
+--- a/src/ui/placement.rs
++++ b/src/ui/placement.rs
+@@ -1,4 +1,4 @@
+-//! Where the window was and how big, kept in the layout, so Yapfast starts as
++//! Where the window was and how big, kept in the layout, so Voxcord starts as
+ //! it was left and the window made again from the tray comes back as it was.
+ 
+ use super::*;
+@@ -78,7 +78,7 @@ pub(super) fn moved(adapter: &mut Adapter, window: &YapfastWindow) {
+         });
+ }
+ 
+-/// Writes where the window is if it moved since the last write, as Yapfast ends.
++/// Writes where the window is if it moved since the last write, as Voxcord ends.
+ pub(super) fn flush(adapter: &Adapter) {
+     if adapter.placement_due.running() {
+         adapter.placement_due.stop();
 diff --git a/src/ui/refresh.rs b/src/ui/refresh.rs
-index c3040a1..5f233dd 100644
+index c3040a1..23a6c38 100644
 --- a/src/ui/refresh.rs
 +++ b/src/ui/refresh.rs
+@@ -451,7 +451,7 @@ impl Adapter {
+         window.set_emoji_card(card);
+     }
+ 
+-    /// Whether Yapfast is signed in or previewing, what the account is doing, and
++    /// Whether Voxcord is signed in or previewing, what the account is doing, and
+     /// linking Discord.
+     fn show_workspace(&mut self, window: &YapfastWindow) {
+         let state = &self.app.state;
+@@ -1019,7 +1019,7 @@ impl Adapter {
+         let Some(form) = form else {
+             return;
+         };
+-        // The fields are the window's while it's open; Yapfast writes them only
++        // The fields are the window's while it's open; Voxcord writes them only
+         // when they differ, so the caret stays.
+         if window.get_new_thread_name() != form.name.as_str() {
+             window.set_new_thread_name(form.name.as_str().into());
+@@ -1297,7 +1297,7 @@ impl Adapter {
+             }
+             return;
+         };
+-        // The fields are the window's while it's open; Yapfast writes them only
++        // The fields are the window's while it's open; Voxcord writes them only
+         // when they differ, so the caret stays.
+         if window.get_post_title() != post.title.as_str() {
+             window.set_post_title(post.title.as_str().into());
+@@ -1669,7 +1669,7 @@ impl Adapter {
+                 match &role.members {
+                     None => "Loading...",
+                     Some(members) if members.is_empty() => {
+-                        "Yapfast hasn't seen anyone with this role yet."
++                        "Voxcord hasn't seen anyone with this role yet."
+                     }
+                     Some(_) => "",
+                 }
+@@ -1779,7 +1779,7 @@ impl Adapter {
+             "Find Invite"
+         };
+         let status = if join.form.is_some() {
+-            "You joined. This server asks new members to fill in a form before they can talk, which Yapfast can't show yet. Finish it in Discord's web app."
++            "You joined. This server asks new members to fill in a form before they can talk, which Voxcord can't show yet. Finish it in Discord's web app."
+         } else if join.captcha.is_some() {
+             "Discord asks for a captcha first. Solve it in your browser."
+         } else if join.joining {
+@@ -2014,7 +2014,7 @@ impl Adapter {
+                     lines.push(format!("Afterward, Discord sends you to {host}."));
+                 }
+                 Some(url) => lines.push(format!(
+-                    "Afterward, Discord hands its answer to {url}, which Yapfast won't open."
++                    "Afterward, Discord hands its answer to {url}, which Voxcord won't open."
+                 )),
+                 None => {}
+             }
+@@ -2053,7 +2053,7 @@ impl Adapter {
+             "Authorizing..."
+         } else if dialog.done && dialog.next.is_some() {
+             "Authorized. Discord sends you on to this address, which isn't a web page, \
+-             so Yapfast doesn't open it. Copy it if the app asks for it."
++             so Voxcord doesn't open it. Copy it if the app asks for it."
+         } else if dialog.done {
+             "Authorized."
+         } else if !locked
+@@ -2658,7 +2658,7 @@ impl Adapter {
+             } else if !query.is_empty() {
+                 "No conversations match."
+             } else {
+-                "There's nowhere to forward to yet. Yapfast forwards Matrix messages only into encrypted conversations."
++                "There's nowhere to forward to yet. Voxcord forwards Matrix messages only into encrypted conversations."
+             }
+             .into(),
+         );
+@@ -3030,7 +3030,7 @@ impl Adapter {
+             } else if discord_room && room.is_some_and(|room| room.read_only || room.locked) {
+                 "You can't send messages in this Discord channel."
+             } else if discord_room && !state.discord_online {
+-                "Discord is disconnected. Yapfast is reconnecting."
++                "Discord is disconnected. Voxcord is reconnecting."
+             } else if discord_only {
+                 ""
+             } else if discord_room {
 @@ -3672,7 +3672,7 @@ impl Adapter {
  
      /// The call's soundboard, its rows made again only when its sounds
@@ -121,6 +1996,17 @@ index c3040a1..5f233dd 100644
          self.models.entrance_rows.set_vec(rows);
      }
  
+@@ -4375,8 +4375,8 @@ fn permission_names(bits: u64) -> String {
+     let more = (bits & !named).count_ones();
+     let more = match (more, names.is_empty()) {
+         (0, _) => None,
+-        (1, true) => Some("1 permission Yapfast can't name".to_owned()),
+-        (count, true) => Some(format!("{count} permissions Yapfast can't name")),
++        (1, true) => Some("1 permission Voxcord can't name".to_owned()),
++        (count, true) => Some(format!("{count} permissions Voxcord can't name")),
+         (1, false) => Some("1 more permission".to_owned()),
+         (count, false) => Some(format!("{count} more permissions")),
+     };
 @@ -4761,14 +4761,21 @@ fn sound_rows(
      groups: &[voice::SoundGroup],
      pictures: &mut HashMap<String, slint::Image>,
@@ -144,10 +2030,123 @@ index c3040a1..5f233dd 100644
              let cells: Vec<SoundCell> = chunk
                  .iter()
                  .map(|sound| SoundCell {
+diff --git a/src/ui/server_settings.rs b/src/ui/server_settings.rs
+index 1631e2e..1457082 100644
+--- a/src/ui/server_settings.rs
++++ b/src/ui/server_settings.rs
+@@ -445,7 +445,7 @@ impl Adapter {
+                 "Backup code",
+             ),
+             Some(MfaMethod::Passkey) | None => (
+-                "Discord asks for a passkey or security key, which Yapfast can't use. Confirm in Discord's app, then try again."
++                "Discord asks for a passkey or security key, which Voxcord can't use. Confirm in Discord's app, then try again."
+                     .to_owned(),
+                 "",
+             ),
 diff --git a/src/ui/shell.rs b/src/ui/shell.rs
-index 24fd463..74630c5 100644
+index 24fd463..80cd978 100644
 --- a/src/ui/shell.rs
 +++ b/src/ui/shell.rs
+@@ -1,5 +1,5 @@
+ //! The window, which closing to the tray drops and opening makes again, and
+-//! the tray icon that keeps Yapfast running meanwhile, with its session, calls,
++//! the tray icon that keeps Voxcord running meanwhile, with its session, calls,
+ //! notifications and sounds.
+ 
+ use std::rc::Weak;
+@@ -12,16 +12,16 @@ thread_local! {
+     static SHELL: RefCell<Weak<Shell>> = const { RefCell::new(Weak::new()) };
+ }
+ 
+-/// Yapfast's window while it's open, and what makes it again.
++/// Voxcord's window while it's open, and what makes it again.
+ pub(super) struct Shell {
+     window: RefCell<Option<YapfastWindow>>,
+     pub(super) adapter: Rc<RefCell<Adapter>>,
+-    /// Shown in every window: why Yapfast draws with Skia Software, if the GPU failed.
++    /// Shown in every window: why Voxcord draws with Skia Software, if the GPU failed.
+     notice: SharedString,
+     gpu: bool,
+-    /// The renderer setting changed and Yapfast restarts to use it.
++    /// The renderer setting changed and Voxcord restarts to use it.
+     restart: Cell<bool>,
+-    /// Why a window made after the first failed on the GPU; Yapfast restarts
++    /// Why a window made after the first failed on the GPU; Voxcord restarts
+     /// with Skia Software.
+     gpu_failure: RefCell<Option<String>>,
+     /// What the closed window showed that the application doesn't keep.
+@@ -36,7 +36,7 @@ struct View {
+ }
+ 
+ impl Shell {
+-    /// Takes the first window, bound and refreshed, and puts Yapfast in the tray.
++    /// Takes the first window, bound and refreshed, and puts Voxcord in the tray.
+     pub(super) fn new(
+         window: YapfastWindow,
+         adapter: Rc<RefCell<Adapter>>,
+@@ -70,7 +70,7 @@ impl Shell {
+         shell
+     }
+ 
+-    /// Whether Yapfast ends to restart with another renderer.
++    /// Whether Voxcord ends to restart with another renderer.
+     pub(super) fn restarting(&self) -> bool {
+         self.restart.get()
+     }
+@@ -131,7 +131,7 @@ impl Shell {
+         });
+     }
+ 
+-    /// A window failed to appear: with the GPU, Yapfast restarts with Skia
++    /// A window failed to appear: with the GPU, Voxcord restarts with Skia
+     /// Software, which shows it.
+     fn fail_on_gpu(&self, reason: String) {
+         tracing::error!(%reason, "could not show the window");
+@@ -149,7 +149,7 @@ impl Shell {
+     }
+ 
+     /// What every window does beyond its callbacks: closes to the tray, and
+-    /// restarts Yapfast.
++    /// restarts Voxcord.
+     fn watch(self: &Rc<Self>, window: &YapfastWindow) {
+         let shell = Rc::downgrade(self);
+         window.window().on_close_requested(move || {
+@@ -171,7 +171,7 @@ impl Shell {
+         });
+     }
+ 
+-    /// The window's close button: Yapfast goes on in the tray, or without a tray
++    /// The window's close button: Voxcord goes on in the tray, or without a tray
+     /// to show it, or with the setting off, quits.
+     pub(super) fn close(&self) {
+         let to_tray = {
+@@ -257,7 +257,7 @@ impl Shell {
+         }
+         #[cfg(not(feature = "discord"))]
+         let _ = link;
+-        tracing::warn!("a later start handed Yapfast a link it can't open");
++        tracing::warn!("a later start handed Voxcord a link it can't open");
+     }
+ 
+     /// Opens the window on a conversation, as a clicked notification does.
+@@ -339,7 +339,7 @@ pub(super) fn remake_window() {
+     }
+ }
+ 
+-/// Yapfast started again on this folder, and the new start asked for the
++/// Voxcord started again on this folder, and the new start asked for the
+ /// window: shows it, taking the focus with the token the desktop gave that
+ /// start.
+ pub(super) fn launched(launch: crate::instance::Launch) {
+@@ -347,7 +347,7 @@ pub(super) fn launched(launch: crate::instance::Launch) {
+     let Some(shell) = SHELL.with(|shell| shell.borrow().upgrade()) else {
+         return;
+     };
+-    tracing::info!("Yapfast started again; showing the window");
++    tracing::info!("Voxcord started again; showing the window");
+     if let Some(link) = link {
+         shell.queue_link(link);
+     }
 @@ -441,9 +441,9 @@ impl Adapter {
      pub(super) fn show_title(&self, window: &YapfastWindow) {
          let waiting: u64 = self.app.state.rooms.iter().map(|room| room.mentions).sum();
@@ -155,16 +2154,99 @@ index 24fd463..74630c5 100644
 -            0 => "Yapfast".to_owned(),
 -            1..=99 => format!("({waiting}) Yapfast"),
 -            _ => "(99+) Yapfast".to_owned(),
-+            0 => "NovaCord Native".to_owned(),
-+            1..=99 => format!("({waiting}) NovaCord Native"),
-+            _ => "(99+) NovaCord Native".to_owned(),
++            0 => "Voxcord".to_owned(),
++            1..=99 => format!("({waiting}) Voxcord"),
++            _ => "(99+) Voxcord".to_owned(),
          };
          if window.get_window_title() != title.as_str() {
              window.set_window_title(title.into());
+diff --git a/src/ui/tests.rs b/src/ui/tests.rs
+index 9214a90..af1829c 100644
+--- a/src/ui/tests.rs
++++ b/src/ui/tests.rs
+@@ -1344,7 +1344,7 @@ fn a_link_showing_other_text_asks_before_it_opens() {
+             .dispatch_event(WindowEvent::PointerReleased { position, button });
+     }
+     let opened = opened.borrow();
+-    assert!(!opened.is_empty(), "a click on the link reaches Yapfast");
++    assert!(!opened.is_empty(), "a click on the link reaches Voxcord");
+     assert!(
+         opened
+             .iter()
+@@ -1462,7 +1462,7 @@ fn an_emoji_card_says_how_many_of_its_servers_members_are_online() {
+         pinned: Vec::new(),
+     };
+     let target = emoji_text::Target::Custom("42".to_owned());
+-    // Before Discord answers, the note follows the features Yapfast has.
++    // Before Discord answers, the note follows the features Voxcord has.
+     let known = emoji_card(&target, Some(&server), &state, &mut pictures);
+     assert_eq!(known.server_online, "", "nothing said yet");
+     assert_eq!(known.server_note, "Discoverable Server");
+@@ -1484,7 +1484,7 @@ fn an_emoji_card_says_how_many_of_its_servers_members_are_online() {
+     );
+     assert_eq!(answered.server_note, "Discoverable Server");
+     // A server Discover doesn't list shows its count alone, whatever feature
+-    // Yapfast knew of it.
++    // Voxcord knew of it.
+     state.server_previews.insert(
+         server.id.clone(),
+         yapfast_core::chat::ServerPreview {
+@@ -3228,7 +3228,7 @@ fn collapsed_categories_keep_the_open_unread_and_occupied_channels() {
+             ("b", "", true, false),
+             ("c", "", true, false),
+             ("e", "VOICE", true, true),
+-            // The voice channel Yapfast is in stays.
++            // The voice channel Voxcord is in stays.
+             ("f", "", true, false),
+             ("g", "OTHER", false, false),
+             ("h", "", false, false),
+@@ -6174,7 +6174,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
+     assert_eq!(theme::Theme::shown(&again), nord);
+     assert_eq!(again.get_theme_id(), "nord");
+ 
+-    // An id Yapfast doesn't know changes nothing, and a stored one it no longer
++    // An id Voxcord doesn't know changes nothing, and a stored one it no longer
+     // has shows Yap.
+     again.invoke_choose_theme("missing".into());
+     assert_eq!(theme::Theme::shown(&again), nord);
+@@ -6255,7 +6255,7 @@ fn a_custom_theme_keeps_its_colours_by_name_and_falls_back_to_its_base() {
+         custom
+     );
+ 
+-    // A base Yapfast doesn't know is Yap.
++    // A base Voxcord doesn't know is Yap.
+     let unknown: theme::Custom =
+         serde_json::from_value(serde_json::json!({ "base": "gone" })).unwrap();
+     assert_eq!((unknown.base, unknown.theme), ("yap", theme::YAP));
+@@ -6696,7 +6696,7 @@ fn a_handed_link_waits_for_the_open_dialog() {
+     );
+     let shown = query(&adapter);
+     assert!(shown.is_some());
+-    // Another app hands Yapfast a link to a different application while
++    // Another app hands Voxcord a link to a different application while
+     // the dialog is open: an Authorize click is still for the first.
+     {
+         let mut adapter = adapter.borrow_mut();
 diff --git a/src/ui/theme.rs b/src/ui/theme.rs
-index b060ef1..53750d2 100644
+index b060ef1..b819931 100644
 --- a/src/ui/theme.rs
 +++ b/src/ui/theme.rs
+@@ -1,5 +1,5 @@
+ //! The window's colours: a full set of what `Theme` in `ui/theme.slint` holds,
+-//! which Yapfast sets on the window to change them all at once.
++//! which Voxcord sets on the window to change them all at once.
+ 
+ use std::{cell::Cell, rc::Rc};
+ 
+@@ -99,7 +99,7 @@ theme! {
+     avatar(get_avatar, set_avatar),
+ }
+ 
+-/// Yapfast's own colours: layered graphite with a marigold accent. The defaults
++/// Voxcord's own colours: layered graphite with a marigold accent. The defaults
+ /// in `ui/theme.slint` are these, so the first frame shows them.
+ pub const YAP: Theme = Theme {
+     dark: true,
 @@ -120,10 +120,10 @@ pub const YAP: Theme = Theme {
      secondary: rgb(0xb5b8c1),
      muted: rgb(0x8d919c),
@@ -180,8 +2262,575 @@ index b060ef1..53750d2 100644
      danger: rgb(0xf0545e),
      danger_hover: rgb(0xf46f77),
      on_danger: rgb(0xffffff),
+@@ -140,7 +140,7 @@ pub const YAP: Theme = Theme {
+ };
+ 
+ /// Discord's own dark theme (Dark, `.theme-dark` with `.theme-darker` in its
+-/// web client's CSS) on Yapfast's surfaces, with blurple for the accent.
++/// web client's CSS) on Voxcord's surfaces, with blurple for the accent.
+ const BONFIRE: Theme = Theme {
+     dark: true,
+     rail: rgb(0x121214),
+@@ -453,7 +453,7 @@ const ROSE_PINE_DAWN: Theme = Theme {
+     avatar: rgb(0x9893a5),
+ };
+ 
+-/// Yapfast's own: cherry blossom on rice paper, pink on a pale pink ground.
++/// Voxcord's own: cherry blossom on rice paper, pink on a pale pink ground.
+ const SAKURA: Theme = Theme {
+     dark: false,
+     rail: rgb(0xf6dbe5),
+@@ -492,7 +492,7 @@ const SAKURA: Theme = Theme {
+     avatar: rgb(0xc08aa2),
+ };
+ 
+-/// A theme Yapfast comes with: the id a layout stores and the name Appearance
++/// A theme Voxcord comes with: the id a layout stores and the name Appearance
+ /// shows.
+ pub struct BuiltIn {
+     pub id: &'static str,
+@@ -500,7 +500,7 @@ pub struct BuiltIn {
+     pub theme: Theme,
+ }
+ 
+-/// The themes Yapfast comes with, as Appearance lists them: the dark ones, then
++/// The themes Voxcord comes with, as Appearance lists them: the dark ones, then
+ /// the light ones. The palettes credited in docs/themes.md are MIT licensed.
+ pub const BUILT_IN: [BuiltIn; 10] = [
+     BuiltIn {
+@@ -694,7 +694,7 @@ impl<'de> serde::Deserialize<'de> for Custom {
+     }
+ }
+ 
+-/// The number in a custom theme's id, if it's one Yapfast gives.
++/// The number in a custom theme's id, if it's one Voxcord gives.
+ fn custom_number(id: &str) -> Option<u32> {
+     id.strip_prefix("custom:")?.parse().ok()
+ }
+@@ -709,7 +709,7 @@ pub fn new_id(custom: &[Custom]) -> String {
+     format!("custom:{}", last + 1)
+ }
+ 
+-/// Gives a new id to each custom theme from `layout.json` whose id Yapfast
++/// Gives a new id to each custom theme from `layout.json` whose id Voxcord
+ /// wouldn't have given, or that another has, so that ids stay apart from
+ /// the built-in ones and from each other.
+ pub fn tidy(custom: &mut [Custom]) {
+diff --git a/src/ui/title_bar.rs b/src/ui/title_bar.rs
+index 4bc9d91..66ec4f9 100644
+--- a/src/ui/title_bar.rs
++++ b/src/ui/title_bar.rs
+@@ -1,10 +1,10 @@
+-//! The title bar Yapfast draws in place of the desktop's on Linux: whether it
++//! The title bar Voxcord draws in place of the desktop's on Linux: whether it
+ //! does, and moving, sizing, minimizing, maximizing and closing the window
+ //! from it through winit.
+ //!
+ //! A desktop that gives its windows title bars, as KDE and GNOME do, draws
+-//! one on Yapfast's too unless Yapfast draws its own. A tiling compositor such
+-//! as Hyprland or sway draws none, and there Yapfast's would be in the way.
++//! one on Voxcord's too unless Voxcord draws its own. A tiling compositor such
++//! as Hyprland or sway draws none, and there Voxcord's would be in the way.
+ //! The desktop doesn't say which it does: KWin and Hyprland both answer
+ //! xdg-decoration with server-side. So `XDG_CURRENT_DESKTOP` decides, until
+ //! the person chooses in Appearance.
+@@ -18,7 +18,7 @@
+ use slint::winit_030::winit::window::{ResizeDirection, WindowAttributes};
+ 
+ thread_local! {
+-    /// Windows are made without the desktop's frame, for Yapfast's title bar.
++    /// Windows are made without the desktop's frame, for Voxcord's title bar.
+     static OWN: Cell<bool> = const { Cell::new(false) };
+ }
+ 
+@@ -54,7 +54,7 @@ const DIRECTIONS: [ResizeDirection; 8] = [
+     ResizeDirection::West,
+ ];
+ 
+-/// Yapfast offers its own title bar on Linux; elsewhere the system's stays.
++/// Voxcord offers its own title bar on Linux; elsewhere the system's stays.
+ pub(super) const OFFERED: bool = cfg!(target_os = "linux");
+ 
+ /// Whether the desktop draws the title bar unless the person chose: on a
+@@ -74,21 +74,21 @@ fn framed(desktops: &str) -> bool {
+     })
+ }
+ 
+-/// Makes the windows from now on with Yapfast's title bar or the desktop's,
+-/// as the layout has it, and returns whether Yapfast's.
++/// Makes the windows from now on with Voxcord's title bar or the desktop's,
++/// as the layout has it, and returns whether Voxcord's.
+ pub(super) fn choose(system: Option<bool>) -> bool {
+     let own = OFFERED && !system.unwrap_or_else(system_by_default);
+     OWN.set(own);
+     own
+ }
+ 
+-/// Each window as Slint makes it: with the desktop's frame unless Yapfast
++/// Each window as Slint makes it: with the desktop's frame unless Voxcord
+ /// draws its own title bar.
+ pub(super) fn attributes(attributes: WindowAttributes) -> WindowAttributes {
+     attributes.with_decorations(!OWN.get())
+ }
+ 
+-/// Shows the title bar as the layout has it: the desktop's, or Yapfast's. A
++/// Shows the title bar as the layout has it: the desktop's, or Voxcord's. A
+ /// window made since the choice changed shows it from before it's shown.
+ pub(super) fn show(window: &YapfastWindow, system: Option<bool>) {
+     let own = choose(system);
+diff --git a/ui/controls.slint b/ui/controls.slint
+index 952318b..75e90fa 100644
+--- a/ui/controls.slint
++++ b/ui/controls.slint
+@@ -429,7 +429,7 @@ export component CallButton inherits VerticalLayout {
+     }
+ }
+ 
+-// Whether animations play: only while Yapfast's window has the focus, as in
++// Whether animations play: only while Voxcord's window has the focus, as in
+ // Discord, so GIFs on another screen hold still where they are.
+ export global Motion {
+     in property <bool> playing: true;
+diff --git a/ui/dialogs.slint b/ui/dialogs.slint
+index 2d46996..c63e1d2 100644
+--- a/ui/dialogs.slint
++++ b/ui/dialogs.slint
+@@ -484,7 +484,7 @@ export component LeavingDialog inherits Rectangle {
+         background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
+         drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
+         accessible-role: groupbox;
+-        accessible-label: "Leaving Yapfast";
++        accessible-label: "Leaving Voxcord";
+         TouchArea { }
+         FocusScope {
+             init => { self.focus(); }
+@@ -495,7 +495,7 @@ export component LeavingDialog inherits Rectangle {
+             }
+             content := VerticalLayout {
+                 padding: 20px; spacing: 12px;
+-                Text { text: "Leaving Yapfast"; color: Theme.text; font-size: 18px; font-weight: 700; }
++                Text { text: "Leaving Voxcord"; color: Theme.text; font-size: 18px; font-weight: 700; }
+                 Text { text: "This link goes to"; color: Theme.secondary; font-size: 15px; }
+                 Text { text: root.site; color: Theme.text; font-size: 17px; font-weight: 700; wrap: word-wrap; }
+                 Rectangle {
+@@ -596,7 +596,7 @@ export component StatusMenu inherits Rectangle {
+             { key: "online", name: "Online", note: "" },
+             { key: "idle", name: "Idle", note: "" },
+             { key: "dnd", name: "Do Not Disturb", note: "You won't get message notifications." },
+-            { key: "invisible", name: "Invisible", note: "You'll show as offline, but can use Yapfast as usual." },
++            { key: "invisible", name: "Invisible", note: "You'll show as offline, but can use Voxcord as usual." },
+         ]: StatusOption {
+             key: option.key; name: option.name; note: option.note; checked: root.status == option.key;
+             clicked => { root.choose(option.key); }
+diff --git a/ui/discord.slint b/ui/discord.slint
+index ea61e17..2a64a40 100644
+--- a/ui/discord.slint
++++ b/ui/discord.slint
+@@ -23,7 +23,7 @@ export component DiscordBadge inherits Rectangle {
+ // Linking Discord by QR code: the risk to the account first, then the code to
+ // scan with the phone app, then who scanned it while they confirm. A token
+ // pasted instead links without the phone. The phase is 0 before linking, 1
+-// while Yapfast gets a code, 2 showing it, 3 once it's scanned, 4 when linking
++// while Voxcord gets a code, 2 showing it, 3 once it's scanned, 4 when linking
+ // failed, 5 while Discord's captcha waits in the browser, and 6 while Discord
+ // checks a token.
+ export component DiscordLinkPanel inherits VerticalLayout {
+@@ -52,7 +52,7 @@ export component DiscordLinkPanel inherits VerticalLayout {
+                     Image { source: @image-url("icons/triangle-alert.svg"); width: 18px; height: 18px; colorize: Theme.danger; }
+                 }
+                 Text {
+-                    text: "Discord doesn't allow apps like Yapfast on personal accounts. Linking puts your account at some risk of being suspended.";
++                    text: "Discord doesn't allow apps like Voxcord on personal accounts. Linking puts your account at some risk of being suspended.";
+                     color: Theme.text; font-size: 14px; wrap: word-wrap; horizontal-stretch: 1;
+                 }
+             }
+@@ -92,7 +92,7 @@ export component DiscordLinkPanel inherits VerticalLayout {
+         spacing: 8px;
+         Text { text: "Solve the captcha in your browser"; color: Theme.text; font-size: 17px; font-weight: 700; wrap: word-wrap; }
+         Text {
+-            text: "Discord wants to check you're a person before it links your account. Yapfast opened the check in your browser; linking finishes once it's solved.";
++            text: "Discord wants to check you're a person before it links your account. Voxcord opened the check in your browser; linking finishes once it's solved.";
+             color: Theme.secondary; font-size: 14px; wrap: word-wrap;
+         }
+         HorizontalLayout {
+diff --git a/ui/icons/logo.svg b/ui/icons/logo.svg
+index 7110771..d5cd3c9 100644
+--- a/ui/icons/logo.svg
++++ b/ui/icons/logo.svg
+@@ -1,9 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="12 12 78 78">
+-  <mask id="dots">
+-    <path fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round" d="M50,14 L58,27 L73,19 L72,35 L88,38 L77,50 L87,62 L71,64 L69,78 L56,71 L38,88 L40,71 L26,74 L30,60 L14,52 L27,43 L18,29 L35,31 L37,17 Z" />
+-    <circle cx="38" cy="51" r="5" />
+-    <circle cx="51" cy="51" r="5" />
+-    <circle cx="64" cy="51" r="5" />
+-  </mask>
+-  <rect x="0" y="0" width="100" height="100" fill="#fff" mask="url(#dots)" />
+-</svg>
++<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><defs><mask id="mark"><rect width="24" height="24" fill="#fff"/><circle cx="8" cy="10" r="1.7" fill="#000"/><circle cx="16" cy="10" r="1.7" fill="#000"/><path d="M8 15q4 3 8 0" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round"/></mask></defs><path fill="#fff" mask="url(#mark)" d="M6 3h12a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4h-3l-4 3v-3H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z"/></svg>
+diff --git a/ui/messages.slint b/ui/messages.slint
+index b91d4b3..a3ec1ca 100644
+--- a/ui/messages.slint
++++ b/ui/messages.slint
+@@ -420,14 +420,14 @@ export struct EmbedCard {
+     video: bool,
+ }
+ /// A Discord app's button. Only a link's is `enabled`: the others would ask
+-/// the app, which Yapfast can't yet.
++/// the app, which Voxcord can't yet.
+ export enum CardButtonStyle { primary, secondary, success, danger, link }
+ export struct CardButton { label: string, style: CardButtonStyle, url: string, enabled: bool }
+ export enum CardRowKind { text, media, separator, buttons, select, unknown }
+ /// A row of a Discord app's card, of one `kind`, with the fields it uses:
+ /// text and what a section shows beside it; pictures in a gallery and file
+ /// cards; a gap, `large`, with or without a `divider`; buttons; or a menu
+-/// by what it shows, which doesn't open; or a note that Yapfast can't show
++/// by what it shows, which doesn't open; or a note that Voxcord can't show
+ /// some components.
+ export struct CardRow {
+     kind: CardRowKind,
+@@ -1444,7 +1444,7 @@ export component EmbedView inherits HorizontalLayout {
+ }
+ 
+ // A Discord app's button. A link's opens its page; the others show what the
+-// app offers, but would ask the app, which Yapfast can't yet.
++// app offers, but would ask the app, which Voxcord can't yet.
+ component CardButtonView inherits ActionButton {
+     in property <CardButton> button;
+     callback open-link(string);
+@@ -1565,7 +1565,7 @@ export component CardView inherits HorizontalLayout {
+                     border-width: 1px; border-color: Theme.accent; border-radius: 12px;
+                     HorizontalLayout {
+                         padding: 16px;
+-                        Text { text: "Yapfast can't show this part of the message yet."; color: Theme.secondary; font-size: 14px; wrap: word-wrap; }
++                        Text { text: "Voxcord can't show this part of the message yet."; color: Theme.secondary; font-size: 14px; wrap: word-wrap; }
+                     }
+                 }
+             }
+diff --git a/ui/people.slint b/ui/people.slint
+index 490d006..381ba2f 100644
+--- a/ui/people.slint
++++ b/ui/people.slint
+@@ -594,7 +594,7 @@ export component ProfileCard inherits Rectangle {
+     }
+ }
+ 
+-// A role mentioned in a message, as a card: who Yapfast knows has it.
++// A role mentioned in a message, as a card: who Voxcord knows has it.
+ export component RoleCard inherits Rectangle {
+     in property <string> role-name;
+     in property <color> role-color;
+diff --git a/ui/rail.slint b/ui/rail.slint
+index 64b36e5..9aa0e1d 100644
+--- a/ui/rail.slint
++++ b/ui/rail.slint
+@@ -1072,7 +1072,7 @@ export component RoomList inherits Rectangle {
+                     }
+                 }
+                 // Discord reports who is in every voice channel; Matrix
+-                // only shows the call Yapfast is in, below.
++                // only shows the call Voxcord is in, below.
+                 if room.voice && room.id != root.voice-channel && room.people.length > 0: VerticalLayout {
+                     padding-left: 32px; padding-bottom: 4px; spacing: 0px;
+                     for person in room.people: Rectangle {
+diff --git a/ui/scrollview.slint b/ui/scrollview.slint
+index be79543..1523d81 100644
+--- a/ui/scrollview.slint
++++ b/ui/scrollview.slint
+@@ -1,4 +1,4 @@
+-// Yapfast's ScrollView and ListView: the Fluent style's, with a scrollbar thumb that
++// Voxcord's ScrollView and ListView: the Fluent style's, with a scrollbar thumb that
+ // stays under the pointer while it's dragged.
+ //
+ // The Fluent bar starts its drag over whenever `maximum` changes. In a ListView
+diff --git a/ui/server.slint b/ui/server.slint
+index 142c80c..719dc8e 100644
+--- a/ui/server.slint
++++ b/ui/server.slint
+@@ -371,7 +371,7 @@ export struct OAuthPrompt {
+     /// one server a link names, which can't be changed.
+     guild-picker: bool,
+     guild-name: string,
+-    /// Where Discord sends the person next when Yapfast won't open it,
++    /// Where Discord sends the person next when Voxcord won't open it,
+     /// such as an app's own address, to copy.
+     address: string,
+     /// What the main button does, such as "Authorize"; empty for none.
+diff --git a/ui/settings.slint b/ui/settings.slint
+index 1712fa1..bf6f56f 100644
+--- a/ui/settings.slint
++++ b/ui/settings.slint
+@@ -467,7 +467,7 @@ export component VoiceSettings inherits VerticalLayout {
+     in-out property <bool> talk-recording;
+     /// How long the microphone keeps sending after the key comes up, in ms.
+     in-out property <int> talk-delay: 20;
+-    /// Where the key works: in every app, or only in Yapfast and why.
++    /// Where the key works: in every app, or only in Voxcord and why.
+     in property <string> talk-note;
+     /// Discord is linked, so its calls' noise suppression shows.
+     in property <bool> discord;
+@@ -672,8 +672,8 @@ export component VoiceSettings inherits VerticalLayout {
+             chosen => { root.preferences-changed(); }
+         }
+         Label {
+-            text: root.input-mode == 0 ? "Yapfast sends your voice when it hears you speak."
+-                : "Yapfast sends your microphone only while you hold a key.";
++            text: root.input-mode == 0 ? "Voxcord sends your voice when it hears you speak."
++                : "Voxcord sends your microphone only while you hold a key.";
+         }
+     }
+     if root.input-mode == 1: VerticalLayout {
+@@ -726,7 +726,7 @@ export component VoiceSettings inherits VerticalLayout {
+         }
+         Label {
+             text: root.gate-meter-note != "" ? root.gate-meter-note
+-                : "Yapfast sends your voice when it's louder than the handle, and other sounds when they're 18 dB louder still. The bar is your microphone after noise suppression and at its volume, as Yapfast hears it to decide.";
++                : "Voxcord sends your voice when it's louder than the handle, and other sounds when they're 18 dB louder still. The bar is your microphone after noise suppression and at its volume, as Voxcord hears it to decide.";
+         }
+     }
+ }
+@@ -858,7 +858,7 @@ component ThemeColourRow inherits HorizontalLayout {
+     }
+ }
+ 
+-// Settings: the window's colours, from the themes Yapfast comes with and the
++// Settings: the window's colours, from the themes Voxcord comes with and the
+ // person's own. A click shows one at once. New theme opens the editor, whose
+ // changes show at once too; Save keeps them, Cancel restores the theme from
+ // before.
+@@ -885,7 +885,7 @@ export component AppearanceSettings inherits VerticalLayout {
+     callback save-theme();
+     callback cancel-theme();
+     callback delete-theme();
+-    /// The desktop draws the window's title bar; offered where Yapfast can
++    /// The desktop draws the window's title bar; offered where Voxcord can
+     /// draw its own.
+     in-out property <bool> system-title-bar;
+     in property <bool> title-bar-choice;
+@@ -921,7 +921,7 @@ export component AppearanceSettings inherits VerticalLayout {
+     }
+     if !root.editor && root.title-bar-choice: SettingsSwitch {
+         text: "Use the system title bar";
+-        description: "Your desktop draws the window's title bar and buttons, as on its other windows. Off, Yapfast draws its own.";
++        description: "Your desktop draws the window's title bar and buttons, as on its other windows. Off, Voxcord draws its own.";
+         checked <=> root.system-title-bar;
+         toggled => { root.title-bar-toggled(); }
+     }
+@@ -997,7 +997,7 @@ export component MessageSettings inherits VerticalLayout {
+     in-out property <int> text-size;
+     in-out property <bool> link-previews;
+     in-out property <bool> share-typing;
+-    /// When animations play: 0 while Yapfast has the focus, 1 always, 2 never.
++    /// When animations play: 0 while Voxcord has the focus, 1 always, 2 never.
+     in-out property <int> animate;
+     in-out property <bool> reply-ping;
+     in-out property <bool> strip-tracking;
+@@ -1054,7 +1054,7 @@ export component MessageSettings inherits VerticalLayout {
+         spacing: 8px;
+         SettingsHeading { text: "PLAY GIFS, EMOJI AND STICKERS"; }
+         Choices {
+-            label: "Play GIFs, emoji and stickers"; options: ["While Yapfast is focused", "Always", "Never"];
++            label: "Play GIFs, emoji and stickers"; options: ["While Voxcord is focused", "Always", "Never"];
+             current <=> root.animate;
+             chosen => { root.preferences-changed(); }
+         }
+@@ -1100,7 +1100,7 @@ export component NotificationSettings inherits VerticalLayout {
+     SettingsTitle { text: "Notifications"; }
+     SettingsSwitch {
+         text: "Show desktop notifications";
+-        description: "For new messages while Yapfast isn't in front. "
++        description: "For new messages while Voxcord isn't in front. "
+             + (root.matrix && root.discord ? "Each Discord server's notification settings and your Matrix notification rules decide"
+                 : root.matrix ? "Your Matrix notification rules decide" : "Each Discord server's notification settings decide")
+             + " which: usually DMs and mentions. Clicking one opens the conversation.";
+@@ -1116,13 +1116,13 @@ export component NotificationSettings inherits VerticalLayout {
+     }
+     SettingsSwitch {
+         text: "Flash the taskbar";
+-        description: "For a message that notifies while Yapfast isn't in front. The window's title counts mentions and DMs waiting either way.";
++        description: "For a message that notifies while Voxcord isn't in front. The window's title counts mentions and DMs waiting either way.";
+         checked <=> root.flash-taskbar;
+         toggled => { root.preferences-changed(); }
+     }
+ }
+ 
+-// Settings: Yapfast's own sounds for calls and messages, which instrument plays
++// Settings: Voxcord's own sounds for calls and messages, which instrument plays
+ // them, and how loud they are, all together or each on its own.
+ export component SoundSettings inherits VerticalLayout {
+     /// The set, in the order the choices show.
+@@ -1139,7 +1139,7 @@ export component SoundSettings inherits VerticalLayout {
+     property <[string]> names: ["Someone joins the call", "Someone leaves the call", "Muting", "Unmuting", "Deafening", "Undeafening", "A message", "A mention", "Someone starts watching a stream", "Someone stops watching a stream", "Someone starts streaming", "Someone stops streaming"];
+     spacing: 16px;
+     SettingsTitle { text: "Sounds"; }
+-    Label { text: "Yapfast plays these as you and others join and leave a call, as you mute and deafen, as others start and stop streaming, as they start and stop watching your stream or the one you watch, and for messages that notify, except in the conversation in front of you. They play on the speakers chosen for calls."; }
++    Label { text: "Voxcord plays these as you and others join and leave a call, as you mute and deafen, as others start and stop streaming, as they start and stop watching your stream or the one you watch, and for messages that notify, except in the conversation in front of you. They play on the speakers chosen for calls."; }
+     VerticalLayout {
+         spacing: 8px;
+         SettingsHeading { text: "SOUND SET"; }
+@@ -1174,7 +1174,7 @@ export component SoundSettings inherits VerticalLayout {
+     }
+ }
+ 
+-// Settings: how Yapfast draws its window and encodes a shared screen. Slint
++// Settings: how Voxcord draws its window and encodes a shared screen. Slint
+ // picks a renderer once per process, so a change to that waits for a
+ // restart, which this offers; encoding changes from the next stream.
+ export component AdvancedSettings inherits VerticalLayout {
+@@ -1195,12 +1195,12 @@ export component AdvancedSettings inherits VerticalLayout {
+ 
+     if root.autostart-available: SettingsSwitch {
+         text: "Start when you sign in";
+-        description: "Yapfast starts in the system tray when you sign in to your computer, so messages and calls reach you.";
++        description: "Voxcord starts in the system tray when you sign in to your computer, so messages and calls reach you.";
+         checked <=> root.start-on-sign-in;
+         toggled => { root.preferences-changed(); }
+     }
+     if root.discord-links-available: SettingsSwitch {
+-        text: "Open Discord links in Yapfast";
++        text: "Open Discord links in Voxcord";
+         description: "discord:// links from other apps and shortcuts open here instead of Discord. Turning it off gives them back to the app that had them.";
+         checked <=> root.discord-links;
+         toggled => { root.preferences-changed(); }
+@@ -1208,37 +1208,37 @@ export component AdvancedSettings inherits VerticalLayout {
+     SettingsSwitch {
+         text: "Close to tray";
+         description: root.tray-available
+-            ? "Closing the window keeps Yapfast running in the system tray, with any call. Quit from the tray icon's menu."
+-            : "No system tray is running, so closing the window quits Yapfast.";
++            ? "Closing the window keeps Voxcord running in the system tray, with any call. Quit from the tray icon's menu."
++            : "No system tray is running, so closing the window quits Voxcord.";
+         checked <=> root.close-to-tray;
+         toggled => { root.preferences-changed(); }
+     }
+     SettingsSwitch {
+         text: "Allow multiple windows";
+-        description: "Starting Yapfast while it runs opens another Yapfast, with its own window and tray icon. Off, it brings the open window forward.";
++        description: "Starting Voxcord while it runs opens another Voxcord, with its own window and tray icon. Off, it brings the open window forward.";
+         checked <=> root.multiple-windows;
+         toggled => { root.preferences-changed(); }
+     }
+     SettingsSwitch {
+         text: "Render with the GPU";
+-        description: "Hardware acceleration. Off, Yapfast draws on the processor, which uses about half the memory.";
++        description: "Hardware acceleration. Off, Voxcord draws on the processor, which uses about half the memory.";
+         checked <=> root.gpu-rendering;
+         toggled => { root.preferences-changed(); }
+     }
+     if root.gpu-rendering != root.gpu-running: HorizontalLayout {
+         spacing: 12px;
+         Label {
+-            text: "Yapfast switches to " + (root.gpu-rendering ? "the GPU" : "the processor") + " when it restarts. Restarting leaves any call.";
++            text: "Voxcord switches to " + (root.gpu-rendering ? "the GPU" : "the processor") + " when it restarts. Restarting leaves any call.";
+             vertical-alignment: center; horizontal-stretch: 1;
+         }
+         ActionButton {
+-            text: "Restart Yapfast"; icon: @image-url("icons/refresh-cw.svg");
++            text: "Restart Voxcord"; icon: @image-url("icons/refresh-cw.svg");
+             clicked => { root.restart(); }
+         }
+     }
+     SettingsSwitch {
+         text: "Encode streams with the GPU";
+-        description: "Screen sharing uses the graphics card's video encoder, which takes almost no processor time and looks better at low bitrates. Off, or without one, Yapfast encodes on the processor.";
++        description: "Screen sharing uses the graphics card's video encoder, which takes almost no processor time and looks better at low bitrates. Off, or without one, Voxcord encodes on the processor.";
+         checked <=> root.gpu-encoding;
+         toggled => { root.preferences-changed(); }
+     }
+@@ -1260,7 +1260,7 @@ export component DiscordLinkSettings inherits VerticalLayout {
+     callback open-discord-captcha;
+     spacing: 16px;
+     SettingsTitle { text: "Discord"; }
+-    Label { text: "Link your Discord account to see its servers and DMs in Yapfast, and join its calls. The login stays on this computer, in the system's credential store."; }
++    Label { text: "Link your Discord account to see its servers and DMs in Voxcord, and join its calls. The login stays on this computer, in the system's credential store."; }
+     DiscordLinkPanel {
+         phase: root.link-phase; code: root.link-code; name: root.link-name; note: root.link-note;
+         begin => { root.link-discord(); }
+@@ -1289,7 +1289,7 @@ export component GameActivitySettings inherits VerticalLayout {
+     SettingsTitle { text: "Game activity"; }
+     SettingsSwitch {
+         text: "Share the game you play";
+-        description: "Yapfast looks for games among the programs running, and on Linux takes the Rich Presence games send. Your Discord account keeps this setting, so it's the same in Discord's apps.";
++        description: "Voxcord looks for games among the programs running, and on Linux takes the Rich Presence games send. Your Discord account keeps this setting, so it's the same in Discord's apps.";
+         checked: root.shown;
+         controlled: true;
+         enabled: root.linked;
+@@ -1297,7 +1297,7 @@ export component GameActivitySettings inherits VerticalLayout {
+         toggled(shown) => { root.toggled(shown); }
+     }
+     SettingsHeading { text: "CUSTOM GAMES"; }
+-    Label { text: "Name a game by its executable, a file name or a full path, and what to show after Playing. These come before the games Yapfast knows, but a game's Rich Presence comes first."; }
++    Label { text: "Name a game by its executable, a file name or a full path, and what to show after Playing. These come before the games Voxcord knows, but a game's Rich Presence comes first."; }
+     for game[index] in root.executables: VerticalLayout {
+         spacing: 4px;
+         HorizontalLayout {
+@@ -1349,7 +1349,7 @@ export component DiscordSettings inherits VerticalLayout {
+     SettingsTitle { text: "Discord"; }
+     if root.matrix-build: HorizontalLayout {
+         spacing: 12px;
+-        Label { text: "Unlinking signs Yapfast out of Discord on this computer."; vertical-alignment: center; horizontal-stretch: 1; }
++        Label { text: "Unlinking signs Voxcord out of Discord on this computer."; vertical-alignment: center; horizontal-stretch: 1; }
+         ActionButton {
+             text: "Unlink Discord"; icon: @image-url("icons/log-out.svg"); danger: true;
+             clicked => { root.unlink-discord(); }
+@@ -1363,13 +1363,13 @@ export component DiscordSettings inherits VerticalLayout {
+     }
+     SettingsSwitch {
+         text: "Mark messages read on Discord";
+-        description: "Channels you read in Yapfast show as read in the Discord apps too.";
++        description: "Channels you read in Voxcord show as read in the Discord apps too.";
+         checked: root.sync-discord-reads;
+         toggled(sync) => { root.sync-discord-reads-toggled(sync); }
+     }
+     SettingsSwitch {
+         text: "Show me as idle when I'm away";
+-        description: "After 10 minutes without using Yapfast, as in Discord. Either way, your phone gets notifications while you're away.";
++        description: "After 10 minutes without using Voxcord, as in Discord. Either way, your phone gets notifications while you're away.";
+         checked: root.show-idle;
+         toggled(shown) => { root.show-idle-toggled(shown); }
+     }
+diff --git a/ui/sign-in.slint b/ui/sign-in.slint
+index e6688d8..3619b22 100644
+--- a/ui/sign-in.slint
++++ b/ui/sign-in.slint
+@@ -28,7 +28,7 @@ export component SignInScreen inherits Rectangle {
+     callback link-discord-token(string);
+     callback open-discord-captcha;
+     background: Theme.rail;
+-    Text { x: 32px; y: 24px; text: "Yapfast"; color: Theme.accent; font-size: 24px; font-weight: 900; letter-spacing: -0.4px; }
++    Text { x: 32px; y: 24px; text: "Voxcord"; color: Theme.accent; font-size: 24px; font-weight: 900; letter-spacing: -0.4px; }
+     ScrollView {
+         y: 64px; height: parent.height - 64px;
+         VerticalLayout {
+@@ -50,7 +50,7 @@ export component SignInScreen inherits Rectangle {
+                         // A build without Matrix signs in by linking Discord.
+                         if !root.matrix-build: VerticalLayout {
+                             spacing: 8px; horizontal-stretch: 1; min-width: 300px;
+-                            Text { text: "Sign in to Yapfast"; color: Theme.text; font-size: 26px; font-weight: 700; horizontal-alignment: center; }
++                            Text { text: "Sign in to Voxcord"; color: Theme.text; font-size: 26px; font-weight: 700; horizontal-alignment: center; }
+                             Text { text: "Link your Discord account with your phone."; color: Theme.secondary; horizontal-alignment: center; wrap: word-wrap; }
+                             Rectangle { height: 12px; }
+                             if !root.busy: DiscordLinkPanel {
+@@ -67,7 +67,7 @@ export component SignInScreen inherits Rectangle {
+                             property <int> focus-asked: root.sign-in-focus;
+                             changed focus-asked => { username-field.focus-input(); }
+                             spacing: 8px; horizontal-stretch: 1; min-width: 300px;
+-                            Text { text: "Sign in to Yapfast"; color: Theme.text; font-size: 26px; font-weight: 700; horizontal-alignment: center; }
++                            Text { text: "Sign in to Voxcord"; color: Theme.text; font-size: 26px; font-weight: 700; horizontal-alignment: center; }
+                             Text { text: "Use your existing Matrix account."; color: Theme.secondary; horizontal-alignment: center; wrap: word-wrap; }
+                             Rectangle { height: 12px; }
+                             Text { text: "HOMESERVER"; color: Theme.secondary; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+@@ -122,7 +122,7 @@ export component VerifyBanner inherits Rectangle {
+         VerticalLayout {
+             spacing: 8px;
+             Text { text: "Verify this device to send messages"; color: Theme.text; font-weight: 700; }
+-            Label { text: "Use your Matrix recovery key, or verify Yapfast in another client and check again."; color: Theme.secondary; font-size: 14px; }
++            Label { text: "Use your Matrix recovery key, or verify Voxcord in another client and check again."; color: Theme.secondary; font-size: 14px; }
+             HorizontalLayout {
+                 spacing: 8px;
+                 TextField { text <=> root.recovery; password: true; placeholder: "Recovery key"; label: "Matrix recovery key"; enabled: !root.busy; min-height: 36px; accepted => { root.recover(); } }
 diff --git a/ui/theme.slint b/ui/theme.slint
-index ba5f7c9..d3532ba 100644
+index ba5f7c9..8c15247 100644
 --- a/ui/theme.slint
 +++ b/ui/theme.slint
 @@ -22,10 +22,10 @@ export global Theme {
@@ -199,8 +2848,30 @@ index ba5f7c9..d3532ba 100644
      in-out property <color> danger: #f0545e;
      in-out property <color> danger-hover: #f46f77;
      /// Text and icons on a danger fill: badges, the LIVE pill, leaving a call.
+@@ -45,7 +45,7 @@ export global Theme {
+     in-out property <color> reply-spine: #4a4c56;
+     /// The ground of the window's tooltip and the zoom level's note.
+     in-out property <color> tooltip: #0b0c0e;
+-    /// An avatar's ground before Yapfast knows the person's own tint.
++    /// An avatar's ground before Voxcord knows the person's own tint.
+     in-out property <color> avatar: #6b7280;
+     /// Whether the theme is dark, for the std-widgets that follow the system's scheme.
+     in-out property <bool> dark: true;
+diff --git a/ui/title_bar.slint b/ui/title_bar.slint
+index e6e465c..8a8d3d2 100644
+--- a/ui/title_bar.slint
++++ b/ui/title_bar.slint
+@@ -21,7 +21,7 @@ component WindowButton inherits Rectangle {
+     }
+ }
+ 
+-// The window's title bar, when Yapfast draws it rather than the desktop: where
++// The window's title bar, when Voxcord draws it rather than the desktop: where
+ // the window is, on the rail's ground, and its minimize, maximize and close
+ // buttons. Pressing and moving moves the window; a double click maximizes it.
+ export component TitleBar inherits Rectangle {
 diff --git a/ui/voice.slint b/ui/voice.slint
-index 84be8a2..03e7579 100644
+index 84be8a2..6487d47 100644
 --- a/ui/voice.slint
 +++ b/ui/voice.slint
 @@ -1,6 +1,6 @@
@@ -211,6 +2882,24 @@ index 84be8a2..03e7579 100644
  import { EmojiCell, EmojiFace } from "messages.slint";
  
  export struct PersonRow {
+@@ -522,7 +522,7 @@ export component JoinVoice inherits VerticalLayout {
+     }
+     Text { text: root.room-name; color: Theme.text; font-size: 26px; font-weight: 900; horizontal-alignment: center; overflow: elide; }
+     Text { text: root.voice-description; color: Theme.secondary; horizontal-alignment: center; wrap: word-wrap; }
+-    if !root.preview && !root.call-encrypted: Text { text: "This channel is unencrypted. Yapfast only joins encrypted voice channels."; color: Theme.accent; font-size: 15px; horizontal-alignment: center; wrap: word-wrap; }
++    if !root.preview && !root.call-encrypted: Text { text: "This channel is unencrypted. Voxcord only joins encrypted voice channels."; color: Theme.accent; font-size: 15px; horizontal-alignment: center; wrap: word-wrap; }
+     HorizontalLayout {
+         alignment: center; padding-top: 6px;
+         ActionButton { min-height: 42px; text: root.voice-active ? "Switch voice channel" : "Join voice"; primary: true; enabled: root.can-join; clicked => { root.join-voice(); } }
+@@ -1211,7 +1211,7 @@ component ScreenCard inherits Rectangle {
+     }
+ }
+ 
+-// Going live: what to share, where Yapfast lists it, and the resolution, frame
++// Going live: what to share, where Voxcord lists it, and the resolution, frame
+ // rate and quality to share it at; or while sharing, what to share instead.
+ export component ShareMenu inherits Rectangle {
+     /// The screens, then the windows, then the cameras, to share; a pick
 @@ -1434,6 +1434,8 @@ export component Soundboard inherits Rectangle {
      in property <string> emoji-font;
      in property <string> title: "Soundboard";
@@ -235,18 +2924,162 @@ index 84be8a2..03e7579 100644
          ListView {
              vertical-stretch: 1;
 diff --git a/ui/yapfast.slint b/ui/yapfast.slint
-index 2b2e644..8249a8b 100644
+index 2b2e644..60391b9 100644
 --- a/ui/yapfast.slint
 +++ b/ui/yapfast.slint
-@@ -62,7 +62,7 @@ export { GifTile, GifFavorites } from "gifs.slint";
+@@ -18,7 +18,7 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
+ // import "fonts/Satoshi-BoldItalic.ttf";
+ // import "fonts/Satoshi-Black.ttf";
+ 
+-// Yapfast's window. Its parts live beside it, by area: theme.slint, controls.slint,
++// Voxcord's window. Its parts live beside it, by area: theme.slint, controls.slint,
+ // discord.slint, voice.slint, rail.slint, composer.slint, messages.slint,
+ // settings.slint, people.slint, friends.slint, dialogs.slint and sign-in.slint.
+ import { Theme, Tip, ReactionHover, Middle, Popup, PopupMotion } from "theme.slint";
+@@ -60,13 +60,13 @@ export { FoundRow, PickRow } from "header.slint";
+ export { GifTile, GifFavorites } from "gifs.slint";
+ 
  export component YapfastWindow inherits Window {
-     /// "Yapfast", or "(3) Yapfast" with mentions and DMs waiting, as a browser
+-    /// "Yapfast", or "(3) Yapfast" with mentions and DMs waiting, as a browser
++    /// "Voxcord", or "(3) Voxcord" with mentions and DMs waiting, as a browser
      /// tab's title counts them, so the taskbar shows it.
 -    in property <string> window-title: "Yapfast";
-+    in property <string> window-title: "NovaCord Native";
++    in property <string> window-title: "Voxcord";
      title: root.window-title;
      preferred-width: 1120px; preferred-height: 760px;
      min-width: 800px; min-height: 560px;
+-    /// Yapfast draws the title bar and the edges that resize the window,
++    /// Voxcord draws the title bar and the edges that resize the window,
+     /// rather than the desktop; see docs/chat-ui.md.
+     in property <bool> own-title-bar;
+     in property <bool> window-maximized;
+@@ -334,7 +334,7 @@ export component YapfastWindow inherits Window {
+     /// Whether it does: shown until someone hides it.
+     in-out property <bool> profile-panel: true;
+     callback profile-panel-toggled(bool);
+-    /// That profile, once Yapfast has it.
++    /// That profile, once Voxcord has it.
+     in property <bool> panel-profile-shown;
+     in property <ProfileData> panel-profile;
+     callback enlarge-panel-profile;
+@@ -347,7 +347,7 @@ export component YapfastWindow inherits Window {
+     property <bool> room-has-activity: root.room-activity != "" || root.room-activity-emoji != "";
+     in property <[MemberRow]> roster;
+     in property <string> roster-note;
+-    /// Whether the member list is wanted beside the conversation; Yapfast stores it.
++    /// Whether the member list is wanted beside the conversation; Voxcord stores it.
+     in-out property <bool> member-list: true;
+     callback member-list-toggled(bool);
+     /// A Discord account is linked, so its settings show.
+@@ -574,12 +574,12 @@ export component YapfastWindow inherits Window {
+     /// the pictures of the custom emoji in sight as they come in.
+     callback emoji-scrolled-to(length, length);
+     in-out property <string> emoji-query;
+-    /// The forward dialog, open while Yapfast forwards a message.
++    /// The forward dialog, open while Voxcord forwards a message.
+     in property <bool> forward-open;
+     /// Messages here that can be forwarded offer it: Matrix forwards only
+     /// from a verified device.
+     in property <bool> forward-allowed;
+-    /// A masked link that was clicked, while Yapfast asks before opening it,
++    /// A masked link that was clicked, while Voxcord asks before opening it,
+     /// and the site it goes to.
+     in property <string> leaving-link;
+     in property <string> leaving-site;
+@@ -1043,7 +1043,7 @@ export component YapfastWindow inherits Window {
+     in-out property <bool> link-previews: true;
+     in-out property <bool> reply-ping-default: true;
+     in-out property <bool> strip-tracking: true;
+-    /// When animations play: 0 while Yapfast has the focus, 1 always, 2 never.
++    /// When animations play: 0 while Voxcord has the focus, 1 always, 2 never.
+     in-out property <int> animate;
+     in-out property <bool> unmute-on-join;
+     in-out property <bool> deafen-on-join;
+@@ -1072,8 +1072,8 @@ export component YapfastWindow inherits Window {
+     in-out property <bool> share-typing: true;
+     in-out property <bool> notifications: true;
+     in-out property <bool> notification-text: true;
+-    in-out property <bool> flash-taskbar: true;
+-    /// Yapfast's sounds: their set, their volume as a percentage, and each one's
++    in-out property <bool> flash-taskbar: false;
++    /// Voxcord's sounds: their set, their volume as a percentage, and each one's
+     /// own, which each-sound-changed reports. play-sound plays one to try it.
+     in-out property <int> sound-set;
+     in-out property <int> sound-volume: 100;
+@@ -1082,26 +1082,26 @@ export component YapfastWindow inherits Window {
+     callback each-sound-changed(int, int);
+     callback play-sound(int);
+     /// Rendering with the GPU, as set and as this process does; a change
+-    /// applies when Yapfast restarts, which restart does.
++    /// applies when Voxcord restarts, which restart does.
+     in-out property <bool> gpu-rendering;
+     in property <bool> gpu-running;
+     /// Screen sharing encodes on the GPU where it has an encoder.
+     in-out property <bool> gpu-encoding: true;
+-    /// Closing the window leaves Yapfast in the system tray, when there's one.
++    /// Closing the window leaves Voxcord in the system tray, when there's one.
+     in-out property <bool> close-to-tray: true;
+     in property <bool> tray-available;
+-    /// Starting Yapfast again starts another, rather than showing this window.
++    /// Starting Voxcord again starts another, rather than showing this window.
+     in-out property <bool> multiple-windows;
+-    /// The desktop draws the title bar, as set; offered where Yapfast can
++    /// The desktop draws the title bar, as set; offered where Voxcord can
+     /// draw its own.
+     in-out property <bool> system-title-bar: true;
+     in property <bool> title-bar-choice;
+     callback title-bar-toggled();
+-    /// Yapfast starts in the tray when the person signs in to their computer,
++    /// Voxcord starts in the tray when the person signs in to their computer,
+     /// where the platform can, outside the preview.
+     in-out property <bool> start-on-sign-in;
+     in property <bool> autostart-available;
+-    /// Discord protocol links open in Yapfast, where the platform can
++    /// Discord protocol links open in Voxcord, where the platform can
+     /// claim them, outside the preview.
+     in-out property <bool> discord-links;
+     in property <bool> discord-links-available;
+@@ -1201,7 +1201,7 @@ export component YapfastWindow inherits Window {
+     /// While sharing, share what the share menu lists at this index in place
+     /// of what's shared, as go-live counts them.
+     callback switch-live(int);
+-    /// The screens and windows to share, where Yapfast lists them (share-lists),
++    /// The screens and windows to share, where Voxcord lists them (share-lists),
+     /// and the cameras: asked for as the share menu opens, which shows once
+     /// they're in, with the first picked. The screens' pictures come after.
+     in property <bool> share-lists;
+@@ -1331,11 +1331,11 @@ export component YapfastWindow inherits Window {
+     callback close-image();
+     callback cancel-compose;
+     callback dismiss-notice;
+-    // The sidebar's width, chosen by dragging its edge; Yapfast stores it on release.
++    // The sidebar's width, chosen by dragging its edge; Voxcord stores it on release.
+     in-out property <length> sidebar-width: 240px;
+     callback sidebar-resized(length);
+     // The width of the thread beside the channel, chosen by dragging its
+-    // edge, which Yapfast stores on release. It keeps 320 to 800px; dragging
++    // edge, which Voxcord stores on release. It keeps 320 to 800px; dragging
+     // also leaves the conversation 420px.
+     in-out property <length> aside-width: 420px;
+     out property <length> aside-shown: max(320px, min(800px, root.aside-width));
+@@ -1408,7 +1408,7 @@ export component YapfastWindow inherits Window {
+     property <int> sign-in-focus;
+     public function focus-sign-in() { root.sign-in-focus += 1; }
+     public function timeline-at-end() -> bool { return root.follow-latest; }
+-    // Yapfast's window has the keyboard focus.
++    // Voxcord's window has the keyboard focus.
+     in property <bool> window-focused;
+     // The newest message was read since the "New" divider was placed, so the bar
+     // that jumps back to it is gone.
+@@ -1565,7 +1565,7 @@ export component YapfastWindow inherits Window {
+     property <bool> is-editing: root.compose-label == "Editing your message";
+     property <color> voice-color: root.voice-tone == 1 ? Theme.live : root.voice-tone == 2 ? Theme.danger : Theme.accent;
+ 
+-    // Yapfast joins calls muted and hearing; these preferences deafen, or turn the
++    // Voxcord joins calls muted and hearing; these preferences deafen, or turn the
+     // microphone on, once connected.
+     changed voice-ready => {
+         if !root.voice-ready { return; }
 @@ -1645,6 +1645,7 @@ export component YapfastWindow inherits Window {
          root.soundboard-opened();
          soundboard-menu.show();
@@ -264,3 +3097,25 @@ index 2b2e644..8249a8b 100644
              play(id) => { root.play-soundboard(id); }
              preview(id) => { root.preview-soundboard(id); }
              favorite(id, on) => { root.favorite-soundboard(id, on); }
+@@ -3737,7 +3740,7 @@ export component YapfastWindow inherits Window {
+             close => { root.close-add-people(); }
+         }
+     }
+-    // A role mentioned in a message: who Yapfast knows has it. Clicking someone opens
++    // A role mentioned in a message: who Voxcord knows has it. Clicking someone opens
+     // their card over it; Escape or a click outside closes it.
+     role-motion := PopupMotion { open: root.role-open; }
+     if role-motion.shown: Rectangle {
+@@ -4195,10 +4198,10 @@ export component YapfastWindow inherits Window {
+         cancel => { root.cancel-mfa(); }
+     }
+     // The title bar and the edges that resize the window, above all but the
+-    // tooltips, while Yapfast draws them.
++    // tooltips, while Voxcord draws them.
+     if root.title-height > 0: TitleBar {
+         x: 0px; y: 0px; width: root.width;
+-        place: root.workspace ? root.sidebar-title : "Yapfast";
++        place: root.workspace ? root.sidebar-title : "Voxcord";
+         focused: root.window-focused; maximized: root.window-maximized;
+         move-window => { root.move-window(); }
+         minimize-window => { root.minimize-window(); }
