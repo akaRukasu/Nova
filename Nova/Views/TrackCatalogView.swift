@@ -41,9 +41,10 @@ struct TrackCatalogView: View {
         defer { loading = false }
         let known = kind == .artist ? track.artistCollection : track.albumCollection
         if let known { destination = known; return }
-        var lookup = track
         // L'identifiant local décrit le fichier, pas le catalogue.
-        if lookup.id.hasPrefix("local:") { lookup.id = "catalog-lookup" }
+        let lookup = track.id.hasPrefix("local:")
+            ? Track(id: "catalog-lookup", title: track.title, artist: track.artist, album: track.album, duration: track.duration)
+            : track
         if let matched = try? await OctaveCatalog.shared.recording(lookup),
            let found = kind == .artist ? matched.artistCollection : matched.albumCollection {
             destination = found
