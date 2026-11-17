@@ -79,6 +79,8 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
+      "useZip": true,
+      "differentialPackage": false,
       "artifactName": "Nova-Octave-${version}-Windows-Setup.${ext}",
       "shortcutName": "Nova",
       "createDesktopShortcut": true
