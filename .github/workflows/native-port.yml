@@ -161,6 +161,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Screen bandwidth regression failed" }
           & ./media-tests/yapfast_core.exe voxcord_ --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Voxcord device or soundboard regression failed" }
+          & ./media-tests/yapfast.exe voxcord_profile --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Live profile activity regression failed" }
+          & ./media-tests/yapfast.exe a_profile_shows_activities_as_discord_cards --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Rich activity card regression failed" }
       - name: Package the installer and test the installed binary
         shell: pwsh
         run: |

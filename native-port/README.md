@@ -1,8 +1,10 @@
-# Voxcord 0.7.0 — native Rust client
+# Voxcord 0.7.1 — native Rust client
 
 Voxcord uses Rust and Slint for the complete desktop interface. It does not embed Discord's website, Electron or WebView2. The engine is a GPL-3.0-or-later fork of [Yapfast](https://github.com/yapfast/yapfast), pinned to `28174c7227e9b5a7a7dd222378086e88a62cbdb1`; `yapfast.patch` contains the complete changes, including branding and the Windows icon. Every build distributes the patched source and dependency notices alongside the portable executable.
 
 ## This build
+
+- Profile cards use a compact banner, an activity section and a separate mutual-connections tab. Games and rich activities follow live member, friend and DM updates, including clearing stopped activities. The account's own rich activity is carried into its profile and profile editor. The status menu also opens the account's own profile directly.
 
 - Test the selected camera and microphone in Voice & Video. Camera preview tries three capture formats without blocking the window. The microphone test plays the selected input back in real time on the selected output until stopped. Test capture is local and releases its devices when closed or when a call starts.
 - In Discord calls, direct microphone mode is the default. Voice activity opens the microphone on the first block that crosses the sensitivity threshold. Push-to-talk is also available. Direct mode bypasses Voxcord's echo cancellation, denoising, automatic gain and leveling. Windows raw capture is requested when the device supports it.

@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index ec907bf..a5d6177 100644
+index ec907bf..e7bb4cf 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -324,7 +324,7 @@ dependencies = [
@@ -267,7 +267,7 @@ index ec907bf..a5d6177 100644
  [[package]]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.7.0"
++version = "0.7.1"
  dependencies = [
   "anyhow",
   "arboard",
@@ -295,14 +295,14 @@ index ec907bf..a5d6177 100644
   "wayland-client",
   "wayland-protocols",
 diff --git a/Cargo.toml b/Cargo.toml
-index 74940f9..7f3d023 100644
+index 74940f9..f949614 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,6 +1,6 @@
  [package]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.7.0"
++version = "0.7.1"
  edition = "2024"
  rust-version = "1.97"
  publish = false
@@ -351,6 +351,183 @@ index 321702b..2b26635 100644
  ] }
  # What `#[implement]` expands to names it.
  windows-core = "0.62"
+diff --git a/crates/yapfast-core/src/application.rs b/crates/yapfast-core/src/application.rs
+index 404ca4f..32575ff 100644
+--- a/crates/yapfast-core/src/application.rs
++++ b/crates/yapfast-core/src/application.rs
+@@ -461,6 +461,7 @@ pub struct AppState {
+     /// it shows.
+     pub discord_show_game: bool,
+     pub discord_playing: Option<chat::Playing>,
++    pub discord_own_activities: chat::Activities,
+     /// How loud the Discord account's soundboard plays, as Discord keeps
+     /// it: from 0 to 100, on its slider's curve.
+     pub soundboard_volume: f32,
+diff --git a/crates/yapfast-core/src/application/discord_account.rs b/crates/yapfast-core/src/application/discord_account.rs
+index cb458e2..cb7f8b6 100644
+--- a/crates/yapfast-core/src/application/discord_account.rs
++++ b/crates/yapfast-core/src/application/discord_account.rs
+@@ -486,6 +486,7 @@ impl Application {
+                 })
+                 .collect();
+         }
++        self.state.discord_own_activities = snapshot.own_activities.clone();
+         let playing = snapshot.playing.as_deref();
+         // Snapshots come often; the game rarely changes.
+         let shown = self.state.discord_playing.as_ref();
+@@ -602,6 +603,7 @@ impl Application {
+         self.state.custom_status = None;
+         self.state.discord_show_game = false;
+         self.state.discord_playing = None;
++        self.state.discord_own_activities = Default::default();
+         self.state.join_sounds.clear();
+         self.state.sound_catalog = None;
+         self.show_lists()
+diff --git a/crates/yapfast-core/src/application/profiles.rs b/crates/yapfast-core/src/application/profiles.rs
+index 926a482..5801661 100644
+--- a/crates/yapfast-core/src/application/profiles.rs
++++ b/crates/yapfast-core/src/application/profiles.rs
+@@ -5,6 +5,21 @@ use super::*;
+ impl Application {
+     /// Shows someone in the open conversation, or else a Discord friend.
+     pub(super) fn show_profile(&mut self, user: String, large: bool) -> Vec<Effect> {
++        if self.state.discord_user.as_deref() == Some(user.as_str())
++            && (large || self.state.selected_room().is_none())
++        {
++            let profile = Profile {
++                name: self
++                    .state
++                    .account_name
++                    .clone()
++                    .unwrap_or_else(|| user.clone()),
++                avatar: self.state.account_avatar.clone(),
++                id: user,
++                ..Default::default()
++            };
++            return self.open_profile(discord::room_id("@me", "0"), profile, large);
++        }
+         let (Some(room), Some(member)) = (self.state.selected_room(), self.state.person(&user))
+         else {
+             let effects = self.show_friend_profile(user.clone(), large);
+@@ -272,3 +287,57 @@ pub(super) fn dm_profile(room: &ChatRoom, person: String) -> Profile {
+         ..Default::default()
+     }
+ }
++
++impl AppState {
++    /// Presence is live data. Prefer the current member list, then the account's
++    /// friends and DMs. A known presence without activities clears old cards.
++    pub fn live_profile_activity<'a>(
++        &'a self,
++        profile: &'a Profile,
++    ) -> (Option<Presence>, Option<&'a str>, &'a chat::Activities) {
++        let known =
++            |presence: Option<Presence>, activity: Option<&str>, activities: &chat::Activities| {
++                presence.is_some() || activity.is_some() || !activities.is_empty()
++            };
++        if let Some(member) = self.members.iter().flatten().flatten().find(|member| {
++            member.id == profile.id
++                && known(
++                    member.presence,
++                    member.activity.as_deref(),
++                    &member.activities,
++                )
++        }) {
++            return (
++                member.presence,
++                member.activity.as_deref(),
++                &member.activities,
++            );
++        }
++        if let Some(friend) = self.friends.iter().find(|friend| {
++            friend.id == profile.id
++                && known(
++                    friend.presence,
++                    friend.activity.as_deref(),
++                    &friend.activities,
++                )
++        }) {
++            return (
++                friend.presence,
++                friend.activity.as_deref(),
++                &friend.activities,
++            );
++        }
++        if let Some(dm) = self.rooms.iter().find(|room| {
++            room.direct
++                && room.person.as_deref() == Some(profile.id.as_str())
++                && known(room.presence, room.activity.as_deref(), &room.activities)
++        }) {
++            return (dm.presence, dm.activity.as_deref(), &dm.activities);
++        }
++        (
++            profile.presence,
++            profile.activity.as_deref(),
++            &profile.activities,
++        )
++    }
++}
+diff --git a/crates/yapfast-core/src/application/tests.rs b/crates/yapfast-core/src/application/tests.rs
+index b377e78..3b667f7 100644
+--- a/crates/yapfast-core/src/application/tests.rs
++++ b/crates/yapfast-core/src/application/tests.rs
+@@ -3776,6 +3776,56 @@ fn discord_dms_list_with_their_pictures_and_read_once_read() {
+     assert!(app.state.lists_members(), "a group DM does");
+ }
+ 
++#[test]
++#[cfg(feature = "discord")]
++fn voxcord_profiles_follow_activity_start_and_stop() {
++    let mut app = Application::default();
++    let game = yapfast_discord::activity::activities(&serde_json::json!([
++        {"type": 0, "name": "Factorio", "details": "On Nauvis",
++         "timestamps": {"start": 1_700_000_000_000_u64}}
++    ]));
++    app.apply(discord_event(yapfast_discord::service::Snapshot {
++        user_id: Some("10".into()),
++        own_activities: game.clone(),
++        ..Default::default()
++    }));
++    let effects = app.dispatch(Action::ShowProfile {
++        user: "10".into(),
++        large: true,
++    });
++    assert!(effects.iter().any(|effect| matches!(
++        effect,
++        Effect::Backend(Command::Discord(DiscordCommand::Profile { room, user }))
++            if room == "discord:@me:0" && user == "10"
++    )));
++    assert_eq!(app.state.discord_own_activities[0].name.as_ref(), "Factorio");
++    app.apply(discord_event(yapfast_discord::service::Snapshot {
++        user_id: Some("10".into()),
++        ..Default::default()
++    }));
++    assert!(app.state.discord_own_activities.is_empty());
++
++    let profile = Profile { id: "11".into(), ..Default::default() };
++    let mut friend = chat::Friend {
++        id: "11".into(),
++        name: "Ann".into(),
++        nickname: None,
++        avatar: None,
++        presence: Some(Presence::Online),
++        activity: None,
++        activities: game,
++    };
++    assert!(app.state.live_profile_activity(&profile).2.is_empty());
++    app.state.friends.push(friend.clone());
++    assert_eq!(app.state.live_profile_activity(&profile).2[0].name.as_ref(), "Factorio");
++    friend.presence = Some(Presence::Offline);
++    friend.activities = Default::default();
++    app.state.friends[0] = friend;
++    let (presence, _, activities) = app.state.live_profile_activity(&profile);
++    assert_eq!(presence, Some(Presence::Offline));
++    assert!(activities.is_empty());
++}
++
+ #[test]
+ #[cfg(feature = "discord")]
+ fn a_linked_discord_profile_loads_for_someone_not_listed() {
 diff --git a/crates/yapfast-core/src/audio_io.rs b/crates/yapfast-core/src/audio_io.rs
 index aded6bf..6be7a2d 100644
 --- a/crates/yapfast-core/src/audio_io.rs
@@ -1903,6 +2080,85 @@ index e31fa6c..650011d 100644
      pub fn push(&mut self, packet: &Packet) -> Pushed {
          let gap = self
              .expected
+diff --git a/crates/yapfast-discord/src/service.rs b/crates/yapfast-discord/src/service.rs
+index 1f99973..94446d9 100644
+--- a/crates/yapfast-discord/src/service.rs
++++ b/crates/yapfast-discord/src/service.rs
+@@ -304,6 +304,9 @@ pub struct Snapshot {
+     /// The game this account shows it plays now.
+     #[serde(skip)]
+     pub playing: Option<Arc<crate::own_activity::Playing>>,
++    /// The account's rich activity cards, as last published by this session.
++    #[serde(skip)]
++    pub own_activities: crate::activity::Activities,
+     /// The soundboard's volume, from 0 to 100 on the power curve of the
+     /// other volumes, and the sounds that play as this account joins
+     /// voice, as its settings keep them; the volume is none until they say,
+diff --git a/crates/yapfast-discord/src/service/session.rs b/crates/yapfast-discord/src/service/session.rs
+index 0d8a954..31be964 100644
+--- a/crates/yapfast-discord/src/service/session.rs
++++ b/crates/yapfast-discord/src/service/session.rs
+@@ -677,8 +677,8 @@ impl Session<'_> {
+         let mut presence = self.tracker.own_presence(away);
+         let activity = self.shared.activity.borrow_and_update().clone();
+         let activity = activity.filter(|_| self.tracker.show_game);
+-        self.show_playing(activity.as_deref());
+         crate::own_activity::merge(&mut presence, activity.as_deref());
++        self.show_playing(activity.as_deref(), &presence);
+         if presence != self.shared.presence {
+             self.gateway.update_presence(presence.clone()).await?;
+             self.shared
+@@ -691,7 +691,7 @@ impl Session<'_> {
+ 
+     /// Runs or stops what finds the game as the settings say, and shows the
+     /// game played.
+-    fn show_playing(&mut self, activity: Option<&Value>) {
++    fn show_playing(&mut self, activity: Option<&Value>, presence: &Value) {
+         let shown = self.tracker.show_game;
+         self.shared.show_game.send_if_modified(|old| {
+             let changed = *old != shown;
+@@ -699,8 +699,12 @@ impl Session<'_> {
+             changed
+         });
+         let playing = activity.and_then(crate::own_activity::Playing::of);
+-        if self.tracker.playing.as_deref() != playing.as_ref() {
++        let activities = crate::activity::activities(&presence["activities"]);
++        if self.tracker.playing.as_deref() != playing.as_ref()
++            || self.tracker.own_activities != activities
++        {
+             self.tracker.playing = playing.map(Arc::new);
++            self.tracker.own_activities = activities;
+             self.publisher.changed();
+         }
+     }
+diff --git a/crates/yapfast-discord/src/service/tracker.rs b/crates/yapfast-discord/src/service/tracker.rs
+index f8cc19c..8fa26a2 100644
+--- a/crates/yapfast-discord/src/service/tracker.rs
++++ b/crates/yapfast-discord/src/service/tracker.rs
+@@ -160,6 +160,7 @@ pub(super) struct Tracker {
+     /// the game it shows.
+     pub(super) show_game: bool,
+     pub(super) playing: Option<Arc<crate::own_activity::Playing>>,
++    pub(super) own_activities: crate::activity::Activities,
+     /// The soundboard's volume and join sounds, from the settings.
+     soundboard_volume: Option<f32>,
+     join_sounds: Arc<[crate::soundboard::JoinSound]>,
+@@ -217,6 +218,7 @@ impl Tracker {
+             // As in Discord's apps, until the settings say otherwise.
+             show_game: true,
+             playing: None,
++            own_activities: Default::default(),
+             soundboard_volume: None,
+             join_sounds: Arc::from([]),
+             requests: HashMap::new(),
+@@ -1780,6 +1782,7 @@ impl Tracker {
+             soundboard_volume: self.soundboard_volume,
+             join_sounds: self.join_sounds.clone(),
+             playing: self.playing.clone(),
++            own_activities: self.own_activities.clone(),
+             friend_requests: people.friend_requests,
+             voice,
+             listed: None,
 diff --git a/crates/yapfast-discord/src/stream_connection.rs b/crates/yapfast-discord/src/stream_connection.rs
 index 0020234..e9ca8cd 100644
 --- a/crates/yapfast-discord/src/stream_connection.rs
@@ -3349,7 +3605,7 @@ z8(>D~Jm4%$cHk~xBS^dFEwnqoC1_X$kR|%uxzIhuYY#rm3(f<1)@Juv0?Gdec2i78
 T6X^z*00000NkvXXu0mjfm^tMj
 
 diff --git a/packaging/windows/yapfast.rc b/packaging/windows/yapfast.rc
-index 33bfbcc..b8189a0 100644
+index 33bfbcc..80fe608 100644
 --- a/packaging/windows/yapfast.rc
 +++ b/packaging/windows/yapfast.rc
 @@ -1,3 +1,24 @@
@@ -3357,8 +3613,8 @@ index 33bfbcc..b8189a0 100644
 -// window loads by its number (src/icon.rs). scripts/make-windows-icon draws it.
  1 ICON "yapfast.ico"
 +1 VERSIONINFO
-+FILEVERSION 0,7,0,0
-+PRODUCTVERSION 0,7,0,0
++FILEVERSION 0,7,1,0
++PRODUCTVERSION 0,7,1,0
 +FILEOS 0x40004
 +FILETYPE 1
 +BEGIN
@@ -3366,11 +3622,11 @@ index 33bfbcc..b8189a0 100644
 +  BEGIN
 +    BLOCK "040904b0"
 +    BEGIN
-+      VALUE "FileVersion", "0.7.0.0\0"
++      VALUE "FileVersion", "0.7.1.0\0"
 +      VALUE "InternalName", "Voxcord\0"
 +      VALUE "FileDescription", "Voxcord - Native Discord client\0"
 +      VALUE "ProductName", "Voxcord\0"
-+      VALUE "ProductVersion", "0.7.0\0"
++      VALUE "ProductVersion", "0.7.1\0"
 +      VALUE "OriginalFilename", "voxcord.exe\0"
 +    END
 +  END
@@ -5266,7 +5522,7 @@ index 5b5f9f1..cdab5a1 100644
          link.set_sent(rate(stream.sent_kbps).into());
          link.set_target(rate(stream.target_kbps).into());
 diff --git a/src/ui/callbacks.rs b/src/ui/callbacks.rs
-index 597fb2e..c1f2fb1 100644
+index 597fb2e..f0fb571 100644
 --- a/src/ui/callbacks.rs
 +++ b/src/ui/callbacks.rs
 @@ -195,6 +195,38 @@ fn show_emoji(adapter: &Rc<RefCell<Adapter>>, window: &YapfastWindow, query: &st
@@ -5308,7 +5564,25 @@ index 597fb2e..c1f2fb1 100644
      super::games::bind(window, adapter);
      super::gifs::bind(window, adapter);
      super::polls::bind(window, adapter);
-@@ -1330,7 +1362,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -619,6 +651,17 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+         on_show_profile,
+         (|user| Action::ShowProfile { user, large: false })
+     );
++    {
++        let state = adapter.clone();
++        let weak = window.as_weak();
++        window.on_view_own_profile(move || {
++            let Some(window) = weak.upgrade() else { return };
++            let mut state = state.borrow_mut();
++            if let Some(user) = state.app.state.discord_user.clone() {
++                state.action(&window, Action::ShowProfile { user, large: true });
++            }
++        });
++    }
+     bind_item!(on_edit, Action::Edit);
+     {
+         let adapter = adapter.clone();
+@@ -1330,7 +1373,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              state.borrow_mut().action(&window, action);
              return;
          }
@@ -5317,7 +5591,7 @@ index 597fb2e..c1f2fb1 100644
          // it, and in the browser otherwise. An invite shows its server
          // first and joins only when asked, whatever the text says.
          #[cfg(feature = "discord")]
-@@ -1462,6 +1494,10 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -1462,6 +1505,10 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
          layout.unmute_on_join = Some(window.get_unmute_on_join());
          layout.deafen_on_join = window.get_deafen_on_join();
          layout.level_voice = Some(window.get_level_voice());
@@ -5328,7 +5602,7 @@ index 597fb2e..c1f2fb1 100644
          yapfast_core::leveling::set_enabled(window.get_level_voice());
          layout.noise_suppression = chosen(&SUPPRESSORS, window.get_noise_suppression());
          layout.noise_strength = chosen(&STRENGTHS, window.get_noise_strength());
-@@ -1482,6 +1518,9 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -1482,6 +1529,9 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
          layout.notifications = Some(window.get_notifications());
          layout.notification_text = Some(window.get_notification_text());
          layout.flash_taskbar = Some(window.get_flash_taskbar());
@@ -5338,7 +5612,7 @@ index 597fb2e..c1f2fb1 100644
          layout.sound_set = chosen(&SoundSet::ALL, window.get_sound_set());
          layout.sound_volume = Some(window.get_sound_volume().clamp(0, 200) as u8);
          layout.adjust_each_sound = window.get_adjust_each_sound();
-@@ -2263,7 +2302,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2263,7 +2313,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
      });
      let state = adapter.clone();
      let weak = window.as_weak();
@@ -5347,7 +5621,7 @@ index 597fb2e..c1f2fb1 100644
          if let Some(window) = weak.upgrade() {
              #[cfg(feature = "discord")]
              {
-@@ -2284,6 +2323,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2284,6 +2334,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                  resolution,
                  fps: fps.clamp(1, 60) as u32,
                  high_quality,
@@ -5355,7 +5629,7 @@ index 597fb2e..c1f2fb1 100644
              };
              state
                  .borrow_mut()
-@@ -2292,7 +2332,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2292,7 +2343,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
      });
      let state = adapter.clone();
      let weak = window.as_weak();
@@ -5364,7 +5638,7 @@ index 597fb2e..c1f2fb1 100644
          if let Some(window) = weak.upgrade() {
              #[cfg(feature = "discord")]
              if let Some(picked) =
-@@ -2304,7 +2344,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2304,7 +2355,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              let _ = source;
              state
                  .borrow_mut()
@@ -5373,7 +5647,7 @@ index 597fb2e..c1f2fb1 100644
          }
      });
      let state = adapter.clone();
-@@ -2371,12 +2411,13 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2371,12 +2422,13 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                  frames.set_row_data(index, frame);
              }
          }
@@ -5393,7 +5667,7 @@ index 597fb2e..c1f2fb1 100644
          }
          if let Some(frame) = voice
              .watching
-@@ -2596,6 +2637,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2596,6 +2648,15 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
      });
      let state = adapter.clone();
      let weak = window.as_weak();
@@ -5409,7 +5683,7 @@ index 597fb2e..c1f2fb1 100644
      window.on_play_soundboard(move |id| {
          let Some(window) = weak.upgrade() else { return };
          state.borrow_mut().action(
-@@ -2752,10 +2802,12 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2752,10 +2813,12 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
          });
          if let Some(id) = id {
              let mut adapter = state.borrow_mut();
@@ -5425,7 +5699,7 @@ index 597fb2e..c1f2fb1 100644
              }
          }
      });
-@@ -2765,9 +2817,75 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2765,9 +2828,75 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
          let Some(window) = weak.upgrade() else { return };
          let mut adapter = state.borrow_mut();
          adapter.camera_test = None;
@@ -5503,7 +5777,7 @@ index 597fb2e..c1f2fb1 100644
          }
      });
      let state = adapter.clone();
-@@ -2785,7 +2903,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2785,7 +2914,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
              window.set_meter_note(SharedString::from(if !meter::AVAILABLE {
                  "The level meter isn't available on this system yet."
              } else if meter.failed() {
@@ -5512,7 +5786,7 @@ index 597fb2e..c1f2fb1 100644
              } else {
                  ""
              }));
-@@ -2810,7 +2928,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
+@@ -2810,7 +2939,7 @@ pub(super) fn bind_callbacks(window: &YapfastWindow, adapter: &Rc<RefCell<Adapte
                      if !yapfast_core::discord_audio::AVAILABLE {
                          "Discord voice and its level aren't available on this system yet."
                      } else if meter.failed() {
@@ -5521,7 +5795,7 @@ index 597fb2e..c1f2fb1 100644
                      } else {
                          ""
                      },
-@@ -2915,13 +3033,10 @@ fn composer_caret(
+@@ -2915,13 +3044,10 @@ fn composer_caret(
  
  /// Films with the chosen camera into the voice settings' preview, which is
  /// about 400 by 225 points.
@@ -5538,7 +5812,7 @@ index 597fb2e..c1f2fb1 100644
          Err(error) => window.set_camera_note(error.to_string().into()),
      }
  }
-@@ -2972,7 +3087,7 @@ const PIP_HEIGHT: f32 = 180.0;
+@@ -2972,7 +3098,7 @@ const PIP_HEIGHT: f32 = 180.0;
  /// Opens a web page in the browser. Only web pages open: a message can't
  /// start other programs.
  /// The web address a link in a message leads to: a masked link's, behind
@@ -6640,8 +6914,103 @@ index a9b8e03..6f0606f 100644
  pub(super) fn flush(adapter: &Adapter) {
      if adapter.placement_due.running() {
          adapter.placement_due.stop();
+diff --git a/src/ui/profile.rs b/src/ui/profile.rs
+index 3cddff5..1dc4025 100644
+--- a/src/ui/profile.rs
++++ b/src/ui/profile.rs
+@@ -99,8 +99,17 @@ fn activity_row(activity: &yapfast_core::chat::Activity) -> ActivityRow {
+             state,
+         )
+     };
++    use yapfast_core::chat::ActivityKind;
++    let heading = match activity.kind {
++        ActivityKind::Playing => tr("Playing").to_owned(),
++        ActivityKind::Streaming => tr("Streaming").to_owned(),
++        ActivityKind::Listening => format!("{} {}", tr("Listening to"), activity.name),
++        ActivityKind::Watching => tr("Watching").to_owned(),
++        ActivityKind::Competing => tr("Competing in").to_owned(),
++        ActivityKind::Hang => tr("Hanging out").to_owned(),
++    };
+     ActivityRow {
+-        heading: activity.heading().to_uppercase().into(),
++        heading: heading.into(),
+         name: name.into(),
+         name_emoji: name_emoji.unwrap_or_default().into(),
+         details: details.into(),
+@@ -139,7 +148,9 @@ impl Adapter {
+                 .any(|row| row.start > 0 || row.end > 0)
+         };
+         let shown = (self.app.state.profile.is_some() && timed(window.get_profile()))
+-            || (self.app.state.panel_profile.is_some() && timed(window.get_panel_profile()));
++            || (self.app.state.panel_profile.is_some() && timed(window.get_panel_profile()))
++            || (self.app.state.profile_editor.is_some()
++                && timed(window.get_profile_editor_prompt().preview));
+         if !shown {
+             self.activity_clock.stop();
+             return;
+@@ -211,13 +222,38 @@ pub(super) fn profile_data(
+         .filter(|part| !part.is_empty())
+         .collect::<Vec<_>>()
+         .join(" · ");
+-    // The profile keeps the status's own line breaks. A line that only
+-    // names an activity goes, as its card says more.
+-    let (activity_emoji, activity) = profile
+-        .activity
+-        .as_deref()
+-        .filter(|line| !names_an_activity(line, &profile.activities))
+-        .map_or((None, ""), yapfast_core::discord::status_parts);
++    let (presence, status, status_emoji, activities) =
++        if state.discord_user.as_deref() == Some(profile.id.as_str()) {
++            let presence = match state.discord_presence.as_deref() {
++                Some("online") => Some(Presence::Online),
++                Some("idle") => Some(Presence::Idle),
++                Some("dnd") => Some(Presence::DoNotDisturb),
++                Some("invisible") | Some("offline") => Some(Presence::Offline),
++                _ => profile.presence,
++            };
++            let (status, emoji) = state
++                .custom_status
++                .as_ref()
++                .map(status_line)
++                .unwrap_or_default();
++            (
++                presence,
++                status.into(),
++                emoji.unwrap_or_default().into(),
++                &state.discord_own_activities,
++            )
++        } else {
++            let (presence, line, activities) = state.live_profile_activity(profile);
++            let (emoji, status) = line
++                .filter(|line| !names_an_activity(line, activities))
++                .map_or((None, ""), yapfast_core::discord::status_parts);
++            (
++                presence,
++                status.into(),
++                emoji.unwrap_or_default().into(),
++                activities,
++            )
++        };
+     ProfileData {
+         id: profile.id.clone().into(),
+         name: profile.name.clone().into(),
+@@ -228,10 +264,10 @@ pub(super) fn profile_data(
+         banner: cached_picture(pictures, state, profile.banner.as_deref()),
+         accent: role_color(profile.accent),
+         has_accent: profile.accent.is_some(),
+-        presence: presence_name(profile.presence).into(),
+-        activity: activity.into(),
+-        activity_emoji: activity_emoji.unwrap_or_default().into(),
+-        activities: activity_rows(&profile.activities),
++        presence: presence_name(presence).into(),
++        activity: status,
++        activity_emoji: status_emoji,
++        activities: activity_rows(activities),
+         bio: markdown(&profile.bio),
+         has_bio: !profile.bio.trim().is_empty(),
+         role_rows: role_rows(&profile.roles, PROFILE_CARD_WIDTH),
 diff --git a/src/ui/refresh.rs b/src/ui/refresh.rs
-index c3040a1..08628fb 100644
+index c3040a1..dc38fb9 100644
 --- a/src/ui/refresh.rs
 +++ b/src/ui/refresh.rs
 @@ -451,7 +451,7 @@ impl Adapter {
@@ -6734,7 +7103,15 @@ index c3040a1..08628fb 100644
          } else if dialog.done {
              "Authorized."
          } else if !locked
-@@ -2549,7 +2549,7 @@ impl Adapter {
+@@ -2352,6 +2352,7 @@ impl Adapter {
+             changed: editor.change().is_some(),
+             preview,
+         });
++        self.tick_activities(window);
+     }
+ 
+     /// Asks before leaving a Discord server or group DM, as Discord's
+@@ -2549,7 +2550,7 @@ impl Adapter {
          }
          window.set_add_friend_sent(sent);
          window.set_add_friend_note(match add_friend {
@@ -6743,7 +7120,7 @@ index c3040a1..08628fb 100644
              Some(AddFriend {
                  outcome: Some(Ok(name)),
                  ..
-@@ -2658,7 +2658,7 @@ impl Adapter {
+@@ -2658,7 +2659,7 @@ impl Adapter {
              } else if !query.is_empty() {
                  "No conversations match."
              } else {
@@ -6752,7 +7129,7 @@ index c3040a1..08628fb 100644
              }
              .into(),
          );
-@@ -2818,7 +2818,7 @@ impl Adapter {
+@@ -2818,7 +2819,7 @@ impl Adapter {
              Some(Compose::Reply { author, body, .. }) => {
                  format!("Replying to {author}: {body}").into()
              }
@@ -6761,7 +7138,7 @@ index c3040a1..08628fb 100644
              None => SharedString::default(),
          });
          // Pictures and link previews fit the panel's width beside the avatar.
-@@ -2954,7 +2954,7 @@ impl Adapter {
+@@ -2954,7 +2955,7 @@ impl Adapter {
              Some(Compose::Reply { author, body, .. }) => {
                  format!("Replying to {author}: {body}").into()
              }
@@ -6770,7 +7147,7 @@ index c3040a1..08628fb 100644
              None => SharedString::default(),
          });
          window.set_sending(state.sending.is_some());
-@@ -3030,7 +3030,7 @@ impl Adapter {
+@@ -3030,7 +3031,7 @@ impl Adapter {
              } else if discord_room && room.is_some_and(|room| room.read_only || room.locked) {
                  "You can't send messages in this Discord channel."
              } else if discord_room && !state.discord_online {
@@ -6779,7 +7156,7 @@ index c3040a1..08628fb 100644
              } else if discord_only {
                  ""
              } else if discord_room {
-@@ -3329,6 +3329,7 @@ impl Adapter {
+@@ -3329,6 +3330,7 @@ impl Adapter {
          });
          window.set_share_fps(voice.quality.fps as i32);
          window.set_share_high_quality(voice.quality.high_quality);
@@ -6787,7 +7164,7 @@ index c3040a1..08628fb 100644
          window.set_share_live(
              voice
                  .sharing
-@@ -3672,7 +3673,7 @@ impl Adapter {
+@@ -3672,7 +3674,7 @@ impl Adapter {
  
      /// The call's soundboard, its rows made again only when its sounds
      /// change or pictures arrive, and why it can't play, as Discord says.
@@ -6796,7 +7173,7 @@ index c3040a1..08628fb 100644
          let state = &self.app.state;
          let voice = &state.voice;
          let groups = voice.soundboard.as_ref().filter(|_| voice.active());
-@@ -3705,7 +3706,7 @@ impl Adapter {
+@@ -3705,7 +3707,7 @@ impl Adapter {
              return;
          }
          self.soundboard_shown = Some((groups.clone(), state.picture_changes));
@@ -6805,7 +7182,7 @@ index c3040a1..08628fb 100644
          self.models.soundboard_rows.set_vec(rows);
      }
  
-@@ -3782,7 +3783,7 @@ impl Adapter {
+@@ -3782,7 +3784,7 @@ impl Adapter {
              return;
          }
          self.entrance_shown = Some((groups.clone(), state.picture_changes));
@@ -6814,7 +7191,31 @@ index c3040a1..08628fb 100644
          self.models.entrance_rows.set_vec(rows);
      }
  
-@@ -4069,6 +4070,7 @@ pub(super) fn rail_rows(
+@@ -3793,22 +3795,7 @@ impl Adapter {
+         window.set_profile_open(state.profile.is_some());
+         window.set_panel_profile_shown(state.panel_profile.is_some());
+         if let Some(view) = &state.panel_profile {
+-            let mut data = profile_data(&mut self.pictures, state, view);
+-            // The DM list keeps up with whether they're around; the profile
+-            // was as it was when it opened.
+-            if let Some(room) = state.selected_room() {
+-                data.presence = presence_name(room.presence.or(view.profile.presence)).into();
+-                if let Some(activity) = &room.activity {
+-                    let (emoji, activity) = if names_an_activity(activity, &room.activities) {
+-                        (None, "")
+-                    } else {
+-                        yapfast_core::discord::status_parts(activity)
+-                    };
+-                    data.activity = activity.into();
+-                    data.activity_emoji = emoji.unwrap_or_default().into();
+-                }
+-                data.activities = activity_rows(&room.activities);
+-            }
++            let data = profile_data(&mut self.pictures, state, view);
+             let shown = window.get_panel_profile();
+             if let Some(data) = changed_profile(&shown, data) {
+                 window.set_panel_profile(data);
+@@ -4069,6 +4056,7 @@ pub(super) fn rail_rows(
              let (unread, mentions) = marks(server);
              rows.push(ServerRow {
                  call: in_call(server),
@@ -6822,7 +7223,7 @@ index c3040a1..08628fb 100644
                  ..server_row(server, selected(server), unread, mentions)
              });
              continue;
-@@ -4131,6 +4133,7 @@ pub(super) fn rail_rows(
+@@ -4131,6 +4119,7 @@ pub(super) fn rail_rows(
                      last: index == last,
                      tint,
                      call: in_call(server),
@@ -6830,7 +7231,7 @@ index c3040a1..08628fb 100644
                      ..server_row(server, selected(server), unread, mentions)
                  });
              }
-@@ -4139,6 +4142,36 @@ pub(super) fn rail_rows(
+@@ -4139,6 +4128,36 @@ pub(super) fn rail_rows(
      rows
  }
  
@@ -6867,7 +7268,7 @@ index c3040a1..08628fb 100644
  /// The voice channel of the call going on, if there is one.
  /// A server voice channel someone is in, as the friends list names it.
  pub(super) struct VoicePlace<'a> {
-@@ -4375,8 +4408,8 @@ fn permission_names(bits: u64) -> String {
+@@ -4375,8 +4394,8 @@ fn permission_names(bits: u64) -> String {
      let more = (bits & !named).count_ones();
      let more = match (more, names.is_empty()) {
          (0, _) => None,
@@ -6878,7 +7279,7 @@ index c3040a1..08628fb 100644
          (1, false) => Some("1 more permission".to_owned()),
          (count, false) => Some(format!("{count} more permissions")),
      };
-@@ -4761,14 +4794,21 @@ fn sound_rows(
+@@ -4761,14 +4780,21 @@ fn sound_rows(
      groups: &[voice::SoundGroup],
      pictures: &mut HashMap<String, slint::Image>,
      state: &AppState,
@@ -7050,7 +7451,7 @@ index 24fd463..1318a7b 100644
          if window.get_window_title() != title.as_str() {
              window.set_window_title(title.into());
 diff --git a/src/ui/tests.rs b/src/ui/tests.rs
-index 9214a90..af1829c 100644
+index 9214a90..7d7eaa5 100644
 --- a/src/ui/tests.rs
 +++ b/src/ui/tests.rs
 @@ -1344,7 +1344,7 @@ fn a_link_showing_other_text_asks_before_it_opens() {
@@ -7089,7 +7490,60 @@ index 9214a90..af1829c 100644
              ("f", "", true, false),
              ("g", "OTHER", false, false),
              ("h", "", false, false),
-@@ -6174,7 +6174,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
+@@ -3807,6 +3807,43 @@ fn a_right_click_on_a_folder_asks_for_its_menu() {
+     );
+ }
+ 
++#[cfg(feature = "discord")]
++#[test]
++fn voxcord_profile_uses_live_activities_in_the_card_and_editor() {
++    let activities = yapfast_discord::activity::activities(&serde_json::json!([
++        {"type": 0, "name": "Factorio", "details": "On Nauvis",
++         "timestamps": {"start": 1_700_000_000_000_u64}}
++    ]));
++    let mut state = AppState {
++        discord_user: Some("10".into()),
++        discord_own_activities: activities.clone(),
++        ..Default::default()
++    };
++    let view = ProfileView {
++        profile: yapfast_core::chat::Profile { id: "10".into(), ..Default::default() },
++        ..Default::default()
++    };
++    let mut pictures = HashMap::new();
++    let data = profile_data(&mut pictures, &state, &view);
++    assert_eq!(data.activities.row_data(0).unwrap().name, "Factorio");
++    assert!(data.activities.row_data(0).unwrap().start > 0);
++    state.discord_own_activities = Default::default();
++    assert_eq!(profile_data(&mut pictures, &state, &view).activities.row_count(), 0);
++
++    let mut friend_view = view.clone();
++    friend_view.profile.id = "11".into();
++    friend_view.profile.activities = activities.clone();
++    state.friends.push(yapfast_core::chat::Friend {
++        id: "11".into(), name: "Ann".into(), nickname: None, avatar: None,
++        presence: Some(Presence::Online), activity: None, activities,
++    });
++    assert_eq!(profile_data(&mut pictures, &state, &friend_view).activities.row_count(), 1);
++    state.friends[0].activities = Default::default();
++    let stopped = profile_data(&mut pictures, &state, &friend_view);
++    assert_eq!(stopped.activities.row_count(), 0, "a stopped game clears the cached profile card");
++    assert_eq!(stopped.activity, "");
++}
++
+ #[cfg(feature = "discord")]
+ #[test]
+ fn a_profile_shows_activities_as_discord_cards() {
+@@ -3819,7 +3856,7 @@ fn a_profile_shows_activities_as_discord_cards() {
+     ]));
+     let rows: Vec<ActivityRow> = profile::activity_rows(&activities).iter().collect();
+     let spotify = &rows[0];
+-    assert_eq!(spotify.heading, "LISTENING TO SPOTIFY");
++    assert_eq!(spotify.heading, format!("{} Spotify", tr("Listening to")));
+     assert_eq!(
+         (
+             spotify.name.as_str(),
+@@ -6174,7 +6211,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
      assert_eq!(theme::Theme::shown(&again), nord);
      assert_eq!(again.get_theme_id(), "nord");
  
@@ -7098,7 +7552,7 @@ index 9214a90..af1829c 100644
      // has shows Yap.
      again.invoke_choose_theme("missing".into());
      assert_eq!(theme::Theme::shown(&again), nord);
-@@ -6255,7 +6255,7 @@ fn a_custom_theme_keeps_its_colours_by_name_and_falls_back_to_its_base() {
+@@ -6255,7 +6292,7 @@ fn a_custom_theme_keeps_its_colours_by_name_and_falls_back_to_its_base() {
          custom
      );
  
@@ -7107,7 +7561,7 @@ index 9214a90..af1829c 100644
      let unknown: theme::Custom =
          serde_json::from_value(serde_json::json!({ "base": "gone" })).unwrap();
      assert_eq!((unknown.base, unknown.theme), ("yap", theme::YAP));
-@@ -6696,7 +6696,7 @@ fn a_handed_link_waits_for_the_open_dialog() {
+@@ -6696,7 +6733,7 @@ fn a_handed_link_waits_for_the_open_dialog() {
      );
      let shown = query(&adapter);
      assert!(shown.is_some());
@@ -7679,7 +8133,7 @@ index 952318b..ec0c265 100644
          }
          track := Rectangle {
 diff --git a/ui/dialogs.slint b/ui/dialogs.slint
-index 2d46996..3000051 100644
+index 2d46996..ee07967 100644
 --- a/ui/dialogs.slint
 +++ b/ui/dialogs.slint
 @@ -50,7 +50,7 @@ export component StatusDialog inherits Rectangle {
@@ -7929,7 +8383,12 @@ index 2d46996..3000051 100644
                  }
              }
          }
-@@ -582,21 +582,21 @@ export component StatusMenu inherits Rectangle {
+@@ -578,25 +578,26 @@ export component StatusMenu inherits Rectangle {
+     callback game-duration-due;
+     callback choose(string);
+     callback custom-status;
++    callback view-profile;
+     callback edit-profile;
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
      drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
      accessible-role: groupbox;
@@ -7957,7 +8416,7 @@ index 2d46996..3000051 100644
          ]: StatusOption {
              key: option.key; name: option.name; note: option.note; checked: root.status == option.key;
              clicked => { root.choose(option.key); }
-@@ -606,12 +606,12 @@ export component StatusMenu inherits Rectangle {
+@@ -606,12 +607,17 @@ export component StatusMenu inherits Rectangle {
              Rectangle { height: 1px; background: Theme.line; }
          }
          MenuItem {
@@ -7968,11 +8427,16 @@ index 2d46996..3000051 100644
          }
          MenuItem {
 -            text: "Edit Profile";
++            text: @tr("View my profile");
++            icon: @image-url("icons/user.svg");
++            clicked => { root.view-profile(); }
++        }
++        MenuItem {
 +            text: @tr("Edit Profile");
              icon: @image-url("icons/user-pen.svg");
              clicked => { root.edit-profile(); }
          }
-@@ -671,7 +671,7 @@ export component PersonDialog inherits Rectangle {
+@@ -671,7 +677,7 @@ export component PersonDialog inherits Rectangle {
                  padding: 20px; spacing: 12px;
                  HorizontalLayout {
                      Text { text: root.prompt.title; color: Theme.text; font-size: 18px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
@@ -7981,7 +8445,7 @@ index 2d46996..3000051 100644
                  }
                  if root.prompt.text != "": Label { text: root.prompt.text; }
                  if root.prompt.options.length > 0: VerticalLayout {
-@@ -691,7 +691,7 @@ export component PersonDialog inherits Rectangle {
+@@ -691,7 +697,7 @@ export component PersonDialog inherits Rectangle {
                      changed enabled => { if self.enabled { self.focus-input(); } }
                      enabled: !root.prompt.loading;
                      min-height: 36px; text-size: 15px; pad: 10px; fill: Theme.sunken;
@@ -7990,7 +8454,7 @@ index 2d46996..3000051 100644
                      text <=> root.text;
                      accepted => { root.answer(root.text); }
                  }
-@@ -700,7 +700,7 @@ export component PersonDialog inherits Rectangle {
+@@ -700,7 +706,7 @@ export component PersonDialog inherits Rectangle {
                  }
                  HorizontalLayout {
                      alignment: end; spacing: 8px;
@@ -7999,7 +8463,7 @@ index 2d46996..3000051 100644
                      ActionButton {
                          text: root.prompt.confirm; primary: !root.prompt.danger; danger: root.prompt.danger;
                          enabled: !root.prompt.loading && !root.prompt.saving;
-@@ -751,7 +751,7 @@ export component ReactionsDialog inherits Rectangle {
+@@ -751,7 +757,7 @@ export component ReactionsDialog inherits Rectangle {
          background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
          drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
          accessible-role: groupbox;
@@ -8008,7 +8472,7 @@ index 2d46996..3000051 100644
          TouchArea { }
          FocusScope {
              init => { self.focus(); }
-@@ -763,8 +763,8 @@ export component ReactionsDialog inherits Rectangle {
+@@ -763,8 +769,8 @@ export component ReactionsDialog inherits Rectangle {
                  padding-top: 16px; spacing: 0px;
                  HorizontalLayout {
                      padding-left: 24px; padding-right: 16px; padding-bottom: 12px;
@@ -8019,7 +8483,7 @@ index 2d46996..3000051 100644
                  }
                  Rectangle { height: 1px; background: Theme.line; }
                  HorizontalLayout {
-@@ -783,7 +783,7 @@ export component ReactionsDialog inherits Rectangle {
+@@ -783,7 +789,7 @@ export component ReactionsDialog inherits Rectangle {
                                          y: 0px; height: 32px; border-radius: 8px;
                                          background: parent.chosen ? Theme.active : pill-touch.has-hover ? Theme.hover : transparent;
                                          accessible-role: button;
@@ -8028,7 +8492,7 @@ index 2d46996..3000051 100644
                                          accessible-checked: parent.chosen;
                                          accessible-action-default => { root.select-reaction(pill.key); }
                                          HorizontalLayout {
-@@ -823,7 +823,7 @@ export component ReactionsDialog inherits Rectangle {
+@@ -823,7 +829,7 @@ export component ReactionsDialog inherits Rectangle {
                                          }
                                          if person.removable && person-touch.has-hover: Middle {
                                              IconButton {
@@ -8037,7 +8501,7 @@ index 2d46996..3000051 100644
                                                  clicked => { root.remove-reactor(person.id); }
                                              }
                                          }
-@@ -832,7 +832,7 @@ export component ReactionsDialog inherits Rectangle {
+@@ -832,7 +838,7 @@ export component ReactionsDialog inherits Rectangle {
                              }
                              if root.reactors-loading || root.reactors-more: Rectangle {
                                  height: 52px;
@@ -8046,7 +8510,7 @@ index 2d46996..3000051 100644
                              }
                              if root.reactors-error != "": HorizontalLayout {
                                  padding: 16px;
-@@ -898,7 +898,7 @@ export component PollDialog inherits Rectangle {
+@@ -898,7 +904,7 @@ export component PollDialog inherits Rectangle {
          background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
          drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
          accessible-role: groupbox;
@@ -8055,7 +8519,7 @@ index 2d46996..3000051 100644
          TouchArea { }
          FocusScope {
              key-pressed(event) => {
-@@ -909,31 +909,31 @@ export component PollDialog inherits Rectangle {
+@@ -909,31 +915,31 @@ export component PollDialog inherits Rectangle {
                  padding: 20px; spacing: 0px;
                  head := HorizontalLayout {
                      padding-bottom: 12px;
@@ -8093,7 +8557,7 @@ index 2d46996..3000051 100644
                                  accessible-action-default => { root.pick-emoji(index, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
                                  if answer.emoji.glyph != "": EmojiFace { emoji: answer.emoji; font: root.emoji-font; side: 22px; }
                                  if answer.emoji.glyph == "": Image {
-@@ -949,7 +949,7 @@ export component PollDialog inherits Rectangle {
+@@ -949,7 +955,7 @@ export component PollDialog inherits Rectangle {
                                      background: remove-emoji-touch.has-hover ? Theme.danger : Theme.faint;
                                      border-width: 2px; border-color: Theme.raised;
                                      accessible-role: button;
@@ -8102,7 +8566,7 @@ index 2d46996..3000051 100644
                                      accessible-action-default => { root.remove-emoji(index); }
                                      Image { source: @image-url("icons/x.svg"); width: 10px; colorize: Theme.text; }
                                      remove-emoji-touch := TouchArea {
-@@ -960,13 +960,13 @@ export component PollDialog inherits Rectangle {
+@@ -960,13 +966,13 @@ export component PollDialog inherits Rectangle {
                              }
                              TextField {
                                  min-height: 40px; text-size: 15px; pad: 10px; fill: Theme.sunken;
@@ -8118,7 +8582,7 @@ index 2d46996..3000051 100644
                                      clicked => { root.remove-answer(index); }
                                  }
                              }
-@@ -974,13 +974,13 @@ export component PollDialog inherits Rectangle {
+@@ -974,13 +980,13 @@ export component PollDialog inherits Rectangle {
                          if root.can-add: HorizontalLayout {
                              alignment: start;
                              ActionButton {
@@ -8135,7 +8599,7 @@ index 2d46996..3000051 100644
                              max-width: 460px; current: root.duration;
                              chosen(index) => { root.choose-duration(index); }
                          }
-@@ -988,7 +988,7 @@ export component PollDialog inherits Rectangle {
+@@ -988,7 +994,7 @@ export component PollDialog inherits Rectangle {
                          Rectangle {
                              accessible-role: checkbox;
                              accessible-checked: root.multiselect;
@@ -8144,7 +8608,7 @@ index 2d46996..3000051 100644
                              accessible-action-default => { root.set-multiselect(!root.multiselect); }
                              HorizontalLayout {
                                  spacing: 10px; padding-top: 4px;
-@@ -1000,7 +1000,7 @@ export component PollDialog inherits Rectangle {
+@@ -1000,7 +1006,7 @@ export component PollDialog inherits Rectangle {
                                          if root.multiselect: Image { source: @image-url("icons/check.svg"); width: 14px; height: 14px; colorize: Theme.on-accent; }
                                      }
                                  }
@@ -8153,7 +8617,7 @@ index 2d46996..3000051 100644
                              }
                              TouchArea {
                                  mouse-cursor: MouseCursor.pointer;
-@@ -1014,9 +1014,9 @@ export component PollDialog inherits Rectangle {
+@@ -1014,9 +1020,9 @@ export component PollDialog inherits Rectangle {
                      if root.problem != "": Text { text: root.problem; color: Theme.danger; font-size: 14px; wrap: word-wrap; }
                      HorizontalLayout {
                          alignment: end; spacing: 8px;
@@ -9784,7 +10248,7 @@ index 42b4b0d..da221a3 100644
          }
      }
 diff --git a/ui/people.slint b/ui/people.slint
-index 490d006..9d5978f 100644
+index 490d006..6ef4dd0 100644
 --- a/ui/people.slint
 +++ b/ui/people.slint
 @@ -32,7 +32,7 @@ export component MemberPanel inherits Rectangle {
@@ -9814,36 +10278,150 @@ index 490d006..9d5978f 100644
                              }
                          }
                          if member.activity != "" || member.activity-emoji != "": StatusText {
-@@ -226,7 +226,7 @@ export component ActivityCard inherits VerticalLayout {
-                     text: root.activity.name; color: title-pointer.has-hover ? Theme.link : Theme.text;
-                     font-size: 14px; font-weight: 700; overflow: elide;
-                     accessible-role: button;
+@@ -186,7 +186,7 @@ component ActivityPicture inherits Rectangle {
+ 
+ // One of someone's activities on their profile, as Discord's card shows it:
+ // its pictures, its lines, and how long it's run or how far it's got.
+-export component ActivityCard inherits VerticalLayout {
++export component ActivityCard inherits Rectangle {
+     in property <ActivityRow> activity;
+     callback open-link(string);
+     property <bool> timed: root.activity.start > 0 || root.activity.end > 0;
+@@ -201,67 +201,83 @@ export component ActivityCard inherits VerticalLayout {
+         let rest = Math.mod(seconds, 60);
+         (hours > 0 ? hours + ":" + (minutes < 10 ? "0" : "") : "") + minutes + ":" + (rest < 10 ? "0" : "") + rest
+     }
+-    spacing: 8px;
+-    ProfileHeading { text: root.activity.heading; }
+-    HorizontalLayout {
+-        spacing: 12px;
+-        if root.activity.large-url != "": Rectangle {
+-            width: 64px; height: 64px;
+-            ActivityPicture { size: 64px; url: root.activity.large-url; label: root.activity.large-text; }
+-            if root.activity.small-url != "": Rectangle {
+-                x: 44px; y: 44px; width: 26px; height: 26px; border-radius: 13px; background: Theme.sidebar;
+-                Rectangle {
+-                    width: 22px; height: 22px; border-radius: 11px; clip: true;
+-                    ActivityPicture { size: 22px; border-radius: 11px; url: root.activity.small-url; label: root.activity.small-text; }
++    height: activity-content.preferred-height;
++    border-radius: 10px;
++    border-width: 1px;
++    border-color: Theme.line;
++    background: Theme.raised;
++    activity-content := VerticalLayout {
++        padding: 12px;
++        spacing: 8px;
++        ProfileHeading { text: root.activity.heading; color: Theme.secondary; }
++        HorizontalLayout {
++            spacing: 12px;
++            if root.activity.large-url != "": Rectangle {
++                width: 64px; height: 64px;
++                ActivityPicture { size: 64px; url: root.activity.large-url; label: root.activity.large-text; }
++                if root.activity.small-url != "": Rectangle {
++                    x: 44px; y: 44px; width: 26px; height: 26px; border-radius: 13px; background: Theme.sidebar;
++                    Rectangle {
++                        width: 22px; height: 22px; border-radius: 11px; clip: true;
++                        ActivityPicture { size: 22px; border-radius: 11px; url: root.activity.small-url; label: root.activity.small-text; }
++                    }
+                 }
+             }
+-        }
+-        VerticalLayout {
+-            alignment: center; spacing: 2px; horizontal-stretch: 1;
+-            if root.activity.link == "": StatusText { text: root.activity.name; emoji-url: root.activity.name-emoji; color: Theme.text; font-size: 14px; font-weight: 700; }
+-            // A song's title opens its page, as in Discord.
+-            if root.activity.link != "": HorizontalLayout {
+-                alignment: start;
+-                Text {
+-                    text: root.activity.name; color: title-pointer.has-hover ? Theme.link : Theme.text;
+-                    font-size: 14px; font-weight: 700; overflow: elide;
+-                    accessible-role: button;
 -                    accessible-label: "Open " + root.activity.name;
-+                    accessible-label: @tr("Open ") + root.activity.name;
-                     accessible-action-default => { root.open-link(root.activity.link); }
-                     title-pointer := TouchArea {
-                         mouse-cursor: MouseCursor.pointer;
-@@ -238,8 +238,8 @@ export component ActivityCard inherits VerticalLayout {
-             if root.activity.state != "": Text { text: root.activity.state; color: Theme.secondary; font-size: 13px; overflow: elide; }
-             if root.timed && !root.bar: Text {
-                 text: root.activity.start > 0
+-                    accessible-action-default => { root.open-link(root.activity.link); }
+-                    title-pointer := TouchArea {
+-                        mouse-cursor: MouseCursor.pointer;
+-                        clicked => { root.open-link(root.activity.link); }
+-                    }
++            if root.activity.large-url == "": Rectangle {
++                width: 42px; height: 42px; border-radius: 10px; background: Theme.hover;
++                Image {
++                    width: 20px; height: 20px;
++                    source: @image-url("icons/play.svg");
++                    colorize: Theme.accent;
+                 }
+             }
+-            if root.activity.details != "": Text { text: root.activity.details; color: Theme.secondary; font-size: 13px; overflow: elide; }
+-            if root.activity.state != "": Text { text: root.activity.state; color: Theme.secondary; font-size: 13px; overflow: elide; }
+-            if root.timed && !root.bar: Text {
+-                text: root.activity.start > 0
 -                    ? root.clock(max(0, ActivityClock.now - root.activity.start)) + " elapsed"
 -                    : root.clock(max(0, root.activity.end - ActivityClock.now)) + " left";
-+                    ? root.clock(max(0, ActivityClock.now - root.activity.start)) + @tr(" elapsed")
-+                    : root.clock(max(0, root.activity.end - ActivityClock.now)) + @tr(" left");
-                 color: Theme.muted; font-size: 12px;
+-                color: Theme.muted; font-size: 12px;
++            VerticalLayout {
++                alignment: center; spacing: 2px; horizontal-stretch: 1;
++                if root.activity.link == "": StatusText { text: root.activity.name; emoji-url: root.activity.name-emoji; color: Theme.text; font-size: 14px; font-weight: 700; }
++                // A song's title opens its page, as in Discord.
++                if root.activity.link != "": HorizontalLayout {
++                    alignment: start;
++                    Text {
++                        text: root.activity.name; color: title-pointer.has-hover ? Theme.link : Theme.text;
++                        font-size: 14px; font-weight: 700; overflow: elide;
++                        accessible-role: button;
++                        accessible-label: @tr("Open ") + root.activity.name;
++                        accessible-action-default => { root.open-link(root.activity.link); }
++                        title-pointer := TouchArea {
++                            mouse-cursor: MouseCursor.pointer;
++                            clicked => { root.open-link(root.activity.link); }
++                        }
++                    }
++                }
++                if root.activity.details != "": Text { text: root.activity.details; color: Theme.secondary; font-size: 13px; overflow: elide; }
++                if root.activity.state != "": Text { text: root.activity.state; color: Theme.secondary; font-size: 13px; overflow: elide; }
++                if root.timed && !root.bar: Text {
++                    text: root.activity.start > 0
++                        ? root.clock(max(0, ActivityClock.now - root.activity.start)) + @tr(" elapsed")
++                        : root.clock(max(0, root.activity.end - ActivityClock.now)) + @tr(" left");
++                    color: Theme.muted; font-size: 12px;
++                }
              }
          }
-@@ -260,7 +260,7 @@ export component ActivityCard inherits VerticalLayout {
+-    }
+-    if root.bar: VerticalLayout {
+-        spacing: 4px;
+-        Rectangle {
+-            height: 4px; border-radius: 2px; background: Theme.raised;
++        if root.bar: VerticalLayout {
++            spacing: 4px;
+             Rectangle {
+-                x: 0px; width: parent.width * root.played / max(1, root.length);
+-                border-radius: 2px; background: Theme.text;
++                height: 4px; border-radius: 2px; background: Theme.raised;
++                Rectangle {
++                    x: 0px; width: parent.width * root.played / max(1, root.length);
++                    border-radius: 2px; background: Theme.text;
++                }
++            }
++            HorizontalLayout {
++                Text { text: root.clock(root.played); color: Theme.muted; font-size: 12px; }
++                Text { text: root.clock(root.length); color: Theme.muted; font-size: 12px; horizontal-alignment: right; }
+             }
+         }
+-        HorizontalLayout {
+-            Text { text: root.clock(root.played); color: Theme.muted; font-size: 12px; }
+-            Text { text: root.clock(root.length); color: Theme.muted; font-size: 12px; horizontal-alignment: right; }
++        if root.activity.url != "": HorizontalLayout {
++            alignment: start;
++            ActionButton { text: @tr("Watch stream"); small: true; clicked => { root.open-link(root.activity.url); } }
+         }
      }
-     if root.activity.url != "": HorizontalLayout {
-         alignment: start;
+-    if root.activity.url != "": HorizontalLayout {
+-        alignment: start;
 -        ActionButton { text: "Watch stream"; small: true; clicked => { root.open-link(root.activity.url); } }
-+        ActionButton { text: @tr("Watch stream"); small: true; clicked => { root.open-link(root.activity.url); } }
-     }
+-    }
  }
  
-@@ -323,10 +323,10 @@ export component ServerCard inherits Rectangle {
+ // A server a profile lists as mutual, as a card: what it is, and a way in.
+@@ -323,10 +339,10 @@ export component ServerCard inherits Rectangle {
                  }
                  if root.server.nick != "": VerticalLayout {
                      spacing: 4px;
@@ -9856,7 +10434,23 @@ index 490d006..9d5978f 100644
              }
          }
      }
-@@ -422,7 +422,7 @@ export component ProfileCard inherits Rectangle {
+@@ -414,22 +430,27 @@ export component ProfileCard inherits Rectangle {
+     callback open-friend(string, length, length, length, length);
+     /// Enter in the card's message box, with what it held.
+     callback send-message(string);
+-    property <length> banner-height: root.large ? 210px : root.docked ? 120px : 105px;
+-    property <length> avatar-size: root.large ? 120px : 80px;
++    property <length> banner-height: root.large ? 132px : 88px;
++    property <length> avatar-size: root.large ? 88px : 64px;
+     property <length> pad: root.large ? 24px : 16px;
+-    height: min(body.preferred-height, root.limit);
++    property <string> profile-id: root.data.id;
++    property <int> section;
++    property <bool> mutual: root.full && (root.data.servers.length > 0 || root.data.friends.length > 0);
++    property <bool> overview: root.section == 0 || !root.mutual;
++    changed profile-id => { root.section = 0; profile-scroll.content-y = 0px; }
++    height: min(root.limit, max(body.preferred-height, root.large ? 440px : 0px));
+     background: Theme.sidebar;
      border-radius: root.docked ? 0px : 12px; border-width: root.docked ? 0px : 1px; border-color: Theme.edge;
      drop-shadow-blur: root.docked ? 0px : 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: root.docked ? 0px : 8px;
      accessible-role: groupbox;
@@ -9865,7 +10459,15 @@ index 490d006..9d5978f 100644
      // Clicks on the card stay on it, instead of closing it.
      TouchArea { }
      Rectangle {
-@@ -456,7 +456,7 @@ export component ProfileCard inherits Rectangle {
+         border-radius: root.docked ? 0px : 12px; clip: true;
+         // Sized by what the card wants rather than the least it can take, so a
+         // long one scrolls to its end.
+-        ScrollView {
++        profile-scroll := ScrollView {
+             content-height: body.preferred-height;
+             body := VerticalLayout {
+                 padding-bottom: root.pad; spacing: 0px;
+@@ -456,14 +477,14 @@ export component ProfileCard inherits Rectangle {
                          if !root.large && !root.preview: TouchArea {
                              mouse-cursor: MouseCursor.pointer;
                              accessible-role: button;
@@ -9874,7 +10476,15 @@ index 490d006..9d5978f 100644
                              accessible-action-default => { root.enlarge(); }
                              clicked => { root.enlarge(); }
                          }
-@@ -481,7 +481,7 @@ export component ProfileCard inherits Rectangle {
+                     }
+                 }
+                 VerticalLayout {
+-                    padding-left: root.pad; padding-right: root.pad; spacing: 16px;
++                    padding-left: root.pad; padding-right: root.pad; spacing: 14px;
+                     VerticalLayout {
+                         spacing: 2px;
+                         Text {
+@@ -481,17 +502,37 @@ export component ProfileCard inherits Rectangle {
                          alignment: start;
                          ActionButton {
                              small: true; primary: root.data.friend != 2; enabled: root.data.friend != 2;
@@ -9883,18 +10493,47 @@ index 490d006..9d5978f 100644
                              clicked => { root.befriend(); }
                          }
                      }
-@@ -491,7 +491,7 @@ export component ProfileCard inherits Rectangle {
+-                    for activity in root.data.activities: ActivityCard {
+-                        activity: activity;
+-                        open-link(url) => { root.open-link(url); }
++                    if root.mutual: HorizontalLayout {
++                        spacing: 6px;
++                        ActionButton {
++                            text: @tr("Profile overview"); small: true; primary: root.overview;
++                            clicked => { root.section = 0; profile-scroll.content-y = 0px; }
++                        }
++                        ActionButton {
++                            text: @tr("Mutual connections"); small: true; primary: !root.overview;
++                            clicked => { root.section = 1; profile-scroll.content-y = 0px; }
++                        }
++                    }
++                    Rectangle { height: 1px; background: Theme.line; }
++                    if root.overview && (root.full || root.data.activities.length > 0): VerticalLayout {
++                        spacing: 8px;
++                        ProfileHeading { text: @tr("CURRENT ACTIVITY"); }
++                        if root.data.activities.length == 0: Text {
++                            text: @tr("No activity shared at the moment.");
++                            color: Theme.muted; font-size: 13px; wrap: word-wrap;
++                        }
++                        for activity in root.data.activities: ActivityCard {
++                            activity: activity;
++                            open-link(url) => { root.open-link(url); }
++                        }
                      }
-                     if root.data.has-bio: VerticalLayout {
+-                    if root.data.has-bio: VerticalLayout {
++                    if root.overview && root.data.has-bio: VerticalLayout {
                          spacing: 6px;
 -                        ProfileHeading { text: "ABOUT ME"; }
 +                        ProfileHeading { text: @tr("ABOUT ME"); }
                          // The card shows the start; the full profile shows it all.
                          // A fixed height, since the text would otherwise stretch it past its limit.
                          Rectangle {
-@@ -508,23 +508,23 @@ export component ProfileCard inherits Rectangle {
+@@ -506,25 +547,25 @@ export component ProfileCard inherits Rectangle {
+                         }
+                     }
                      // The card leaves the dates to the full profile.
-                     if root.full && (root.data.created != "" || root.data.joined != ""): VerticalLayout {
+-                    if root.full && (root.data.created != "" || root.data.joined != ""): VerticalLayout {
++                    if root.overview && root.full && (root.data.created != "" || root.data.joined != ""): VerticalLayout {
                          spacing: 6px;
 -                        ProfileHeading { text: "MEMBER SINCE"; }
 +                        ProfileHeading { text: @tr("MEMBER SINCE"); }
@@ -9912,7 +10551,8 @@ index 490d006..9d5978f 100644
                              }
                          }
                      }
-                     if (root.large ? root.data.role-rows-large : root.data.role-rows).length > 0: VerticalLayout {
+-                    if (root.large ? root.data.role-rows-large : root.data.role-rows).length > 0: VerticalLayout {
++                    if root.overview && (root.large ? root.data.role-rows-large : root.data.role-rows).length > 0: VerticalLayout {
                          spacing: 6px;
                          // The card's chips speak for themselves.
 -                        if root.full: ProfileHeading { text: "ROLES"; }
@@ -9920,7 +10560,17 @@ index 490d006..9d5978f 100644
                          for row in (root.large ? root.data.role-rows-large : root.data.role-rows): HorizontalLayout {
                              spacing: 4px; alignment: start;
                              for role in row.roles: Rectangle {
-@@ -545,7 +545,7 @@ export component ProfileCard inherits Rectangle {
+@@ -537,28 +578,28 @@ export component ProfileCard inherits Rectangle {
+                             }
+                         }
+                     }
+-                    if root.full && root.data.servers.length > 0: VerticalLayout {
++                    if !root.overview && root.data.servers.length > 0: VerticalLayout {
+                         spacing: 6px;
+-                        ProfileHeading { text: "MUTUAL SERVERS — " + root.data.servers.length; }
++                        ProfileHeading { text: @tr("MUTUAL SERVERS") + " · " + root.data.servers.length; }
+                         VerticalLayout {
+                             spacing: 0px;
                              for server in root.data.servers: ProfileListRow {
                                  name: server.name; initial: server.initial; picture: server.picture;
                                  detail: server.nick;
@@ -9929,7 +10579,14 @@ index 490d006..9d5978f 100644
                                  clicked => { root.open-server(server, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
                              }
                          }
-@@ -558,7 +558,7 @@ export component ProfileCard inherits Rectangle {
+                     }
+-                    if root.full && root.data.friends.length > 0: VerticalLayout {
++                    if !root.overview && root.data.friends.length > 0: VerticalLayout {
+                         spacing: 6px;
+-                        ProfileHeading { text: "MUTUAL FRIENDS — " + root.data.friends.length; }
++                        ProfileHeading { text: @tr("MUTUAL FRIENDS") + " · " + root.data.friends.length; }
+                         VerticalLayout {
+                             spacing: 0px;
                              for friend in root.data.friends: ProfileListRow {
                                  person: true; name: friend.name; initial: friend.initial; tint: friend.tint;
                                  picture: friend.picture; presence: friend.presence;
@@ -9938,7 +10595,7 @@ index 490d006..9d5978f 100644
                                  clicked => { root.open-friend(friend.id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
                              }
                          }
-@@ -590,11 +590,11 @@ export component ProfileCard inherits Rectangle {
+@@ -590,11 +631,11 @@ export component ProfileCard inherits Rectangle {
      }
      if root.large: Rectangle {
          x: parent.width - 44px; y: 10px; width: 34px; height: 34px; border-radius: 17px; background: #00000080;
@@ -9952,7 +10609,7 @@ index 490d006..9d5978f 100644
  export component RoleCard inherits Rectangle {
      in property <string> role-name;
      in property <color> role-color;
-@@ -611,7 +611,7 @@ export component RoleCard inherits Rectangle {
+@@ -611,7 +652,7 @@ export component RoleCard inherits Rectangle {
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
      drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
      accessible-role: groupbox;
@@ -10824,9 +11481,18 @@ index be79543..1523d81 100644
  //
  // The Fluent bar starts its drag over whenever `maximum` changes. In a ListView
 diff --git a/ui/server.slint b/ui/server.slint
-index 142c80c..a09e552 100644
+index 142c80c..fa5fd0a 100644
 --- a/ui/server.slint
 +++ b/ui/server.slint
+@@ -3,7 +3,7 @@ import { ScrollView } from "scrollview.slint";
+ import { Theme, Label, Middle, Popup } from "theme.slint";
+ import { ActionButton, Avatar, IconButton, MenuItem, TextField } from "controls.slint";
+ import { Choices, Picker, UnsavedBar } from "settings.slint";
+-import { ProfileData, ProfileHeading } from "people.slint";
++import { ProfileData, ProfileHeading, ActivityCard } from "people.slint";
+ 
+ // What an invite dialog shows: whom it invites where, and the link once
+ // Discord made it.
 @@ -55,23 +55,23 @@ export component InviteDialog inherits Rectangle {
                  padding: 20px; spacing: 12px;
                  HorizontalLayout {
@@ -11023,7 +11689,26 @@ index 142c80c..a09e552 100644
                          clicked => { if root.prompt.alternative != "" { root.alternative(); } else { root.close(); } }
                      }
                      ActionButton {
-@@ -784,7 +784,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -688,6 +688,7 @@ export component ProfileEditorDialog inherits Rectangle {
+     callback pick(int);
+     callback reset(int);
+     callback unlock-nitro;
++    callback open-link(string);
+     /// Undo every change, as the bar's Reset does.
+     callback undo;
+     callback save;
+@@ -700,8 +701,8 @@ export component ProfileEditorDialog inherits Rectangle {
+     property <bool> banner-editable: root.ready && (root.prompt.banner-enabled || root.prompt.colour-shown) && root.prompt.reading == "";
+     property <bool> banner-locked: root.prompt.banner-shown && !root.prompt.banner-enabled;
+     property <bool> avatar-editable: root.ready && root.prompt.avatar-enabled && root.prompt.reading == "";
+-    property <length> banner-height: 210px;
+-    property <length> avatar-size: 120px;
++    property <length> banner-height: 132px;
++    property <length> avatar-size: 88px;
+     property <length> pad: 24px;
+     function stop-editing() {
+         root.editing = 0;
+@@ -784,7 +785,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                          x: parent.width - self.width - 60px; y: 18px; locked: root.banner-locked;
                                      }
                                      if root.prompt.reading == "banner": Text {
@@ -11032,7 +11717,7 @@ index 142c80c..a09e552 100644
                                      }
                                      banner-touch := TouchArea {
                                          enabled: root.banner-editable || root.banner-locked;
-@@ -798,8 +798,8 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -798,8 +799,8 @@ export component ProfileEditorDialog inherits Rectangle {
                                              drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
                                              VerticalLayout {
                                                  padding: 6px; spacing: 2px;
@@ -11043,7 +11728,7 @@ index 142c80c..a09e552 100644
                                              }
                                          }
                                      }
-@@ -813,7 +813,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -813,7 +814,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                  Rectangle {
                                      x: parent.width - self.width - 16px; y: 16px; width: 36px; height: 36px;
                                      IconButton {
@@ -11052,7 +11737,7 @@ index 142c80c..a09e552 100644
                                          fill: #000000b3; tint: #ffffff;
                                          clicked => { root.close(); }
                                      }
-@@ -831,7 +831,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -831,7 +832,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                      if root.prompt.reading == "avatar": Rectangle {
                                          width: root.avatar-size; height: root.avatar-size; border-radius: root.avatar-size / 2;
                                          background: #00000099;
@@ -11061,7 +11746,7 @@ index 142c80c..a09e552 100644
                                      }
                                      avatar-touch := TouchArea {
                                          enabled: root.ready;
-@@ -845,8 +845,8 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -845,8 +846,8 @@ export component ProfileEditorDialog inherits Rectangle {
                                              drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
                                              VerticalLayout {
                                                  padding: 6px; spacing: 2px;
@@ -11072,7 +11757,7 @@ index 142c80c..a09e552 100644
                                              }
                                          }
                                      }
-@@ -862,7 +862,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -862,7 +863,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                      padding: 10px; spacing: 10px;
                                      HorizontalLayout {
                                          spacing: 10px;
@@ -11081,7 +11766,7 @@ index 142c80c..a09e552 100644
                                          Middle {
                                              Rectangle {
                                                  width: 28px; height: 28px; border-radius: 6px;
-@@ -875,17 +875,17 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -875,17 +876,17 @@ export component ProfileEditorDialog inherits Rectangle {
                                                  init => { self.focus-input(); }
                                                  width: 116px; min-height: 32px; text-size: 14px; pad: 8px;
                                                  fill: root.prompt.colour-wrong ? Theme.danger.with-alpha(0.16) : Theme.raised;
@@ -11102,7 +11787,7 @@ index 142c80c..a09e552 100644
                                                  clicked => { root.colour = ""; root.write(3, ""); }
                                              }
                                          }
-@@ -904,7 +904,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -904,7 +905,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                              border-width: root.colour == swatch.hex ? 2px : swatch-touch.has-hover ? 1px : 0px;
                                              border-color: Theme.text;
                                              accessible-role: button;
@@ -11111,7 +11796,7 @@ index 142c80c..a09e552 100644
                                              accessible-action-default => { root.colour = swatch.hex; root.write(3, swatch.hex); }
                                              swatch-touch := TouchArea {
                                                  mouse-cursor: MouseCursor.pointer;
-@@ -920,7 +920,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -920,7 +921,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                      if root.editing != 1: HorizontalLayout {
                                          spacing: 6px; alignment: start;
                                          Text {
@@ -11120,7 +11805,7 @@ index 142c80c..a09e552 100644
                                              color: Theme.text; font-size: 26px; font-weight: 700; overflow: elide;
                                              TouchArea {
                                                  enabled: root.ready && root.prompt.name-enabled;
-@@ -929,14 +929,14 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -929,14 +930,14 @@ export component ProfileEditorDialog inherits Rectangle {
                                              }
                                          }
                                          if root.ready && root.prompt.name-enabled: Middle {
@@ -11137,7 +11822,7 @@ index 142c80c..a09e552 100644
                                          text <=> root.name;
                                          edited(text) => { root.write(0, text); }
                                          accepted => { root.stop-editing(); }
-@@ -947,7 +947,7 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -947,7 +948,7 @@ export component ProfileEditorDialog inherits Rectangle {
                                          Middle { Text { text: root.prompt.handle + " ·"; color: Theme.secondary; font-size: 14px; font-weight: 500; } }
                                          if root.editing != 2: Middle {
                                              Text {
@@ -11146,7 +11831,7 @@ index 142c80c..a09e552 100644
                                                  color: root.pronouns != "" || root.prompt.pronouns-fallback != "" ? Theme.secondary : Theme.muted;
                                                  font-size: 14px; font-weight: 500; overflow: elide;
                                                  TouchArea {
-@@ -958,13 +958,13 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -958,13 +959,13 @@ export component ProfileEditorDialog inherits Rectangle {
                                              }
                                          }
                                          if root.editing != 2 && root.ready: Middle {
@@ -11163,7 +11848,27 @@ index 142c80c..a09e552 100644
                                              text <=> root.pronouns;
                                              edited(text) => { root.write(1, text); }
                                              accepted => { root.stop-editing(); }
-@@ -981,13 +981,13 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -972,6 +973,19 @@ export component ProfileEditorDialog inherits Rectangle {
+                                     }
+                                     if root.prompt.too-long != "": Text { text: root.prompt.too-long; color: Theme.danger; font-size: 13px; wrap: word-wrap; }
+                                 }
++                                Rectangle { height: 1px; background: Theme.line; }
++                                if !root.prompt.loading: VerticalLayout {
++                                    spacing: 8px;
++                                    ProfileHeading { text: @tr("CURRENT ACTIVITY"); }
++                                    if root.prompt.preview.activities.length == 0: Text {
++                                        text: @tr("No activity shared at the moment.");
++                                        color: Theme.muted; font-size: 13px; wrap: word-wrap;
++                                    }
++                                    for activity in root.prompt.preview.activities: ActivityCard {
++                                        activity: activity;
++                                        open-link(url) => { root.open-link(url); }
++                                    }
++                                }
+                                 // Discord's offer, over what Nitro unlocks in a server.
+                                 if root.prompt.offer: Rectangle {
+                                     border-radius: 8px; background: Theme.sunken;
+@@ -981,13 +995,13 @@ export component ProfileEditorDialog inherits Rectangle {
                                          Middle { Image { source: @image-url("icons/lock.svg"); width: 20px; height: 20px; colorize: Theme.accent; } }
                                          VerticalLayout {
                                              horizontal-stretch: 1; spacing: 2px; alignment: center;
@@ -11180,7 +11885,7 @@ index 142c80c..a09e552 100644
                                                  clicked => { root.unlock-nitro(); }
                                              }
                                          }
-@@ -998,9 +998,9 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -998,9 +1012,9 @@ export component ProfileEditorDialog inherits Rectangle {
                                      spacing: 6px;
                                      HorizontalLayout {
                                          spacing: 6px; alignment: start;
@@ -11192,7 +11897,7 @@ index 142c80c..a09e552 100644
                                          }
                                          if !root.prompt.bio-enabled && !root.prompt.loading: Middle {
                                              Image { source: @image-url("icons/lock.svg"); width: 13px; height: 13px; colorize: Theme.muted; }
-@@ -1041,34 +1041,34 @@ export component ProfileEditorDialog inherits Rectangle {
+@@ -1041,34 +1055,34 @@ export component ProfileEditorDialog inherits Rectangle {
                                                  font-size: 14px; color: Theme.text;
                                                  selection-background-color: Theme.accent.with-alpha(0.35);
                                                  selection-foreground-color: Theme.text;
@@ -13426,10 +14131,10 @@ index e6e465c..450589c 100644
      }
 diff --git a/ui/translations/fr.json b/ui/translations/fr.json
 new file mode 100644
-index 0000000..47dd0db
+index 0000000..7f28278
 --- /dev/null
 +++ b/ui/translations/fr.json
-@@ -0,0 +1,1115 @@
+@@ -0,0 +1,1128 @@
 +{
 +  "Off": "Désactivé",
 +  "Cancel": "Annuler",
@@ -14543,14 +15248,27 @@ index 0000000..47dd0db
 +  "Unfollow channel category": "Ne plus suivre la catégorie",
 +  "Unmute server": "Réactiver les notifications du serveur",
 +  "Unpin": "Désépingler",
-+  "Unpin channel": "Désépingler le salon"
++  "Unpin channel": "Désépingler le salon",
++  "View my profile": "Voir mon profil",
++  "Profile overview": "Aperçu",
++  "Mutual connections": "En commun",
++  "CURRENT ACTIVITY": "ACTIVITÉ EN COURS",
++  "No activity shared at the moment.": "Aucune activité partagée pour le moment.",
++  "MUTUAL SERVERS": "SERVEURS EN COMMUN",
++  "MUTUAL FRIENDS": "AMIS EN COMMUN",
++  "Playing": "Joue à",
++  "Streaming": "Diffuse",
++  "Listening to": "Écoute",
++  "Watching": "Regarde",
++  "Competing in": "Participe à",
++  "Hanging out": "En vocal"
 +}
 diff --git a/ui/translations/fr/LC_MESSAGES/yapfast-ui.po b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
 new file mode 100644
-index 0000000..3aab087
+index 0000000..f6c8b23
 --- /dev/null
 +++ b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
-@@ -0,0 +1,3344 @@
+@@ -0,0 +1,3383 @@
 +msgid ""
 +msgstr ""
 +"Content-Type: text/plain; charset=UTF-8\n"
@@ -15172,6 +15890,9 @@ index 0000000..3aab087
 +msgid "COLOURS"
 +msgstr "COULEURS"
 +
++msgid "CURRENT ACTIVITY"
++msgstr "ACTIVITÉ EN COURS"
++
 +msgid "CUSTOM GAMES"
 +msgstr "JEUX PERSONNALISÉS"
 +
@@ -15315,6 +16036,9 @@ index 0000000..3aab087
 +
 +msgid "Colours"
 +msgstr "Couleurs"
++
++msgid "Competing in"
++msgstr "Participe à"
 +
 +msgid "Confirm"
 +msgstr "Confirmer"
@@ -15832,6 +16556,9 @@ index 0000000..3aab087
 +msgid "HOMESERVER"
 +msgstr "SERVEUR MATRIX"
 +
++msgid "Hanging out"
++msgstr "En vocal"
++
 +msgid "Hardware acceleration. Off, Voxcord draws on the processor, which uses about half the memory."
 +msgstr "Accélération matérielle. Désactivée, le processeur dessine l’interface avec une consommation mémoire réduite."
 +
@@ -16096,6 +16823,9 @@ index 0000000..3aab087
 +msgid "Listening"
 +msgstr "Écoute"
 +
++msgid "Listening to"
++msgstr "Écoute"
++
 +msgid "Live"
 +msgstr "En direct"
 +
@@ -16140,6 +16870,12 @@ index 0000000..3aab087
 +
 +msgid "MICROPHONE"
 +msgstr "MICROPHONE"
++
++msgid "MUTUAL FRIENDS"
++msgstr "AMIS EN COMMUN"
++
++msgid "MUTUAL SERVERS"
++msgstr "SERVEURS EN COMMUN"
 +
 +msgid "Make unique profiles for each server"
 +msgstr "Personnaliser le profil par serveur"
@@ -16285,6 +17021,9 @@ index 0000000..3aab087
 +msgid "Muting"
 +msgstr "Micro coupé"
 +
++msgid "Mutual connections"
++msgstr "En commun"
++
 +msgid "My account"
 +msgstr "Mon compte"
 +
@@ -16356,6 +17095,9 @@ index 0000000..3aab087
 +
 +msgid "No Logs Yet"
 +msgstr "Aucune entrée pour le moment"
++
++msgid "No activity shared at the moment."
++msgstr "Aucune activité partagée pour le moment."
 +
 +msgid "No audio devices found. Connect one, then refresh."
 +msgstr "Aucun périphérique audio détecté. Branche-le, puis actualise."
@@ -16648,6 +17390,9 @@ index 0000000..3aab087
 +msgid "Play GIFs, emoji and stickers"
 +msgstr "Animer les GIF, émojis et autocollants"
 +
++msgid "Playing"
++msgstr "Joue à"
++
 +msgid "Playing for "
 +msgstr "Joue depuis "
 +
@@ -16707,6 +17452,9 @@ index 0000000..3aab087
 +
 +msgid "Profile"
 +msgstr "Profil"
++
++msgid "Profile overview"
++msgstr "Aperçu"
 +
 +msgid "Prompt members to reply to welcome messages with a sticker."
 +msgstr "Proposer de répondre aux messages de bienvenue avec un autocollant."
@@ -17359,6 +18107,9 @@ index 0000000..3aab087
 +msgid "Streamer mode"
 +msgstr "Mode streamer"
 +
++msgid "Streaming"
++msgstr "Diffuse"
++
 +msgid "Streaming to "
 +msgstr "Partage vers "
 +
@@ -17722,6 +18473,9 @@ index 0000000..3aab087
 +msgid "View full profile"
 +msgstr "Voir le profil complet"
 +
++msgid "View my profile"
++msgstr "Voir mon profil"
++
 +msgid "Visit site"
 +msgstr "Ouvrir le site"
 +
@@ -17793,6 +18547,9 @@ index 0000000..3aab087
 +
 +msgid "Watch stream?"
 +msgstr "Regarder le partage ?"
++
++msgid "Watching"
++msgstr "Regarde"
 +
 +msgid "We broke something. Come back later."
 +msgstr "Le journal est indisponible. Réessaie plus tard."
@@ -18542,7 +19299,7 @@ index 84be8a2..7a18083 100644
          ListView {
              vertical-stretch: 1;
 diff --git a/ui/yapfast.slint b/ui/yapfast.slint
-index 2b2e644..a752698 100644
+index 2b2e644..39f59bd 100644
 --- a/ui/yapfast.slint
 +++ b/ui/yapfast.slint
 @@ -18,7 +18,7 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
@@ -18580,7 +19337,15 @@ index 2b2e644..a752698 100644
      /// rather than the desktop; see docs/chat-ui.md.
      in property <bool> own-title-bar;
      in property <bool> window-maximized;
-@@ -334,7 +334,7 @@ export component YapfastWindow inherits Window {
+@@ -210,6 +210,7 @@ export component YapfastWindow inherits Window {
+     in-out property <string> profile-editor-colour;
+     /// Opens the editor of the main Discord profile, as Edit Profile does.
+     callback edit-profile;
++    callback view-own-profile;
+     callback write-profile(int, string);
+     callback pick-profile-picture(int);
+     callback reset-profile-picture(int);
+@@ -334,7 +335,7 @@ export component YapfastWindow inherits Window {
      /// Whether it does: shown until someone hides it.
      in-out property <bool> profile-panel: true;
      callback profile-panel-toggled(bool);
@@ -18589,7 +19354,7 @@ index 2b2e644..a752698 100644
      in property <bool> panel-profile-shown;
      in property <ProfileData> panel-profile;
      callback enlarge-panel-profile;
-@@ -347,7 +347,7 @@ export component YapfastWindow inherits Window {
+@@ -347,7 +348,7 @@ export component YapfastWindow inherits Window {
      property <bool> room-has-activity: root.room-activity != "" || root.room-activity-emoji != "";
      in property <[MemberRow]> roster;
      in property <string> roster-note;
@@ -18598,7 +19363,7 @@ index 2b2e644..a752698 100644
      in-out property <bool> member-list: true;
      callback member-list-toggled(bool);
      /// A Discord account is linked, so its settings show.
-@@ -574,12 +574,12 @@ export component YapfastWindow inherits Window {
+@@ -574,12 +575,12 @@ export component YapfastWindow inherits Window {
      /// the pictures of the custom emoji in sight as they come in.
      callback emoji-scrolled-to(length, length);
      in-out property <string> emoji-query;
@@ -18613,7 +19378,7 @@ index 2b2e644..a752698 100644
      /// and the site it goes to.
      in property <string> leaving-link;
      in property <string> leaving-site;
-@@ -781,6 +781,7 @@ export component YapfastWindow inherits Window {
+@@ -781,6 +782,7 @@ export component YapfastWindow inherits Window {
      in property <int> share-resolution: 1;
      in property <int> share-fps: 30;
      in property <bool> share-high-quality;
@@ -18621,7 +19386,7 @@ index 2b2e644..a752698 100644
      in property <string> share-status;
      /// The newest preview of what's shared, refreshed by stream-tick while sharing.
      in-out property <image> share-frame;
-@@ -1035,6 +1036,9 @@ export component YapfastWindow inherits Window {
+@@ -1035,6 +1037,9 @@ export component YapfastWindow inherits Window {
          if !self.settings-open && self.theme-editor { self.cancel-theme(); }
      }
      in-out property <int> settings-section;
@@ -18631,7 +19396,7 @@ index 2b2e644..a752698 100644
      /// Preferences people set in the settings; preferences-changed reports any change.
      in-out property <bool> twelve-hour-clock;
      in-out property <bool> clock-seconds;
-@@ -1043,7 +1047,7 @@ export component YapfastWindow inherits Window {
+@@ -1043,7 +1048,7 @@ export component YapfastWindow inherits Window {
      in-out property <bool> link-previews: true;
      in-out property <bool> reply-ping-default: true;
      in-out property <bool> strip-tracking: true;
@@ -18640,7 +19405,7 @@ index 2b2e644..a752698 100644
      in-out property <int> animate;
      in-out property <bool> unmute-on-join;
      in-out property <bool> deafen-on-join;
-@@ -1072,8 +1076,8 @@ export component YapfastWindow inherits Window {
+@@ -1072,8 +1077,8 @@ export component YapfastWindow inherits Window {
      in-out property <bool> share-typing: true;
      in-out property <bool> notifications: true;
      in-out property <bool> notification-text: true;
@@ -18651,7 +19416,7 @@ index 2b2e644..a752698 100644
      /// own, which each-sound-changed reports. play-sound plays one to try it.
      in-out property <int> sound-set;
      in-out property <int> sound-volume: 100;
-@@ -1082,26 +1086,26 @@ export component YapfastWindow inherits Window {
+@@ -1082,26 +1087,26 @@ export component YapfastWindow inherits Window {
      callback each-sound-changed(int, int);
      callback play-sound(int);
      /// Rendering with the GPU, as set and as this process does; a change
@@ -18684,7 +19449,7 @@ index 2b2e644..a752698 100644
      /// claim them, outside the preview.
      in-out property <bool> discord-links;
      in property <bool> discord-links-available;
-@@ -1144,6 +1148,10 @@ export component YapfastWindow inherits Window {
+@@ -1144,6 +1149,10 @@ export component YapfastWindow inherits Window {
      in-out property <bool> camera-testing;
      in-out property <image> camera-preview;
      in property <string> camera-note;
@@ -18695,7 +19460,7 @@ index 2b2e644..a752698 100644
      in-out property <int> microphone-index;
      in-out property <int> speaker-index;
      /// The microphone level from 0 to 1, refreshed by meter-tick while the input menu is open.
-@@ -1197,11 +1205,11 @@ export component YapfastWindow inherits Window {
+@@ -1197,11 +1206,11 @@ export component YapfastWindow inherits Window {
      /// in share-resolution, frame rate, and quality, as in share-high-quality.
      /// Where the system's dialog picks a screen or window (!share-lists), a
      /// choice of it comes before the cameras.
@@ -18710,7 +19475,7 @@ index 2b2e644..a752698 100644
      /// and the cameras: asked for as the share menu opens, which shows once
      /// they're in, with the first picked. The screens' pictures come after.
      in property <bool> share-lists;
-@@ -1213,7 +1221,7 @@ export component YapfastWindow inherits Window {
+@@ -1213,7 +1222,7 @@ export component YapfastWindow inherits Window {
      /// system's dialog picks and there's no camera goes straight to the dialog.
      public function show-share-menu() {
          if root.pick-switch && !root.share-lists && root.share-cameras.length == 0 {
@@ -18719,7 +19484,7 @@ index 2b2e644..a752698 100644
          } else {
              share-menu.show();
          }
-@@ -1284,6 +1292,9 @@ export component YapfastWindow inherits Window {
+@@ -1284,6 +1293,9 @@ export component YapfastWindow inherits Window {
      callback select-camera(int);
      /// Film to try the camera, or stop.
      callback test-camera(bool);
@@ -18729,7 +19494,7 @@ index 2b2e644..a752698 100644
      callback gate-meter-tick;
      callback reply(string);
      callback edit(string);
-@@ -1331,11 +1342,11 @@ export component YapfastWindow inherits Window {
+@@ -1331,11 +1343,11 @@ export component YapfastWindow inherits Window {
      callback close-image();
      callback cancel-compose;
      callback dismiss-notice;
@@ -18743,7 +19508,7 @@ index 2b2e644..a752698 100644
      // also leaves the conversation 420px.
      in-out property <length> aside-width: 420px;
      out property <length> aside-shown: max(320px, min(800px, root.aside-width));
-@@ -1408,7 +1419,7 @@ export component YapfastWindow inherits Window {
+@@ -1408,7 +1420,7 @@ export component YapfastWindow inherits Window {
      property <int> sign-in-focus;
      public function focus-sign-in() { root.sign-in-focus += 1; }
      public function timeline-at-end() -> bool { return root.follow-latest; }
@@ -18752,7 +19517,7 @@ index 2b2e644..a752698 100644
      in property <bool> window-focused;
      // The newest message was read since the "New" divider was placed, so the bar
      // that jumps back to it is gone.
-@@ -1562,10 +1573,10 @@ export component YapfastWindow inherits Window {
+@@ -1562,10 +1574,10 @@ export component YapfastWindow inherits Window {
          root.member-list-toggled(root.member-list);
      }
  
@@ -18765,7 +19530,7 @@ index 2b2e644..a752698 100644
      // microphone on, once connected.
      changed voice-ready => {
          if !root.voice-ready { return; }
-@@ -1586,7 +1597,7 @@ export component YapfastWindow inherits Window {
+@@ -1586,7 +1598,7 @@ export component YapfastWindow inherits Window {
      changed input-open => { root.input-level = 0; root.meter-note = ""; root.metering(root.input-open); }
      Timer { interval: 50ms; running: root.input-open; triggered => { root.meter-tick(); } }
      // The Discord gate's meter runs while voice settings show it.
@@ -18774,7 +19539,7 @@ index 2b2e644..a752698 100644
      // Cameras stop making pictures for a grid that left the screen, and one
      // starts in the corner.
      changed grid-shown => { root.stream-tick(); }
-@@ -1594,6 +1605,9 @@ export component YapfastWindow inherits Window {
+@@ -1594,6 +1606,9 @@ export component YapfastWindow inherits Window {
      // The camera films for the preview only while the voice settings show it.
      property <bool> camera-filming: root.settings-open && root.settings-section == 1 && root.camera-testing;
      changed camera-filming => { root.camera-preview = @image-url(""); root.test-camera(self.camera-filming); }
@@ -18784,7 +19549,7 @@ index 2b2e644..a752698 100644
      changed gate-metered => { root.gate-level = -100; root.gate-sending = false; root.gate-meter-note = ""; root.gate-metering(self.gate-metered); }
      Timer { interval: 50ms; running: root.gate-metered; triggered => { root.gate-meter-tick(); } }
      Timer { interval: 33ms; running: root.sharing || root.watching || root.video-active || root.camera-filming || (root.call-video && (root.grid-shown || root.pip-shown)); triggered => { root.stream-tick(); } }
-@@ -1603,8 +1617,8 @@ export component YapfastWindow inherits Window {
+@@ -1603,8 +1618,8 @@ export component YapfastWindow inherits Window {
          width: 280px;
          close-policy: PopupClosePolicy.close-on-click-outside;
          DeviceMenu {
@@ -18795,7 +19560,7 @@ index 2b2e644..a752698 100644
              select(index) => { root.select-microphone(index); }
              settings => { root.open-settings(); }
              Rectangle { height: 1px; background: Theme.line; }
-@@ -1617,8 +1631,8 @@ export component YapfastWindow inherits Window {
+@@ -1617,8 +1632,8 @@ export component YapfastWindow inherits Window {
          width: 280px;
          close-policy: PopupClosePolicy.close-on-click-outside;
          DeviceMenu {
@@ -18806,7 +19571,7 @@ index 2b2e644..a752698 100644
              select(index) => { root.select-speaker(index); }
              settings => { root.open-settings(); }
          }
-@@ -1628,6 +1642,7 @@ export component YapfastWindow inherits Window {
+@@ -1628,6 +1643,7 @@ export component YapfastWindow inherits Window {
      property <int> pick-resolution;
      property <int> pick-fps;
      property <bool> pick-high-quality;
@@ -18814,7 +19579,7 @@ index 2b2e644..a752698 100644
      // The menu switches what's shared, as it was when it opened.
      property <bool> pick-switch;
      function open-share-menu(x: length, y: length) {
-@@ -1636,6 +1651,7 @@ export component YapfastWindow inherits Window {
+@@ -1636,6 +1652,7 @@ export component YapfastWindow inherits Window {
          root.pick-resolution = root.share-resolution;
          root.pick-fps = root.share-fps;
          root.pick-high-quality = root.share-high-quality;
@@ -18822,7 +19587,7 @@ index 2b2e644..a752698 100644
          root.pick-switch = root.sharing;
          // Shown once the list is in, so it opens at its full height.
          root.list-share-sources();
-@@ -1645,6 +1661,7 @@ export component YapfastWindow inherits Window {
+@@ -1645,6 +1662,7 @@ export component YapfastWindow inherits Window {
          root.soundboard-opened();
          soundboard-menu.show();
      }
@@ -18830,7 +19595,7 @@ index 2b2e644..a752698 100644
      soundboard-menu := PopupWindow {
          x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
          y: max(8px, root.menu-y - self.height - 6px);
-@@ -1652,6 +1669,8 @@ export component YapfastWindow inherits Window {
+@@ -1652,6 +1670,8 @@ export component YapfastWindow inherits Window {
          close-policy: PopupClosePolicy.close-on-click-outside;
          board := Soundboard {
              rows: root.soundboard-rows; note: root.soundboard-note; emoji-font: root.emoji-font;
@@ -18839,7 +19604,7 @@ index 2b2e644..a752698 100644
              play(id) => { root.play-soundboard(id); }
              preview(id) => { root.preview-soundboard(id); }
              favorite(id, on) => { root.favorite-soundboard(id, on); }
-@@ -1669,11 +1688,12 @@ export component YapfastWindow inherits Window {
+@@ -1669,11 +1689,12 @@ export component YapfastWindow inherits Window {
              dialog: !root.share-lists; switching: root.pick-switch;
              pick-source <=> root.pick-source; pick-resolution <=> root.pick-resolution; pick-fps <=> root.pick-fps;
              pick-high-quality <=> root.pick-high-quality;
@@ -18855,7 +19620,7 @@ index 2b2e644..a752698 100644
                  }
                  share-menu.close();
              }
-@@ -1826,16 +1846,16 @@ export component YapfastWindow inherits Window {
+@@ -1826,16 +1847,16 @@ export component YapfastWindow inherits Window {
              plus-content := VerticalLayout {
                  padding: 6px; spacing: 2px;
                  MenuItem {
@@ -18875,7 +19640,15 @@ index 2b2e644..a752698 100644
                      clicked => { root.open-poll(); plus-menu.close(); }
                  }
              }
-@@ -1959,13 +1979,13 @@ export component YapfastWindow inherits Window {
+@@ -1852,6 +1873,7 @@ export component YapfastWindow inherits Window {
+             game-duration-due => { root.game-duration-due(); }
+             choose(status) => { root.set-status(status); status-menu.close(); }
+             custom-status => { root.open-status(); status-menu.close(); }
++            view-profile => { status-menu.close(); root.view-own-profile(); }
+             edit-profile => { root.edit-profile(); status-menu.close(); }
+         }
+     }
+@@ -1959,13 +1981,13 @@ export component YapfastWindow inherits Window {
              background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 10px;
              drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
              clip: true;
@@ -18892,7 +19665,7 @@ index 2b2e644..a752698 100644
                  }
                  if root.expression-tab == 0: GifPicker {
                      view: root.gif-view; query <=> root.gif-query; tiles: root.gif-tiles;
-@@ -2181,17 +2201,17 @@ export component YapfastWindow inherits Window {
+@@ -2181,17 +2203,17 @@ export component YapfastWindow inherits Window {
                                  }
                                  if root.header-server != "" && root.header-invite: IconButton {
                                      x: parent.width - self.width - 10px;
@@ -18913,7 +19686,7 @@ index 2b2e644..a752698 100644
                                      clicked => { root.open-new-dm(); }
                                  }
                                  Rectangle { y: parent.height - 1px; height: 1px; background: Theme.edge; }
-@@ -2286,7 +2306,7 @@ export component YapfastWindow inherits Window {
+@@ -2286,7 +2308,7 @@ export component YapfastWindow inherits Window {
                              background: account-touch.has-hover ? Theme.hover : transparent;
                              accessible-role: button;
                              accessible-enabled: root.discord-linked;
@@ -18922,7 +19695,7 @@ index 2b2e644..a752698 100644
                              accessible-action-default => { if root.discord-linked { root.open-status-menu(); } }
                              VerticalLayout {
                                  alignment: center; padding-left: 6px; padding-right: 6px;
-@@ -2300,9 +2320,9 @@ export component YapfastWindow inherits Window {
+@@ -2300,9 +2322,9 @@ export component YapfastWindow inherits Window {
                          }
                          DeviceToggle {
                              icon: root.shown-muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
@@ -18934,7 +19707,7 @@ index 2b2e644..a752698 100644
                              enabled: root.voice-ready || !root.voice-active;
                              clicked => { root.toggle-mute(); }
                              menu => {
-@@ -2312,9 +2332,9 @@ export component YapfastWindow inherits Window {
+@@ -2312,9 +2334,9 @@ export component YapfastWindow inherits Window {
                          }
                          DeviceToggle {
                              icon: root.shown-deafened ? @image-url("icons/headphone-off.svg") : @image-url("icons/headphones.svg");
@@ -18946,7 +19719,7 @@ index 2b2e644..a752698 100644
                              enabled: root.voice-ready || !root.voice-active;
                              clicked => { root.toggle-deafen(); }
                              menu => {
-@@ -2323,11 +2343,11 @@ export component YapfastWindow inherits Window {
+@@ -2323,11 +2345,11 @@ export component YapfastWindow inherits Window {
                              }
                          }
                          if !root.preview && !root.online: IconButton {
@@ -18960,7 +19733,7 @@ index 2b2e644..a752698 100644
                              clicked => { root.settings-open = true; root.refresh-devices(); }
                          }
                      }
-@@ -2360,7 +2380,7 @@ export component YapfastWindow inherits Window {
+@@ -2360,7 +2382,7 @@ export component YapfastWindow inherits Window {
                          if root.room-parent != "" && root.room-selected: parent-name := Text {
                              text: root.room-parent; font-size: 16px; font-weight: 700; vertical-alignment: center;
                              color: parent-touch.has-hover ? Theme.text : Theme.secondary;
@@ -18969,7 +19742,7 @@ index 2b2e644..a752698 100644
                              accessible-action-default => { root.select-room(root.room-parent-id); }
                              parent-touch := TouchArea {
                                  mouse-cursor: MouseCursor.pointer;
-@@ -2373,7 +2393,7 @@ export component YapfastWindow inherits Window {
+@@ -2373,7 +2395,7 @@ export component YapfastWindow inherits Window {
                          if root.friends-open: Image { source: @image-url("icons/users.svg"); width: 22px; image-fit: contain; colorize: Theme.muted; }
                          if root.browse-open: Image { source: @image-url("icons/hash.svg"); width: 22px; image-fit: contain; colorize: Theme.muted; }
                          Text {
@@ -18978,7 +19751,7 @@ index 2b2e644..a752698 100644
                              color: root.room-selected || root.requests-open || root.friends-open || root.browse-open ? Theme.text : Theme.secondary;
                              font-size: 16px; font-weight: 700; overflow: elide; vertical-alignment: center;
                              // The name gives way to what follows it, and fills the bar when nothing does.
-@@ -2385,7 +2405,7 @@ export component YapfastWindow inherits Window {
+@@ -2385,7 +2407,7 @@ export component YapfastWindow inherits Window {
                          if root.has-topic: topic-area := Rectangle {
                              horizontal-stretch: 1; min-width: 40px;
                              accessible-role: button;
@@ -18987,7 +19760,7 @@ index 2b2e644..a752698 100644
                              accessible-action-default => { root.topic-open = true; }
                              StyledText {
                                  width: parent.width; height: parent.height;
-@@ -2410,7 +2430,7 @@ export component YapfastWindow inherits Window {
+@@ -2410,7 +2432,7 @@ export component YapfastWindow inherits Window {
                                  alignment: start;
                                  Rectangle {
                                      height: 24px; border-radius: 12px; background: Theme.raised;
@@ -18996,7 +19769,7 @@ index 2b2e644..a752698 100644
                                      HorizontalLayout {
                                          padding-left: 10px; padding-right: 10px;
                                          Middle {
-@@ -2425,20 +2445,20 @@ export component YapfastWindow inherits Window {
+@@ -2425,20 +2447,20 @@ export component YapfastWindow inherits Window {
                          }
                          if root.friends-open: Middle { Rectangle { width: 1px; height: 24px; background: Theme.line; } }
                          if root.friends-open: Middle {
@@ -19022,7 +19795,7 @@ index 2b2e644..a752698 100644
                                  small: true; primary: root.dm-friend == 3;
                                  clicked => { root.befriend(root.dm-person); }
                              }
-@@ -2446,21 +2466,21 @@ export component YapfastWindow inherits Window {
+@@ -2446,21 +2468,21 @@ export component YapfastWindow inherits Window {
                          if root.has-voice-chat: Middle {
                              IconButton {
                                  icon: root.voice-chat ? @image-url("icons/volume-2.svg") : @image-url("icons/message-square-text.svg");
@@ -19047,7 +19820,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.threads-open ? Theme.text : Theme.secondary;
                                  clicked => {
-@@ -2473,7 +2493,7 @@ export component YapfastWindow inherits Window {
+@@ -2473,7 +2495,7 @@ export component YapfastWindow inherits Window {
                          if root.can-notify: Middle {
                              IconButton {
                                  icon: root.room-muted ? @image-url("icons/bell-off.svg") : @image-url("icons/bell.svg");
@@ -19056,7 +19829,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => {
                                      root.open-context-menu("notifications:" + root.room-id, false,
-@@ -2483,7 +2503,7 @@ export component YapfastWindow inherits Window {
+@@ -2483,7 +2505,7 @@ export component YapfastWindow inherits Window {
                          }
                          if root.can-pin: Middle {
                              IconButton {
@@ -19065,7 +19838,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.pins-open ? Theme.text : Theme.secondary;
                                  // Where the pins open from elsewhere, such as a pin's notice.
-@@ -2502,7 +2522,7 @@ export component YapfastWindow inherits Window {
+@@ -2502,7 +2524,7 @@ export component YapfastWindow inherits Window {
                          if root.can-add-people: Middle {
                              IconButton {
                                  icon: @image-url("icons/user-plus.svg");
@@ -19074,7 +19847,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.add-people-open ? Theme.text : Theme.secondary;
                                  clicked => {
-@@ -2517,7 +2537,7 @@ export component YapfastWindow inherits Window {
+@@ -2517,7 +2539,7 @@ export component YapfastWindow inherits Window {
                          if root.voice-here && root.voice-ready && CallLink.measured: Middle {
                              Rectangle {
                                  width: 32px; height: 32px;
@@ -19083,7 +19856,7 @@ index 2b2e644..a752698 100644
                                  SignalIcon { width: 20px; height: 20px; quality: CallLink.quality; }
                                  LinkTouch {
                                      tip-side: 2;
-@@ -2528,7 +2548,7 @@ export component YapfastWindow inherits Window {
+@@ -2528,7 +2550,7 @@ export component YapfastWindow inherits Window {
                          if root.members-available && root.room-direct: Middle {
                              HeaderToggle {
                                  icon: @image-url("icons/users.svg"); text: root.members; open: root.member-list;
@@ -19092,7 +19865,7 @@ index 2b2e644..a752698 100644
                                  clicked => { root.toggle-members(); }
                              }
                          }
-@@ -2537,7 +2557,7 @@ export component YapfastWindow inherits Window {
+@@ -2537,7 +2559,7 @@ export component YapfastWindow inherits Window {
                          if root.members-available && !root.room-direct: Middle {
                              IconButton {
                                  icon: @image-url("icons/users.svg");
@@ -19101,7 +19874,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.member-list ? Theme.text : Theme.secondary;
                                  clicked => { root.toggle-members(); }
-@@ -2546,7 +2566,7 @@ export component YapfastWindow inherits Window {
+@@ -2546,7 +2568,7 @@ export component YapfastWindow inherits Window {
                          // A thread's, after its member list, as in Discord's toolbar.
                          if root.room-parent != "" && root.room-selected: Middle {
                              IconButton {
@@ -19110,7 +19883,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => {
                                      root.open-context-menu("thread-toolbar:" + root.room-id, false,
-@@ -2556,7 +2576,7 @@ export component YapfastWindow inherits Window {
+@@ -2556,7 +2578,7 @@ export component YapfastWindow inherits Window {
                          }
                          if root.profile-available: Middle {
                              IconButton {
@@ -19119,7 +19892,7 @@ index 2b2e644..a752698 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => { root.toggle-profile-panel(); }
                              }
-@@ -2587,7 +2607,7 @@ export component YapfastWindow inherits Window {
+@@ -2587,7 +2609,7 @@ export component YapfastWindow inherits Window {
                                  padding-left: 16px; padding-right: 16px; padding-top: 7px; padding-bottom: 7px; spacing: 10px;
                                  Image { source: @image-url("icons/triangle-alert.svg"); width: 16px; image-fit: contain; colorize: Theme.accent; }
                                  Text {
@@ -19128,7 +19901,7 @@ index 2b2e644..a752698 100644
                                      color: Theme.secondary; font-size: 14px; font-weight: 500; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1;
                                  }
                              }
-@@ -2700,7 +2720,7 @@ export component YapfastWindow inherits Window {
+@@ -2700,7 +2722,7 @@ export component YapfastWindow inherits Window {
                                  width: parent.width; height: parent.height;
                                  focus-on-click: false;
                                  accessible-role: list;
@@ -19137,7 +19910,7 @@ index 2b2e644..a752698 100644
                                  key-pressed(event) => {
                                      if root.messages.length == 0 { return reject; }
                                      if root.confirm-delete != "" && root.confirm-delete == root.active-item {
-@@ -2869,11 +2889,11 @@ export component YapfastWindow inherits Window {
+@@ -2869,11 +2891,11 @@ export component YapfastWindow inherits Window {
                                                          if message.day != "" && message.unread-start: Text { text: "·"; color: Theme.muted; font-size: 13px; font-weight: 700; vertical-alignment: center; }
                                                          if message.unread-start: Rectangle {
                                                              width: new-text.preferred-width + 10px;
@@ -19151,7 +19924,7 @@ index 2b2e644..a752698 100644
                                                                      horizontal-alignment: center; vertical-alignment: center;
                                                                  }
                                                              }
-@@ -2928,9 +2948,9 @@ export component YapfastWindow inherits Window {
+@@ -2928,9 +2950,9 @@ export component YapfastWindow inherits Window {
                                                      padding: 3px; spacing: 0px;
                                                      if root.confirm-delete == message.item: HorizontalLayout {
                                                          spacing: 4px; padding-left: 8px;
@@ -19164,7 +19937,7 @@ index 2b2e644..a752698 100644
                                                      }
                                                      // Frequent reactions, then the picker, Edit on your own message or
                                                      // Reply on someone else's, and everything else under More.
-@@ -2948,17 +2968,17 @@ export component YapfastWindow inherits Window {
+@@ -2948,17 +2970,17 @@ export component YapfastWindow inherits Window {
                                                                  Rectangle { width: 1px; height: 20px; background: Theme.line; }
                                                              }
                                                              IconButton {
@@ -19186,7 +19959,7 @@ index 2b2e644..a752698 100644
                                                              clicked => {
                                                                  root.anchor(self.absolute-position.x, self.absolute-position.y, self.width, self.height, false);
                                                                  root.open-menu(message);
-@@ -3074,7 +3094,7 @@ export component YapfastWindow inherits Window {
+@@ -3074,7 +3096,7 @@ export component YapfastWindow inherits Window {
                                      Image { source: root.is-editing ? @image-url("icons/pencil.svg") : @image-url("icons/reply.svg"); width: 16px; image-fit: contain; colorize: Theme.muted; }
                                      Text { text: root.compose-label; color: Theme.secondary; font-size: 14px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                      if !root.is-editing: VerticalLayout { alignment: center; PingToggle { on: root.reply-ping; toggled => { root.toggle-reply-ping(); } } }
@@ -19195,7 +19968,7 @@ index 2b2e644..a752698 100644
                                  }
                              }
                              composer-box := Rectangle {
-@@ -3108,7 +3128,7 @@ export component YapfastWindow inherits Window {
+@@ -3108,7 +3130,7 @@ export component YapfastWindow inherits Window {
                                              // of uploading a file or starting a thread.
                                              IconButton {
                                                  icon: @image-url("icons/circle-plus.svg");
@@ -19204,7 +19977,7 @@ index 2b2e644..a752698 100644
                                                  glyph: 22px;
                                                  enabled: root.can-attach || root.can-start-threads || root.can-create-polls;
                                                  clicked => {
-@@ -3123,8 +3143,8 @@ export component YapfastWindow inherits Window {
+@@ -3123,8 +3145,8 @@ export component YapfastWindow inherits Window {
                                              }
                                          }
                                          composer := Composer {
@@ -19215,7 +19988,7 @@ index 2b2e644..a752698 100644
                                              edited(text) => { root.draft-edited(text); }
                                              accepted => { root.send(); }
                                              suggesting: !root.suggesting-aside && (root.mentions.length > 0 || root.emoji-suggestions.length > 0);
-@@ -3162,7 +3182,7 @@ export component YapfastWindow inherits Window {
+@@ -3162,7 +3184,7 @@ export component YapfastWindow inherits Window {
                                          if root.can-pick-gifs: VerticalLayout {
                                              alignment: end; padding-bottom: 8px;
                                              gif-button := IconButton {
@@ -19224,7 +19997,7 @@ index 2b2e644..a752698 100644
                                                  glyph: 22px; enabled: root.composer-enabled;
                                                  tint: root.expressions-open && root.expression-tab == 0 ? Theme.text : Theme.secondary;
                                                  clicked => {
-@@ -3174,7 +3194,7 @@ export component YapfastWindow inherits Window {
+@@ -3174,7 +3196,7 @@ export component YapfastWindow inherits Window {
                                          VerticalLayout {
                                              alignment: end; padding-bottom: 8px;
                                              emoji-button := IconButton {
@@ -19233,7 +20006,7 @@ index 2b2e644..a752698 100644
                                                  glyph: 22px; enabled: root.composer-enabled;
                                                  tint: root.react-item == "yapfast:composer" && (!root.expressions-open || root.expression-tab == 1) ? Theme.text : Theme.secondary;
                                                  clicked => {
-@@ -3191,7 +3211,7 @@ export component YapfastWindow inherits Window {
+@@ -3191,7 +3213,7 @@ export component YapfastWindow inherits Window {
                                              alignment: end; padding-bottom: 8px;
                                              IconButton {
                                                  icon: @image-url("icons/send-horizontal.svg");
@@ -19242,7 +20015,7 @@ index 2b2e644..a752698 100644
                                                  enabled: root.can-send; emphasis: root.can-send;
                                                  clicked => { root.send(); }
                                              }
-@@ -3396,12 +3416,12 @@ export component YapfastWindow inherits Window {
+@@ -3396,12 +3418,12 @@ export component YapfastWindow inherits Window {
          x: (root.pip-left ? self.left : self.right) + self.drag-x;
          y: (root.pip-bottom ? self.bottom : self.top) + self.drag-y;
          animate x, y { duration: self.dragging ? 0ms : 180ms; easing: ease-out; }
@@ -19257,7 +20030,7 @@ index 2b2e644..a752698 100644
          viewers: root.pip-kind == 1 ? root.watch-viewers : root.pip-kind == 2 ? root.share-viewers : [];
          viewer-names: root.pip-kind == 1 ? root.watch-viewer-names : root.pip-kind == 2 ? root.share-viewer-names : "";
          open-call => {
-@@ -3505,6 +3525,8 @@ export component YapfastWindow inherits Window {
+@@ -3505,6 +3527,8 @@ export component YapfastWindow inherits Window {
              sign-out => { root.settings-open = false; root.logout(); }
          }
          if root.settings-section == 7: AppearanceSettings {
@@ -19266,7 +20039,7 @@ index 2b2e644..a752698 100644
              themes: root.themes; theme-id: root.theme-id;
              editor: root.theme-editor; colours: root.theme-colours;
              theme-name <=> root.theme-name; theme-dark <=> root.theme-dark;
-@@ -3522,11 +3544,27 @@ export component YapfastWindow inherits Window {
+@@ -3522,11 +3546,27 @@ export component YapfastWindow inherits Window {
              cancel-theme => { root.cancel-theme(); }
              delete-theme => { root.delete-theme(); }
          }
@@ -19294,7 +20067,7 @@ index 2b2e644..a752698 100644
              unmute-on-join <=> root.unmute-on-join; level-voice <=> root.level-voice;
              noise-suppression <=> root.noise-suppression; noise-strength <=> root.noise-strength; dereverb <=> root.dereverb; discord: root.discord-linked;
              sensitivity <=> root.sensitivity; gate-level: root.gate-level; gate-sending: root.gate-sending; gate-meter-note: root.gate-meter-note;
-@@ -3737,7 +3775,7 @@ export component YapfastWindow inherits Window {
+@@ -3737,7 +3777,7 @@ export component YapfastWindow inherits Window {
              close => { root.close-add-people(); }
          }
      }
@@ -19303,7 +20076,15 @@ index 2b2e644..a752698 100644
      // their card over it; Escape or a click outside closes it.
      role-motion := PopupMotion { open: root.role-open; }
      if role-motion.shown: Rectangle {
-@@ -4077,7 +4115,7 @@ export component YapfastWindow inherits Window {
+@@ -3958,6 +3998,7 @@ export component YapfastWindow inherits Window {
+         pick(kind) => { root.pick-profile-picture(kind); }
+         reset(kind) => { root.reset-profile-picture(kind); }
+         unlock-nitro => { root.unlock-nitro(); }
++        open-link(url) => { root.open-link(url); }
+         undo => { root.undo-profile(); }
+         save => { root.save-profile(); }
+         close => { root.close-profile-editor(); }
+@@ -4077,7 +4118,7 @@ export component YapfastWindow inherits Window {
          width: zoom-text.preferred-width + 28px; height: 36px;
          border-radius: 18px; background: Theme.tooltip;
          drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 3px;
@@ -19312,7 +20093,7 @@ index 2b2e644..a752698 100644
          zoom-text := Text { text: root.zoom-note; color: Theme.text; font-size: 15px; font-weight: 700; }
      }
      // Who reacted, over the reaction the pointer stays on: its emoji, then
-@@ -4128,7 +4166,7 @@ export component YapfastWindow inherits Window {
+@@ -4128,7 +4169,7 @@ export component YapfastWindow inherits Window {
      if root.dragging || root.drop-refusal != "": Rectangle {
          background: #000000a6;
          accessible-role: groupbox;
@@ -19321,7 +20102,7 @@ index 2b2e644..a752698 100644
          TouchArea { clicked => { root.drop-refusal = ""; } }
          // Over the part the files go to: the thread beside, or the rest.
          property <length> aside-part: root.workspace && root.aside-docked ? root.aside-shown : 0px;
-@@ -4152,11 +4190,11 @@ export component YapfastWindow inherits Window {
+@@ -4152,11 +4193,11 @@ export component YapfastWindow inherits Window {
                  }
                  if root.dragging: HorizontalLayout {
                      alignment: center;
@@ -19335,7 +20116,7 @@ index 2b2e644..a752698 100644
                      color: Theme.on-accent; font-size: 15px; horizontal-alignment: center; wrap: word-wrap;
                  }
                  if !root.dragging: Text {
-@@ -4169,7 +4207,7 @@ export component YapfastWindow inherits Window {
+@@ -4169,7 +4210,7 @@ export component YapfastWindow inherits Window {
                  }
                  if !root.dragging: HorizontalLayout {
                      alignment: center; padding-top: 8px;
@@ -19344,7 +20125,7 @@ index 2b2e644..a752698 100644
                  }
              }
          }
-@@ -4195,10 +4233,10 @@ export component YapfastWindow inherits Window {
+@@ -4195,10 +4236,10 @@ export component YapfastWindow inherits Window {
          cancel => { root.cancel-mfa(); }
      }
      // The title bar and the edges that resize the window, above all but the
@@ -19357,7 +20138,7 @@ index 2b2e644..a752698 100644
          focused: root.window-focused; maximized: root.window-maximized;
          move-window => { root.move-window(); }
          minimize-window => { root.minimize-window(); }
-@@ -4209,14 +4247,14 @@ export component YapfastWindow inherits Window {
+@@ -4209,14 +4250,14 @@ export component YapfastWindow inherits Window {
          resize-window(direction) => { root.resize-window(direction); }
      }
      if Tip.text != "": Rectangle {

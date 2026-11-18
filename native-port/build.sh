@@ -5,6 +5,7 @@ set -euo pipefail
 export SKIA_BINARIES_URL="file://$(python3 nix/prepare-windows-skia.py)"
 source scripts/release-env x86_64-pc-windows-msvc
 cargo test --locked --release --target x86_64-pc-windows-msvc -p yapfast-discord -p yapfast-core --lib --no-run --message-format=json > target/native-test-binaries.json
+cargo test --locked --release --target x86_64-pc-windows-msvc --bin yapfast --no-run --message-format=json >> target/native-test-binaries.json
 python3 - <<'PY'
 import json, pathlib, shutil
 out = pathlib.Path('target/native-tests')
@@ -14,8 +15,8 @@ found = set()
 for line in pathlib.Path('target/native-test-binaries.json').read_text().splitlines():
     item = json.loads(line)
     name = item.get('target', {}).get('name')
-    if item.get('profile', {}).get('test') and item.get('executable') and name in ('yapfast_discord', 'yapfast_core'):
+    if item.get('profile', {}).get('test') and item.get('executable') and name in ('yapfast_discord', 'yapfast_core', 'yapfast'):
         shutil.copy2(item['executable'], out / (name + '.exe'))
         found.add(name)
-assert len(found) == 2, found
+assert len(found) == 3, found
 PY
