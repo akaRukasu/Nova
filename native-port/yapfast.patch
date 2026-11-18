@@ -1912,6 +1912,37 @@ index 2be6aa4..a9217d0 100644
  [dev-dependencies]
  # Building DAVE handshake messages in tests, at the versions davey uses.
  openmls = "0.8.1"
+diff --git a/crates/yapfast-discord/src/api.rs b/crates/yapfast-discord/src/api.rs
+index 9f479df..2a0818c 100644
+--- a/crates/yapfast-discord/src/api.rs
++++ b/crates/yapfast-discord/src/api.rs
+@@ -464,7 +464,7 @@ impl Api {
+ 
+     /// The application a game's Rich Presence names, for its name, as the
+     /// desktop client asks when a game connects.
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", windows))]
+     pub(crate) async fn rpc_application(&self, id: &str) -> Result<Value> {
+         let path = format!("/oauth2/applications/{id}/rpc");
+         self.json(self.request(Method::GET, &path)).await
+@@ -472,7 +472,7 @@ impl Api {
+ 
+     /// Discord's media proxy's names for images a game's Rich Presence gives
+     /// by address, as the desktop client asks for them.
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", windows))]
+     pub(crate) async fn rpc_external_assets(&self, id: &str, urls: &[&str]) -> Result<Value> {
+         let path = format!("/applications/{id}/external-assets");
+         self.json(with_json(
+@@ -483,7 +483,7 @@ impl Api {
+     }
+ 
+     /// The images an application uploaded, by name, for its Rich Presence.
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", windows))]
+     pub(crate) async fn rpc_assets(&self, id: &str) -> Result<Value> {
+         let path = format!("/oauth2/applications/{id}/assets");
+         self.json(self.request(Method::GET, &path)).await
 diff --git a/crates/yapfast-discord/src/call_connection.rs b/crates/yapfast-discord/src/call_connection.rs
 index d709450..d9bd66d 100644
 --- a/crates/yapfast-discord/src/call_connection.rs
@@ -15544,10 +15575,10 @@ index e6e465c..450589c 100644
      }
 diff --git a/ui/translations/fr.json b/ui/translations/fr.json
 new file mode 100644
-index 0000000..94707b4
+index 0000000..ef46f57
 --- /dev/null
 +++ b/ui/translations/fr.json
-@@ -0,0 +1,1139 @@
+@@ -0,0 +1,1155 @@
 +{
 +  "Off": "Désactivé",
 +  "Cancel": "Annuler",
@@ -16685,14 +16716,30 @@ index 0000000..94707b4
 +  "Profile Banner": "Bannière de profil",
 +  "Tell everyone a bit about yourself": "Parle un peu de toi",
 +  "Tell this server a bit about yourself": "Présente-toi aux membres de ce serveur",
-+  "Avatar": "Avatar"
++  "Avatar": "Avatar",
++  "Return to grid": "Revenir à la grille",
++  "Screen Share": "Partage d’écran",
++  "Change stream source": "Changer la source du stream",
++  "Choose what you want to share.": "Choisis ce que tu veux partager.",
++  "Screens": "Écrans",
++  "Devices": "Périphériques",
++  "Looking for sources…": "Recherche des sources…",
++  "No application windows found.": "Aucune fenêtre d’application trouvée.",
++  "No screens found.": "Aucun écran trouvé.",
++  "No video devices found.": "Aucun périphérique vidéo trouvé.",
++  "SOURCE": "SOURCE",
++  "STREAMING CHANNEL": "SALON DE DIFFUSION",
++  "STREAM QUALITY": "QUALITÉ DU STREAM",
++  "Share application audio": "Partager le son de l’application",
++  "Share system audio": "Partager le son du système",
++  "Change": "Modifier"
 +}
 diff --git a/ui/translations/fr/LC_MESSAGES/yapfast-ui.po b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
 new file mode 100644
-index 0000000..dfc6457
+index 0000000..367e26e
 --- /dev/null
 +++ b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
-@@ -0,0 +1,3416 @@
+@@ -0,0 +1,3464 @@
 +msgid ""
 +msgstr ""
 +"Content-Type: text/plain; charset=UTF-8\n"
@@ -17362,6 +17409,9 @@ index 0000000..dfc6457
 +msgid "Category name"
 +msgstr "Nom de la catégorie"
 +
++msgid "Change"
++msgstr "Modifier"
++
 +msgid "Change Avatar"
 +msgstr "Changer l’avatar"
 +
@@ -17379,6 +17429,9 @@ index 0000000..dfc6457
 +
 +msgid "Change nickname"
 +msgstr "Modifier le pseudo"
++
++msgid "Change stream source"
++msgstr "Changer la source du stream"
 +
 +msgid "Channel name"
 +msgstr "Nom du salon"
@@ -17418,6 +17471,9 @@ index 0000000..dfc6457
 +
 +msgid "Choose if server members can share image-based media detected by Discord's sensitive content filters. This setting will apply to channels that are not age-restricted."
 +msgstr "Définis le filtrage des images sensibles partagées sur le serveur. Ce réglage s’applique aux salons sans restriction d’âge."
++
++msgid "Choose what you want to share."
++msgstr "Choisis ce que tu veux partager."
 +
 +msgid "Clean links"
 +msgstr "Liens propres"
@@ -17649,6 +17705,9 @@ index 0000000..dfc6457
 +
 +msgid "Descriptions are optional but must be more than 1 character."
 +msgstr "La description est facultative et doit contenir au moins deux caractères."
++
++msgid "Devices"
++msgstr "Périphériques"
 +
 +msgid "Direct messages"
 +msgstr "Messages privés"
@@ -18289,6 +18348,9 @@ index 0000000..dfc6457
 +msgid "Longer slowmode"
 +msgstr "Augmenter le délai"
 +
++msgid "Looking for sources…"
++msgstr "Recherche des sources…"
++
 +msgid "MATRIX ID"
 +msgstr "IDENTIFIANT MATRIX"
 +
@@ -18538,6 +18600,9 @@ index 0000000..dfc6457
 +msgid "No activity shared at the moment."
 +msgstr "Aucune activité partagée pour le moment."
 +
++msgid "No application windows found."
++msgstr "Aucune fenêtre d’application trouvée."
++
 +msgid "No audio devices found. Connect one, then refresh."
 +msgstr "Aucun périphérique audio détecté. Branche-le, puis actualise."
 +
@@ -18586,11 +18651,17 @@ index 0000000..dfc6457
 +msgid "No roles"
 +msgstr "Aucun rôle"
 +
++msgid "No screens found."
++msgstr "Aucun écran trouvé."
++
 +msgid "No speakers found. Connect one, then reopen this menu."
 +msgstr "Aucune sortie audio détectée. Branche-la puis rouvre ce menu."
 +
 +msgid "No system tray is running, so closing the window quits Voxcord."
 +msgstr "La zone de notification est indisponible. Fermer la fenêtre quitte Voxcord."
++
++msgid "No video devices found."
++msgstr "Aucun périphérique vidéo trouvé."
 +
 +msgid "Noise suppression in Discord calls"
 +msgstr "Réduction du bruit dans les appels Discord"
@@ -19066,6 +19137,9 @@ index 0000000..dfc6457
 +msgid "Retry saved session"
 +msgstr "Reprendre la session enregistrée"
 +
++msgid "Return to grid"
++msgstr "Revenir à la grille"
++
 +msgid "Revoke Ban"
 +msgstr "Révoquer le bannissement"
 +
@@ -19117,6 +19191,9 @@ index 0000000..dfc6457
 +msgid "SOUNDBOARD VOLUME"
 +msgstr "VOLUME DE LA SOUNDBOARD DISCORD"
 +
++msgid "SOURCE"
++msgstr "SOURCE"
++
 +msgid "SPEAKERS"
 +msgstr "SORTIE AUDIO"
 +
@@ -19128,6 +19205,12 @@ index 0000000..dfc6457
 +
 +msgid "STICKER NAME"
 +msgstr "NOM DE L’AUTOCOLLANT"
++
++msgid "STREAM QUALITY"
++msgstr "QUALITÉ DU STREAM"
++
++msgid "STREAMING CHANNEL"
++msgstr "SALON DE DIFFUSION"
 +
 +msgid "SYSTEM MESSAGES CHANNEL"
 +msgstr "SALON DES MESSAGES SYSTÈME"
@@ -19162,11 +19245,17 @@ index 0000000..dfc6457
 +msgid "Scanned"
 +msgstr "Code scanné"
 +
++msgid "Screen Share"
++msgstr "Partage d’écran"
++
 +msgid "Screen or window"
 +msgstr "Écran ou fenêtre"
 +
 +msgid "Screen sharing uses the graphics card's video encoder, which takes almost no processor time and looks better at low bitrates. Off, or without one, Voxcord encodes on the processor."
 +msgstr "Le partage utilise l’encodeur vidéo de la carte graphique. Désactivé, ou si aucun encodeur compatible n’est disponible, le processeur effectue l’encodage."
++
++msgid "Screens"
++msgstr "Écrans"
 +
 +msgid "Search"
 +msgstr "Rechercher"
@@ -19320,6 +19409,12 @@ index 0000000..dfc6457
 +
 +msgid "Settings"
 +msgstr "Paramètres"
++
++msgid "Share application audio"
++msgstr "Partager le son de l’application"
++
++msgid "Share system audio"
++msgstr "Partager le son du système"
 +
 +msgid "Share the game you play"
 +msgstr "Partager mon activité de jeu"
@@ -20110,7 +20205,7 @@ index 0000000..dfc6457
 +msgid "the processor"
 +msgstr "le processeur"
 diff --git a/ui/voice.slint b/ui/voice.slint
-index 84be8a2..7a18083 100644
+index 84be8a2..298bfb9 100644
 --- a/ui/voice.slint
 +++ b/ui/voice.slint
 @@ -1,6 +1,6 @@
@@ -20245,6 +20340,15 @@ index 84be8a2..7a18083 100644
                      color: Theme.live; font-size: 13px; font-weight: 700; vertical-alignment: center;
                  }
              }
+@@ -361,7 +361,7 @@ export component VoiceDock inherits Rectangle {
+     callback toggle-share;
+     /// Sharing starts from a menu, opened at this point in the window, and
+     /// while sharing, the same menu switches what's shared.
+-    callback open-share-menu(length, length);
++    callback open-share-menu;
+     /// The soundboard, opened above this point in the window.
+     callback open-soundboard(length, length);
+     /// The call's connection in detail, from where its status is.
 @@ -392,7 +392,7 @@ export component VoiceDock inherits Rectangle {
                          Text { text: root.voice-status; color: root.voice-color; font-size: 15px; font-weight: 700; overflow: elide; }
                          if root.voice-time != "": Text {
@@ -20300,15 +20404,17 @@ index 84be8a2..7a18083 100644
                  opacity: root.camera-starting ? (0.6 + 0.4 * sin(animation-tick() / 1ms * 0.36deg)) : 1;
                  clicked => { root.toggle-camera(); }
              }
-@@ -450,7 +450,7 @@ export component VoiceDock inherits Rectangle {
+@@ -450,8 +450,8 @@ export component VoiceDock inherits Rectangle {
              if root.can-share || root.sharing: DockButton {
                  horizontal-stretch: 1; enabled: root.voice-ready && (!root.sharing || root.share-live); on: root.sharing;
                  icon: @image-url("icons/screen-share.svg");
 -                label: root.sharing ? "Switch screen or window" : "Share your screen";
+-                clicked => { root.open-share-menu(self.absolute-position.x, self.absolute-position.y); }
 +                label: root.sharing ? @tr("Switch screen or window") : @tr("Share your screen");
-                 clicked => { root.open-share-menu(self.absolute-position.x, self.absolute-position.y); }
++                clicked => { root.open-share-menu(); }
              }
          }
+         // Wrapped in the dock's width; a scroll view would neither wrap nor stay short.
 @@ -465,7 +465,7 @@ export component VoiceDock inherits Rectangle {
          }
          if !root.voice-active: HorizontalLayout {
@@ -20354,7 +20460,24 @@ index 84be8a2..7a18083 100644
      accessible-action-default => { root.open-call(); }
      Image { width: parent.width; height: parent.height; source: root.frame; image-fit: contain; }
      // The stage is black in every theme, so its note is a fixed grey.
-@@ -650,7 +650,7 @@ component StageTile inherits Rectangle {
+@@ -621,6 +621,7 @@ component StageTile inherits Rectangle {
+     callback right-clicked(length, length);
+     callback stop;
+     callback full-screen(bool);
++    callback restore-grid;
+     border-radius: root.full ? 0px : 12px; clip: true;
+     accessible-role: button; accessible-label: root.label;
+     accessible-action-default => { root.clicked(); }
+@@ -647,10 +648,16 @@ component StageTile inherits Rectangle {
+             fill: #000000a6; radius: 16px;
+             clicked => { root.stop(); }
+         }
++        if root.focused: IconButton {
++            x: 10px; y: 10px; height: self.size;
++            icon: @image-url("icons/chevron-left.svg"); label: @tr("Return to grid"); tint: #ffffff;
++            fill: #000000a6; radius: 16px;
++            clicked => { root.restore-grid(); }
++        }
          if root.focused && self.has-hover: IconButton {
              x: parent.width - self.width - 10px; y: parent.height - self.size - 10px; height: self.size;
              icon: root.full ? @image-url("icons/minimize.svg") : @image-url("icons/maximize.svg");
@@ -20363,7 +20486,7 @@ index 84be8a2..7a18083 100644
              fill: #000000a6; radius: 16px;
              clicked => { root.full-screen(!root.full); }
          }
-@@ -819,7 +819,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -819,9 +826,10 @@ export component ParticipantGrid inherits Flickable {
          visible: !root.full || root.large(0);
          focused: root.large(0); full: root.full;
          background: #000000;
@@ -20371,8 +20494,11 @@ index 84be8a2..7a18083 100644
 +        label: @tr("Your screen, ") + root.share-status;
          viewers: root.share-viewers; viewer-names: root.share-viewer-names;
          clicked => { if !self.focused { root.focus-tile(0); } }
++        restore-grid => { root.focus-tile(-1); }
          full-screen(on) => { root.full-screen(on); }
-@@ -830,7 +830,7 @@ export component ParticipantGrid inherits Flickable {
+         Image { width: parent.width; height: parent.height; source: root.share-frame; image-fit: contain; }
+         if root.share-frame.width == 0: VerticalLayout {
+@@ -830,7 +838,7 @@ export component ParticipantGrid inherits Flickable {
              Image { height: 34px; source: @image-url("icons/screen-share.svg"); image-fit: contain; colorize: #b5b8c1; }
              Text { text: root.share-status; color: #b5b8c1; font-size: 14px; horizontal-alignment: center; wrap: word-wrap; }
          }
@@ -20381,7 +20507,7 @@ index 84be8a2..7a18083 100644
      }
      for index[position] in root.stream-tiles: stream := StageTile {
          property <int> slot: position + (root.sharing ? 1 : 0);
-@@ -842,10 +842,10 @@ export component ParticipantGrid inherits Flickable {
+@@ -842,10 +850,10 @@ export component ParticipantGrid inherits Flickable {
          visible: !root.full || root.large(self.slot);
          focused: root.large(self.slot); full: root.full;
          background: #000000;
@@ -20394,7 +20520,15 @@ index 84be8a2..7a18083 100644
          clicked => {
              if !self.watched {
                  root.watch-stream(self.person.id);
-@@ -865,7 +865,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -855,6 +863,7 @@ export component ParticipantGrid inherits Flickable {
+         }
+         right-clicked(x, y) => { root.open-volume(self.person, x, y); }
+         stop => { root.stop-watching(); }
++        restore-grid => { root.focus-tile(-1); }
+         full-screen(on) => { root.full-screen(on); }
+         if stream.watched: StreamPicture { frame: root.watch-frame; status: root.watch-status; }
+         if !stream.watched: VerticalLayout {
+@@ -865,7 +874,7 @@ export component ParticipantGrid inherits Flickable {
                  Rectangle {
                      height: 26px; width: stream-label.preferred-width + 20px; border-radius: 13px;
                      background: Theme.danger;
@@ -20403,7 +20537,7 @@ index 84be8a2..7a18083 100644
                  }
              }
          }
-@@ -888,10 +888,10 @@ export component ParticipantGrid inherits Flickable {
+@@ -888,10 +897,10 @@ export component ParticipantGrid inherits Flickable {
          property <bool> streams-here: person.live && !person.local && !person.video;
          property <bool> watched: self.streams-here && person.id == root.watch-user;
          background: self.filmed || self.watched ? #000000 : Theme.raised;
@@ -20416,7 +20550,15 @@ index 84be8a2..7a18083 100644
          clicked => {
              if self.streams-here && !self.watched {
                  root.watch-stream(person.id);
-@@ -917,21 +917,21 @@ export component ParticipantGrid inherits Flickable {
+@@ -901,6 +910,7 @@ export component ParticipantGrid inherits Flickable {
+         }
+         right-clicked(x, y) => { root.open-volume(person, x, y); }
+         stop => { root.stop-watching(); }
++        restore-grid => { root.focus-tile(-1); }
+         full-screen(on) => { root.full-screen(on); }
+         if tile.filmed: Image { width: tile.width; height: tile.height; source: tile.frame; image-fit: contain; }
+         if tile.watched: StreamPicture { frame: root.watch-frame; status: root.watch-status; }
+@@ -917,21 +927,21 @@ export component ParticipantGrid inherits Flickable {
              x: 10px; y: 10px; height: 26px;
              width: starting-label.preferred-width + 20px; border-radius: 13px;
              background: #000000a6; opacity: (0.6 + 0.4 * sin(animation-tick() / 1ms * 0.36deg));
@@ -20442,7 +20584,16 @@ index 84be8a2..7a18083 100644
              if person.muted && !person.deafened: Image { source: @image-url("icons/mic-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }
              if person.deafened: Image { source: @image-url("icons/headphone-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }
          }
-@@ -967,7 +967,7 @@ export component CallControls inherits HorizontalLayout {
+@@ -959,7 +969,7 @@ export component CallControls inherits HorizontalLayout {
+     /// The call has Discord's soundboard.
+     in property <bool> can-soundboard;
+     /// Sharing starts from a menu, opened at this point in the window.
+-    callback open-share-menu(length, length);
++    callback open-share-menu;
+     /// The soundboard, opened above this point in the window.
+     callback open-soundboard(length, length);
+     callback leave-voice;
+@@ -967,7 +977,7 @@ export component CallControls inherits HorizontalLayout {
      IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
@@ -20451,7 +20602,7 @@ index 84be8a2..7a18083 100644
          enabled: root.voice-ready;
          fill: self.alert ? Theme.danger.with-alpha(0.18) : Theme.raised;
          clicked => { root.toggle-mute(); }
-@@ -975,21 +975,21 @@ export component CallControls inherits HorizontalLayout {
+@@ -975,21 +985,21 @@ export component CallControls inherits HorizontalLayout {
      IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.deafened ? @image-url("icons/headphone-off.svg") : @image-url("icons/headphones.svg");
@@ -20476,7 +20627,7 @@ index 84be8a2..7a18083 100644
          enabled: root.voice-ready; opacity: root.camera-starting ? (0.6 + 0.4 * sin(animation-tick() / 1ms * 0.36deg)) : 1;
          fill: root.camera-on ? Theme.live.with-alpha(0.22) : Theme.raised;
          clicked => { root.toggle-camera(); }
-@@ -997,7 +997,7 @@ export component CallControls inherits HorizontalLayout {
+@@ -997,14 +1007,14 @@ export component CallControls inherits HorizontalLayout {
      if root.can-share || root.sharing: IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.sharing ? @image-url("icons/screen-share-off.svg") : @image-url("icons/screen-share.svg");
@@ -20485,7 +20636,15 @@ index 84be8a2..7a18083 100644
          enabled: root.voice-ready;
          fill: root.sharing ? Theme.live.with-alpha(0.22) : Theme.raised;
          clicked => {
-@@ -1012,7 +1012,7 @@ export component CallControls inherits HorizontalLayout {
+             if root.sharing {
+                 root.toggle-share();
+             } else {
+-                root.open-share-menu(self.absolute-position.x, self.absolute-position.y);
++                root.open-share-menu();
+             }
+         }
+     }
+@@ -1012,7 +1022,7 @@ export component CallControls inherits HorizontalLayout {
          width: 76px; height: 52px; border-radius: 26px;
          background: leave-touch.has-hover ? Theme.danger-hover : Theme.danger;
          opacity: root.voice-leaving ? 0.5 : 1;
@@ -20494,7 +20653,7 @@ index 84be8a2..7a18083 100644
          accessible-action-default => { if !root.voice-leaving { root.leave-voice(); } }
          Image { source: @image-url("icons/phone-off.svg"); width: 22px; height: 22px; colorize: Theme.on-danger; }
          leave-touch := TouchArea { enabled: !root.voice-leaving; mouse-cursor: MouseCursor.pointer; clicked => { root.leave-voice(); } }
-@@ -1032,7 +1032,7 @@ export component IncomingCall inherits Rectangle {
+@@ -1032,7 +1042,7 @@ export component IncomingCall inherits Rectangle {
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
      drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
      accessible-role: groupbox;
@@ -20503,7 +20662,7 @@ index 84be8a2..7a18083 100644
      // Clicks on the card never reach what's under it.
      TouchArea { }
      incoming-content := VerticalLayout {
-@@ -1057,11 +1057,11 @@ export component IncomingCall inherits Rectangle {
+@@ -1057,11 +1067,11 @@ export component IncomingCall inherits Rectangle {
          HorizontalLayout {
              alignment: center; spacing: 20px; padding-top: 6px;
              CallButton {
@@ -20517,7 +20676,7 @@ index 84be8a2..7a18083 100644
                  clicked => { root.answer-call(root.incoming-room, true); }
              }
          }
-@@ -1095,7 +1095,7 @@ export component SwitchDialog inherits Rectangle {
+@@ -1095,7 +1105,7 @@ export component SwitchDialog inherits Rectangle {
          background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
          drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
          accessible-role: groupbox;
@@ -20526,7 +20685,7 @@ index 84be8a2..7a18083 100644
          // Clicks on the dialog itself never reach the backdrop.
          TouchArea { enabled: root.switching; }
          switch-keys := FocusScope {
-@@ -1118,15 +1118,15 @@ export component SwitchDialog inherits Rectangle {
+@@ -1118,15 +1128,15 @@ export component SwitchDialog inherits Rectangle {
                      }
                      VerticalLayout {
                          spacing: 6px; horizontal-stretch: 1;
@@ -20545,7 +20704,7 @@ index 84be8a2..7a18083 100644
                  }
              }
          }
-@@ -1141,12 +1141,12 @@ export component InputLevel inherits VerticalLayout {
+@@ -1141,12 +1151,12 @@ export component InputLevel inherits VerticalLayout {
      /// Why the level can't be shown, if it can't.
      in property <string> meter-note;
      padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px; spacing: 8px;
@@ -20561,7 +20720,7 @@ index 84be8a2..7a18083 100644
          // Muted, the level still shows, in a faded green: heard here, sent nowhere.
          for segment in 24: Rectangle {
              border-radius: 2px;
-@@ -1155,7 +1155,7 @@ export component InputLevel inherits VerticalLayout {
+@@ -1155,7 +1165,7 @@ export component InputLevel inherits VerticalLayout {
          }
      }
      if root.meter-note != "": Label { text: root.meter-note; }
@@ -20570,114 +20729,293 @@ index 84be8a2..7a18083 100644
  }
  
  /// A screen in the share menu, and once it's taken, a picture of it.
-@@ -1211,7 +1211,7 @@ component ScreenCard inherits Rectangle {
+@@ -1165,6 +1175,7 @@ export struct ShareScreen { title: string, picture: image }
+ component ScreenCard inherits Rectangle {
+     in property <string> text;
+     in property <image> picture;
++    in property <image> icon: @image-url("icons/screen-share.svg");
+     in property <bool> checked;
+     callback clicked;
+     border-radius: 6px;
+@@ -1182,7 +1193,7 @@ component ScreenCard inherits Rectangle {
+             border-radius: 4px; background: Theme.sunken; clip: true;
+             // Until its picture comes.
+             if root.picture.width == 0: Image {
+-                height: 24px; source: @image-url("icons/screen-share.svg"); image-fit: contain; colorize: Theme.faint;
++                height: 28px; source: root.icon; image-fit: contain; colorize: Theme.secondary;
+             }
+             Image { width: parent.width; height: parent.height; source: root.picture; image-fit: contain; }
+             Rectangle {
+@@ -1211,124 +1222,171 @@ component ScreenCard inherits Rectangle {
      }
  }
  
 -// Going live: what to share, where Yapfast lists it, and the resolution, frame
-+// Going live: what to share, where Voxcord lists it, and the resolution, frame
- // rate and quality to share it at; or while sharing, what to share instead.
+-// rate and quality to share it at; or while sharing, what to share instead.
++// Choose a source, then review the stream settings before going live.
  export component ShareMenu inherits Rectangle {
-     /// The screens, then the windows, then the cameras, to share; a pick
-@@ -1233,14 +1233,15 @@ export component ShareMenu inherits Rectangle {
+-    /// The screens, then the windows, then the cameras, to share; a pick
+-    /// counts the screens first.
+     in property <[ShareScreen]> screens;
+     in property <[string]> windows;
+     in property <[string]> cameras;
+-    /// The system's dialog picks a screen or window: with cameras listed, a
+-    /// choice of it comes before them.
+     in property <bool> dialog;
+-    /// Switching what's shared, at the stream's quality.
+     in property <bool> switching;
+-    property <int> dialog-index: root.screens.length + root.windows.length;
+-    property <int> first-camera: root.dialog-index + (root.dialog ? 1 : 0);
+-    property <bool> asks-dialog: root.dialog && root.cameras.length > 0;
+-    property <bool> lists: root.screens.length + root.windows.length + root.cameras.length > 0;
+-    in-out property <int> pick-source;
++    in property <bool> loading;
++    in property <string> destination;
++    in-out property <int> pick-source: -1;
+     in-out property <int> pick-resolution;
      in-out property <int> pick-fps;
-     /// The encoder's slower preset: a sharper picture for more CPU.
+-    /// The encoder's slower preset: a sharper picture for more CPU.
      in-out property <bool> pick-high-quality;
 -    callback go-live(int, int, int, bool);
+-    background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
+-    drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
+-    VerticalLayout {
+-        padding: 6px; spacing: 2px;
+-        if root.screens.length > 0: HorizontalLayout {
+-            padding-left: 8px; padding-top: 4px; padding-bottom: 4px;
+-            Text { text: "SCREENS"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+-        }
+-        // Two to a row; one alone sits in the middle.
+-        if root.screens.length > 0: Rectangle {
+-            property <length> gap: 4px;
+-            property <length> card: (self.width - self.gap) / 2;
+-            property <length> card-height: self.card * 9 / 16 + 30px;
+-            height: ceil(root.screens.length / 2) * (self.card-height + self.gap) - self.gap;
+-            for screen[index] in root.screens: ScreenCard {
+-                x: root.screens.length == 1 ? (parent.width - parent.card) / 2 : mod(index, 2) * (parent.card + parent.gap);
+-                y: floor(index / 2) * (parent.card-height + parent.gap);
+-                width: parent.card; height: parent.card-height;
+-                text: screen.title; picture: screen.picture; checked: index == root.pick-source;
+-                clicked => { root.pick-source = index; }
+-            }
+-        }
+-        if root.windows.length > 0: HorizontalLayout {
+-            padding-left: 8px; padding-top: root.screens.length > 0 ? 8px : 4px; padding-bottom: 4px;
+-            Text { text: "WINDOWS"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
 +    in-out property <bool> pick-capture-sound: true;
 +    callback go-live(int, int, int, bool, bool);
-     background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
-     drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
-     VerticalLayout {
-         padding: 6px; spacing: 2px;
-         if root.screens.length > 0: HorizontalLayout {
-             padding-left: 8px; padding-top: 4px; padding-bottom: 4px;
--            Text { text: "SCREENS"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("SCREENS"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
++    callback close;
++
++    property <int> dialog-index: root.screens.length + root.windows.length;
++    property <int> first-camera: root.dialog-index + (root.dialog ? 1 : 0);
++    property <int> total: root.first-camera + root.cameras.length;
++    property <int> category: root.windows.length > 0 ? 0 : root.screens.length > 0 || root.dialog ? 1 : 2;
++    property <bool> reviewing: root.pick-source >= 0 && root.pick-source < root.total && !root.loading;
++    property <string> source-title: !root.reviewing ? ""
++        : root.pick-source < root.screens.length ? root.screens[root.pick-source].title
++        : root.pick-source < root.dialog-index ? root.windows[root.pick-source - root.screens.length]
++        : root.dialog && root.pick-source == root.dialog-index ? @tr("Screen or window")
++        : root.cameras[root.pick-source - root.first-camera];
++    property <bool> window-source: root.pick-source >= root.screens.length && root.pick-source < root.dialog-index;
++    changed loading => {
++        if !root.loading {
++            root.category = root.windows.length > 0 ? 0 : root.screens.length > 0 || root.dialog ? 1 : 2;
          }
-         // Two to a row; one alone sits in the middle.
-         if root.screens.length > 0: Rectangle {
-@@ -1258,7 +1259,7 @@ export component ShareMenu inherits Rectangle {
+-        if root.windows.length > 0: ScrollView {
+-            // Five before the list scrolls.
+-            height: min(5, root.windows.length) * 32px;
+-            VerticalLayout {
+-                for window[index] in root.windows: MenuItem {
+-                    text: window; checked: root.screens.length + index == root.pick-source;
+-                    clicked => { root.pick-source = root.screens.length + index; }
++    }
++    background: Theme.chat; border-color: Theme.line; border-width: 1px; border-radius: 12px;
++    drop-shadow-blur: 32px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
++    accessible-role: groupbox; accessible-label: @tr("Screen Share");
++    TouchArea { }
++    VerticalLayout {
++        spacing: 0px;
++        VerticalLayout {
++            padding: 20px; spacing: 8px;
++            HorizontalLayout {
++                spacing: 12px;
++                Text {
++                    text: root.switching ? @tr("Change stream source") : @tr("Screen Share");
++                    color: Theme.text; font-size: 22px; font-weight: 700;
++                    vertical-alignment: center; horizontal-stretch: 1;
+                 }
++                IconButton { icon: @image-url("icons/x.svg"); label: @tr("Cancel"); clicked => { root.close(); } }
+             }
++            if !root.reviewing: Label { text: @tr("Choose what you want to share."); }
          }
-         if root.windows.length > 0: HorizontalLayout {
-             padding-left: 8px; padding-top: root.screens.length > 0 ? 8px : 4px; padding-bottom: 4px;
--            Text { text: "WINDOWS"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("WINDOWS"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-         }
-         if root.windows.length > 0: ScrollView {
-             // Five before the list scrolls.
-@@ -1272,16 +1273,16 @@ export component ShareMenu inherits Rectangle {
-         }
-         if root.asks-dialog: HorizontalLayout {
-             padding-left: 8px; padding-top: 4px; padding-bottom: 4px;
+-        if root.asks-dialog: HorizontalLayout {
+-            padding-left: 8px; padding-top: 4px; padding-bottom: 4px;
 -            Text { text: "SCREEN"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("SCREEN"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-         }
-         if root.asks-dialog: MenuItem {
+-        }
+-        if root.asks-dialog: MenuItem {
 -            text: "Screen or window"; subtitle: "Picked in the system's dialog";
-+            text: @tr("Screen or window"); subtitle: @tr("Picked in the system's dialog");
-             checked: root.dialog-index == root.pick-source;
-             clicked => { root.pick-source = root.dialog-index; }
-         }
-         if root.cameras.length > 0: HorizontalLayout {
-             padding-left: 8px; padding-top: root.dialog-index > 0 || root.asks-dialog ? 8px : 4px; padding-bottom: 4px;
+-            checked: root.dialog-index == root.pick-source;
+-            clicked => { root.pick-source = root.dialog-index; }
+-        }
+-        if root.cameras.length > 0: HorizontalLayout {
+-            padding-left: 8px; padding-top: root.dialog-index > 0 || root.asks-dialog ? 8px : 4px; padding-bottom: 4px;
 -            Text { text: "CAMERAS"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("CAMERAS"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-         }
-         if root.cameras.length > 0: ScrollView {
-             // Five before the list scrolls.
-@@ -1295,18 +1296,18 @@ export component ShareMenu inherits Rectangle {
-         }
-         if !root.switching: HorizontalLayout {
-             padding-left: 8px; padding-top: root.lists ? 8px : 4px; padding-bottom: 4px;
+-        }
+-        if root.cameras.length > 0: ScrollView {
+-            // Five before the list scrolls.
+-            height: min(5, root.cameras.length) * 32px;
+-            VerticalLayout {
+-                for camera[index] in root.cameras: MenuItem {
+-                    text: camera; checked: root.first-camera + index == root.pick-source;
+-                    clicked => { root.pick-source = root.first-camera + index; }
++        Rectangle { height: 1px; background: Theme.line; }
++        if !root.reviewing: VerticalLayout {
++            padding: 16px; spacing: 12px; vertical-stretch: 1;
++            HorizontalLayout {
++                spacing: 8px;
++                ActionButton {
++                    text: @tr("Applications"); small: true; primary: root.category == 0;
++                    clicked => { root.category = 0; }
++                }
++                ActionButton {
++                    text: @tr("Screens"); small: true; primary: root.category == 1;
++                    clicked => { root.category = 1; }
++                }
++                ActionButton {
++                    text: @tr("Devices"); small: true; primary: root.category == 2;
++                    clicked => { root.category = 2; }
+                 }
+             }
+-        }
+-        if !root.switching: HorizontalLayout {
+-            padding-left: 8px; padding-top: root.lists ? 8px : 4px; padding-bottom: 4px;
 -            Text { text: "RESOLUTION"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("RESOLUTION"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-         }
-         if !root.switching: VerticalLayout {
-             spacing: 2px;
+-        }
+-        if !root.switching: VerticalLayout {
+-            spacing: 2px;
 -            for choice[index] in ["720p", "1080p", "Source"]: MenuItem {
-+            for choice[index] in ["720p", "1080p", @tr("Source")]: MenuItem {
-                 text: choice; checked: index == root.pick-resolution;
-                 clicked => { root.pick-resolution = index; }
+-                text: choice; checked: index == root.pick-resolution;
+-                clicked => { root.pick-resolution = index; }
++            if root.loading: Label { text: @tr("Looking for sources…"); }
++            if !root.loading: ScrollView {
++                vertical-stretch: 1;
++                content-height: source-list.preferred-height;
++                source-list := VerticalLayout {
++                    padding-bottom: 8px;
++                    if root.category == 0 && root.windows.length == 0: Label { text: @tr("No application windows found."); }
++                    if root.category == 1 && root.screens.length == 0 && !root.dialog: Label { text: @tr("No screens found."); }
++                    if root.category == 2 && root.cameras.length == 0: Label { text: @tr("No video devices found."); }
++                    if root.category == 1 && root.dialog: MenuItem {
++                        text: @tr("Screen or window"); subtitle: @tr("Picked in the system's dialog");
++                        clicked => { root.pick-source = root.dialog-index; }
++                    }
++                    source-grid := Rectangle {
++                        property <int> entries: root.category == 0 ? root.windows.length : root.category == 1 ? root.screens.length : root.cameras.length;
++                        property <length> gap: 8px;
++                        property <int> columns: max(1, min(3, floor((self.width + self.gap) / 155px)));
++                        property <length> card-width: (self.width - (self.columns - 1) * self.gap) / self.columns;
++                        property <length> card-height: self.card-width * 9 / 16 + 30px;
++                        height: ceil(self.entries / self.columns) * (self.card-height + self.gap);
++                        for index in source-grid.entries: ScreenCard {
++                            width: parent.card-width; height: parent.card-height;
++                            x: mod(index, parent.columns) * (parent.card-width + parent.gap);
++                            y: floor(index / parent.columns) * (parent.card-height + parent.gap);
++                            text: root.category == 0 ? root.windows[index] : root.category == 1 ? root.screens[index].title : root.cameras[index];
++                            picture: root.category == 1 ? root.screens[index].picture : @image-url("");
++                            icon: root.category == 2 ? @image-url("icons/video.svg") : @image-url("icons/screen-share.svg");
++                            clicked => {
++                                root.pick-source = index + (root.category == 0 ? root.screens.length : root.category == 2 ? root.first-camera : 0);
++                            }
++                        }
++                    }
++                }
              }
          }
-         if !root.switching: HorizontalLayout {
-             padding-left: 8px; padding-top: 8px; padding-bottom: 4px;
+-        if !root.switching: HorizontalLayout {
+-            padding-left: 8px; padding-top: 8px; padding-bottom: 4px;
 -            Text { text: "FRAME RATE"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("FRAME RATE"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
+-        }
+-        if !root.switching: VerticalLayout {
+-            spacing: 2px;
+-            for fps in [15, 30, 60]: MenuItem {
+-                text: fps + " fps"; checked: fps == root.pick-fps;
+-                clicked => { root.pick-fps = fps; }
++        if root.reviewing: ScrollView {
++            vertical-stretch: 1;
++            content-height: settings.preferred-height;
++            settings := VerticalLayout {
++                padding: 20px; spacing: 14px;
++                VerticalLayout {
++                    spacing: 4px;
++                    Text { text: @tr("SOURCE"); color: Theme.muted; font-weight: 700; font-size: 12px; }
++                    MenuItem {
++                        text: root.source-title; subtitle: @tr("Change");
++                        icon: @image-url("icons/screen-share.svg");
++                        clicked => { root.pick-source = -1; }
++                    }
++                }
++                if root.destination != "": VerticalLayout {
++                    spacing: 4px;
++                    Text { text: @tr("STREAMING CHANNEL"); color: Theme.muted; font-weight: 700; font-size: 12px; }
++                    Text { text: root.destination; color: Theme.text; font-size: 14px; overflow: elide; }
++                }
++                MenuItem {
++                    text: root.window-source ? @tr("Share application audio") : @tr("Share system audio");
++                    checkbox: true; checked: root.pick-capture-sound;
++                    clicked => { root.pick-capture-sound = !root.pick-capture-sound; }
++                }
++                if !root.switching: VerticalLayout {
++                    spacing: 8px;
++                    Text { text: @tr("STREAM QUALITY"); color: Theme.muted; font-weight: 700; font-size: 12px; }
++                    HorizontalLayout {
++                        spacing: 8px;
++                        for choice[index] in ["720p", "1080p", @tr("Source")]: ActionButton {
++                            text: choice; small: true; primary: index == root.pick-resolution;
++                            clicked => { root.pick-resolution = index; }
++                        }
++                    }
++                    HorizontalLayout {
++                        spacing: 8px;
++                        for fps in [15, 30, 60]: ActionButton {
++                            text: fps + " fps"; small: true; primary: fps == root.pick-fps;
++                            clicked => { root.pick-fps = fps; }
++                        }
++                    }
++                    MenuItem {
++                        text: @tr("Higher quality"); subtitle: @tr("Sharper, at twice the CPU");
++                        checkbox: true; checked: root.pick-high-quality;
++                        clicked => { root.pick-high-quality = !root.pick-high-quality; }
++                    }
++                }
+             }
          }
-         if !root.switching: VerticalLayout {
-             spacing: 2px;
-@@ -1317,18 +1318,24 @@ export component ShareMenu inherits Rectangle {
-         }
-         if !root.switching: HorizontalLayout {
-             padding-left: 8px; padding-top: 8px; padding-bottom: 4px;
+-        if !root.switching: HorizontalLayout {
+-            padding-left: 8px; padding-top: 8px; padding-bottom: 4px;
 -            Text { text: "ENCODING"; color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-+            Text { text: @tr("ENCODING"); color: Theme.muted; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; }
-         }
-         if !root.switching: MenuItem {
+-        }
+-        if !root.switching: MenuItem {
 -            text: "Higher quality"; subtitle: "Sharper, at twice the CPU";
-+            text: @tr("Higher quality"); subtitle: @tr("Sharper, at twice the CPU");
-             checkbox: true; checked: root.pick-high-quality;
-             clicked => { root.pick-high-quality = !root.pick-high-quality; }
-         }
-+        MenuItem {
-+            text: @tr("Capture sound");
-+            subtitle: @tr("Application audio for a window; other applications audio for a screen.");
-+            checkbox: true; checked: root.pick-capture-sound;
-+            clicked => { root.pick-capture-sound = !root.pick-capture-sound; }
-+        }
+-            checkbox: true; checked: root.pick-high-quality;
+-            clicked => { root.pick-high-quality = !root.pick-high-quality; }
+-        }
++        Rectangle { height: 1px; background: Theme.line; }
          HorizontalLayout {
-             padding: 4px; padding-top: 8px;
+-            padding: 4px; padding-top: 8px;
++            padding: 16px; spacing: 8px; alignment: end;
              ActionButton {
 -                text: root.switching ? "Switch" : "Go Live"; icon: @image-url("icons/screen-share.svg"); primary: true; horizontal-stretch: 1;
 -                clicked => { root.go-live(root.pick-source, root.pick-resolution, root.pick-fps, root.pick-high-quality); }
-+                text: root.switching ? @tr("Switch") : @tr("Go Live"); icon: @image-url("icons/screen-share.svg"); primary: true; horizontal-stretch: 1;
++                text: root.reviewing ? @tr("Back") : @tr("Cancel"); ghost: true;
++                clicked => { if root.reviewing { root.pick-source = -1; } else { root.close(); } }
++            }
++            if root.reviewing: ActionButton {
++                text: root.switching ? @tr("Switch") : @tr("Go Live"); primary: true;
++                icon: @image-url("icons/screen-share.svg");
 +                clicked => { root.go-live(root.pick-source, root.pick-resolution, root.pick-fps, root.pick-high-quality, root.pick-capture-sound); }
              }
          }
      }
-@@ -1348,18 +1355,18 @@ export component VolumeMenu inherits Rectangle {
+@@ -1348,18 +1406,18 @@ export component VolumeMenu inherits Rectangle {
      callback volume-changed(string, bool, int, bool);
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
      drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
@@ -20699,7 +21037,7 @@ index 84be8a2..7a18083 100644
              value <=> root.stream-volume;
              changed(volume) => { root.volume-changed(root.volume-person, true, volume, false); }
              committed(volume) => { root.volume-changed(root.volume-person, true, volume, true); }
-@@ -1379,7 +1386,7 @@ component SoundButton inherits Rectangle {
+@@ -1379,7 +1437,7 @@ component SoundButton inherits Rectangle {
      in property <string> emoji-font;
      in property <bool> enabled;
      in property <bool> extras;
@@ -20708,7 +21046,7 @@ index 84be8a2..7a18083 100644
      callback clicked;
      callback preview;
      callback favorite(bool);
-@@ -1410,7 +1417,7 @@ component SoundButton inherits Rectangle {
+@@ -1410,7 +1468,7 @@ component SoundButton inherits Rectangle {
          x: parent.width - 2 * (self.width + 4px); y: (parent.height - self.height) / 2;
          size: 26px; glyph: 15px; radius: 6px; fill: Theme.button-default-hover;
          visible: root.extras && root.hovered;
@@ -20717,7 +21055,7 @@ index 84be8a2..7a18083 100644
          clicked => { root.preview(); }
      }
      star := IconButton {
-@@ -1419,7 +1426,7 @@ component SoundButton inherits Rectangle {
+@@ -1419,7 +1477,7 @@ component SoundButton inherits Rectangle {
          visible: root.extras && (root.hovered || root.sound.favorite);
          icon: root.sound.favorite ? @image-url("icons/star-filled.svg") : @image-url("icons/star.svg");
          tint: root.sound.favorite ? #f0b232 : Theme.secondary;
@@ -20726,7 +21064,7 @@ index 84be8a2..7a18083 100644
          clicked => { root.favorite(!root.sound.favorite); }
      }
  }
-@@ -1432,10 +1439,12 @@ component SoundButton inherits Rectangle {
+@@ -1432,10 +1490,12 @@ component SoundButton inherits Rectangle {
  export component Soundboard inherits Rectangle {
      in property <[SoundRow]> rows;
      in property <string> emoji-font;
@@ -20741,7 +21079,7 @@ index 84be8a2..7a18083 100644
      /// Why no sound can be played now, such as being deafened; empty when
      /// they can.
      in property <string> note;
-@@ -1462,8 +1471,12 @@ export component Soundboard inherits Rectangle {
+@@ -1462,8 +1522,12 @@ export component Soundboard inherits Rectangle {
          top := VerticalLayout {
              padding: 14px; padding-bottom: 4px; spacing: 4px;
              Text { text: root.title; color: Theme.text; font-size: 16px; font-weight: 700; }
@@ -20756,7 +21094,7 @@ index 84be8a2..7a18083 100644
          ListView {
              vertical-stretch: 1;
 diff --git a/ui/yapfast.slint b/ui/yapfast.slint
-index 2b2e644..288b212 100644
+index 2b2e644..d23017f 100644
 --- a/ui/yapfast.slint
 +++ b/ui/yapfast.slint
 @@ -18,7 +18,7 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
@@ -20932,16 +21270,25 @@ index 2b2e644..288b212 100644
      /// and the cameras: asked for as the share menu opens, which shows once
      /// they're in, with the first picked. The screens' pictures come after.
      in property <bool> share-lists;
-@@ -1213,7 +1222,7 @@ export component YapfastWindow inherits Window {
-     /// system's dialog picks and there's no camera goes straight to the dialog.
-     public function show-share-menu() {
-         if root.pick-switch && !root.share-lists && root.share-cameras.length == 0 {
+@@ -1209,15 +1218,8 @@ export component YapfastWindow inherits Window {
+     in property <[string]> share-windows;
+     in property <[string]> share-cameras;
+     callback list-share-sources();
+-    /// Opens the share menu once its lists are in. Switching where the
+-    /// system's dialog picks and there's no camera goes straight to the dialog.
+-    public function show-share-menu() {
+-        if root.pick-switch && !root.share-lists && root.share-cameras.length == 0 {
 -            root.switch-live(0);
-+            root.switch-live(0, root.share-capture-sound);
-         } else {
-             share-menu.show();
-         }
-@@ -1284,6 +1293,9 @@ export component YapfastWindow inherits Window {
+-        } else {
+-            share-menu.show();
+-        }
+-    }
++    /// The source list is returned by a worker after the dialog opens.
++    public function show-share-menu() { root.share-loading = false; }
+     callback stream-tick;
+     callback toggle-camera;
+     /// Where the call's tiles are; see ParticipantGrid.
+@@ -1284,6 +1286,9 @@ export component YapfastWindow inherits Window {
      callback select-camera(int);
      /// Film to try the camera, or stop.
      callback test-camera(bool);
@@ -20951,7 +21298,7 @@ index 2b2e644..288b212 100644
      callback gate-meter-tick;
      callback reply(string);
      callback edit(string);
-@@ -1331,11 +1343,11 @@ export component YapfastWindow inherits Window {
+@@ -1331,11 +1336,11 @@ export component YapfastWindow inherits Window {
      callback close-image();
      callback cancel-compose;
      callback dismiss-notice;
@@ -20965,7 +21312,16 @@ index 2b2e644..288b212 100644
      // also leaves the conversation 420px.
      in-out property <length> aside-width: 420px;
      out property <length> aside-shown: max(320px, min(800px, root.aside-width));
-@@ -1408,7 +1420,7 @@ export component YapfastWindow inherits Window {
+@@ -1347,7 +1352,7 @@ export component YapfastWindow inherits Window {
+     // settings, a full profile or a card, a dialog, a panel such as the pins,
+     // the image viewer or the call in full screen. Those with a field of their
+     // own take the text first.
+-    property <bool> composer-covered: root.settings-open || root.server-settings-open
++    property <bool> composer-covered: root.share-open || root.settings-open || root.server-settings-open
+         || root.channel-settings-open || root.profile-editor-open || root.profile-open
+         || root.role-open || root.server-card-open || root.emoji-card-open || root.topic-open
+         || root.pins-open || root.threads-open || root.add-people-open || root.viewer-open
+@@ -1408,7 +1413,7 @@ export component YapfastWindow inherits Window {
      property <int> sign-in-focus;
      public function focus-sign-in() { root.sign-in-focus += 1; }
      public function timeline-at-end() -> bool { return root.follow-latest; }
@@ -20974,7 +21330,7 @@ index 2b2e644..288b212 100644
      in property <bool> window-focused;
      // The newest message was read since the "New" divider was placed, so the bar
      // that jumps back to it is gone.
-@@ -1562,10 +1574,10 @@ export component YapfastWindow inherits Window {
+@@ -1562,10 +1567,10 @@ export component YapfastWindow inherits Window {
          root.member-list-toggled(root.member-list);
      }
  
@@ -20987,7 +21343,7 @@ index 2b2e644..288b212 100644
      // microphone on, once connected.
      changed voice-ready => {
          if !root.voice-ready { return; }
-@@ -1586,7 +1598,7 @@ export component YapfastWindow inherits Window {
+@@ -1586,7 +1591,7 @@ export component YapfastWindow inherits Window {
      changed input-open => { root.input-level = 0; root.meter-note = ""; root.metering(root.input-open); }
      Timer { interval: 50ms; running: root.input-open; triggered => { root.meter-tick(); } }
      // The Discord gate's meter runs while voice settings show it.
@@ -20996,7 +21352,7 @@ index 2b2e644..288b212 100644
      // Cameras stop making pictures for a grid that left the screen, and one
      // starts in the corner.
      changed grid-shown => { root.stream-tick(); }
-@@ -1594,6 +1606,9 @@ export component YapfastWindow inherits Window {
+@@ -1594,6 +1599,9 @@ export component YapfastWindow inherits Window {
      // The camera films for the preview only while the voice settings show it.
      property <bool> camera-filming: root.settings-open && root.settings-section == 1 && root.camera-testing;
      changed camera-filming => { root.camera-preview = @image-url(""); root.test-camera(self.camera-filming); }
@@ -21006,7 +21362,7 @@ index 2b2e644..288b212 100644
      changed gate-metered => { root.gate-level = -100; root.gate-sending = false; root.gate-meter-note = ""; root.gate-metering(self.gate-metered); }
      Timer { interval: 50ms; running: root.gate-metered; triggered => { root.gate-meter-tick(); } }
      Timer { interval: 33ms; running: root.sharing || root.watching || root.video-active || root.camera-filming || (root.call-video && (root.grid-shown || root.pip-shown)); triggered => { root.stream-tick(); } }
-@@ -1603,8 +1618,8 @@ export component YapfastWindow inherits Window {
+@@ -1603,8 +1611,8 @@ export component YapfastWindow inherits Window {
          width: 280px;
          close-policy: PopupClosePolicy.close-on-click-outside;
          DeviceMenu {
@@ -21017,7 +21373,7 @@ index 2b2e644..288b212 100644
              select(index) => { root.select-microphone(index); }
              settings => { root.open-settings(); }
              Rectangle { height: 1px; background: Theme.line; }
-@@ -1617,8 +1632,8 @@ export component YapfastWindow inherits Window {
+@@ -1617,27 +1625,33 @@ export component YapfastWindow inherits Window {
          width: 280px;
          close-policy: PopupClosePolicy.close-on-click-outside;
          DeviceMenu {
@@ -21028,23 +21384,37 @@ index 2b2e644..288b212 100644
              select(index) => { root.select-speaker(index); }
              settings => { root.open-settings(); }
          }
-@@ -1628,6 +1643,7 @@ export component YapfastWindow inherits Window {
+     }
+     // The quality picked in the share menu, from the last choice each time it opens.
+-    property <int> pick-source;
++    property <int> pick-source: -1;
++    property <bool> share-open;
++    property <bool> share-loading;
++    changed voice-active => { if !root.voice-active { root.share-open = false; } }
      property <int> pick-resolution;
      property <int> pick-fps;
      property <bool> pick-high-quality;
 +    property <bool> pick-capture-sound: true;
      // The menu switches what's shared, as it was when it opened.
      property <bool> pick-switch;
-     function open-share-menu(x: length, y: length) {
-@@ -1636,6 +1652,7 @@ export component YapfastWindow inherits Window {
+-    function open-share-menu(x: length, y: length) {
+-        root.menu-x = x; root.menu-y = y;
+-        root.pick-source = 0;
++    function open-share-menu() {
++        if root.share-open { return; }
++        root.pick-source = -1;
          root.pick-resolution = root.share-resolution;
          root.pick-fps = root.share-fps;
          root.pick-high-quality = root.share-high-quality;
 +        root.pick-capture-sound = root.share-capture-sound;
          root.pick-switch = root.sharing;
-         // Shown once the list is in, so it opens at its full height.
+-        // Shown once the list is in, so it opens at its full height.
++        root.share-loading = true;
++        root.share-open = true;
          root.list-share-sources();
-@@ -1645,6 +1662,7 @@ export component YapfastWindow inherits Window {
+     }
+     function open-soundboard(x: length, y: length) {
+@@ -1645,6 +1659,7 @@ export component YapfastWindow inherits Window {
          root.soundboard-opened();
          soundboard-menu.show();
      }
@@ -21052,7 +21422,7 @@ index 2b2e644..288b212 100644
      soundboard-menu := PopupWindow {
          x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
          y: max(8px, root.menu-y - self.height - 6px);
-@@ -1652,6 +1670,8 @@ export component YapfastWindow inherits Window {
+@@ -1652,33 +1667,14 @@ export component YapfastWindow inherits Window {
          close-policy: PopupClosePolicy.close-on-click-outside;
          board := Soundboard {
              rows: root.soundboard-rows; note: root.soundboard-note; emoji-font: root.emoji-font;
@@ -21061,23 +21431,34 @@ index 2b2e644..288b212 100644
              play(id) => { root.play-soundboard(id); }
              preview(id) => { root.preview-soundboard(id); }
              favorite(id, on) => { root.favorite-soundboard(id, on); }
-@@ -1669,11 +1689,12 @@ export component YapfastWindow inherits Window {
-             dialog: !root.share-lists; switching: root.pick-switch;
-             pick-source <=> root.pick-source; pick-resolution <=> root.pick-resolution; pick-fps <=> root.pick-fps;
-             pick-high-quality <=> root.pick-high-quality;
+             close => { soundboard-menu.close(); }
+         }
+     }
+-    share-menu := PopupWindow {
+-        x: max(8px, min(root.width - self.width - 8px, root.menu-x - 6px));
+-        y: max(8px, root.menu-y - self.height - 6px);
+-        // Wider for the screens' pictures.
+-        width: root.share-screens.length > 0 ? 336px : 240px;
+-        close-policy: PopupClosePolicy.close-on-click-outside;
+-        ShareMenu {
+-            screens: root.share-screens; windows: root.share-windows; cameras: root.share-cameras;
+-            dialog: !root.share-lists; switching: root.pick-switch;
+-            pick-source <=> root.pick-source; pick-resolution <=> root.pick-resolution; pick-fps <=> root.pick-fps;
+-            pick-high-quality <=> root.pick-high-quality;
 -            go-live(source, resolution, fps, high-quality) => {
-+            pick-capture-sound <=> root.pick-capture-sound;
-+            go-live(source, resolution, fps, high-quality, capture-sound) => {
-                 if root.pick-switch {
+-                if root.pick-switch {
 -                    root.switch-live(source);
-+                    root.switch-live(source, capture-sound);
-                 } else {
+-                } else {
 -                    root.go-live(source, resolution, fps, high-quality);
-+                    root.go-live(source, resolution, fps, high-quality, capture-sound);
-                 }
-                 share-menu.close();
-             }
-@@ -1826,16 +1847,16 @@ export component YapfastWindow inherits Window {
+-                }
+-                share-menu.close();
+-            }
+-        }
+-    }
+     // The emoji picker opens below the control that asked for it, flipping above
+     // it near the bottom of the window; a message's menu opens beside it. A menu
+     // opened by a right click starts at the pointer.
+@@ -1826,16 +1822,16 @@ export component YapfastWindow inherits Window {
              plus-content := VerticalLayout {
                  padding: 6px; spacing: 2px;
                  MenuItem {
@@ -21097,7 +21478,7 @@ index 2b2e644..288b212 100644
                      clicked => { root.open-poll(); plus-menu.close(); }
                  }
              }
-@@ -1852,6 +1873,7 @@ export component YapfastWindow inherits Window {
+@@ -1852,6 +1848,7 @@ export component YapfastWindow inherits Window {
              game-duration-due => { root.game-duration-due(); }
              choose(status) => { root.set-status(status); status-menu.close(); }
              custom-status => { root.open-status(); status-menu.close(); }
@@ -21105,7 +21486,7 @@ index 2b2e644..288b212 100644
              edit-profile => { root.edit-profile(); status-menu.close(); }
          }
      }
-@@ -1959,13 +1981,13 @@ export component YapfastWindow inherits Window {
+@@ -1959,13 +1956,13 @@ export component YapfastWindow inherits Window {
              background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 10px;
              drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
              clip: true;
@@ -21122,7 +21503,7 @@ index 2b2e644..288b212 100644
                  }
                  if root.expression-tab == 0: GifPicker {
                      view: root.gif-view; query <=> root.gif-query; tiles: root.gif-tiles;
-@@ -2181,17 +2203,17 @@ export component YapfastWindow inherits Window {
+@@ -2181,17 +2178,17 @@ export component YapfastWindow inherits Window {
                                  }
                                  if root.header-server != "" && root.header-invite: IconButton {
                                      x: parent.width - self.width - 10px;
@@ -21143,7 +21524,16 @@ index 2b2e644..288b212 100644
                                      clicked => { root.open-new-dm(); }
                                  }
                                  Rectangle { y: parent.height - 1px; height: 1px; background: Theme.edge; }
-@@ -2286,7 +2308,7 @@ export component YapfastWindow inherits Window {
+@@ -2252,7 +2249,7 @@ export component YapfastWindow inherits Window {
+                     dismiss-voice-error => { root.dismiss-voice-error(); }
+                     toggle-camera => { root.toggle-camera(); }
+                     toggle-share => { root.toggle-share(); }
+-                    open-share-menu(x, y) => { root.open-share-menu(x, y); }
++                    open-share-menu => { root.open-share-menu(); }
+                     open-soundboard(x, y) => { root.open-soundboard(x, y); }
+                     open-call-link(x, y, width, height) => { root.open-call-link(x, y, width, height); }
+                 }
+@@ -2286,7 +2283,7 @@ export component YapfastWindow inherits Window {
                              background: account-touch.has-hover ? Theme.hover : transparent;
                              accessible-role: button;
                              accessible-enabled: root.discord-linked;
@@ -21152,7 +21542,7 @@ index 2b2e644..288b212 100644
                              accessible-action-default => { if root.discord-linked { root.open-status-menu(); } }
                              VerticalLayout {
                                  alignment: center; padding-left: 6px; padding-right: 6px;
-@@ -2300,9 +2322,9 @@ export component YapfastWindow inherits Window {
+@@ -2300,9 +2297,9 @@ export component YapfastWindow inherits Window {
                          }
                          DeviceToggle {
                              icon: root.shown-muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
@@ -21164,7 +21554,7 @@ index 2b2e644..288b212 100644
                              enabled: root.voice-ready || !root.voice-active;
                              clicked => { root.toggle-mute(); }
                              menu => {
-@@ -2312,9 +2334,9 @@ export component YapfastWindow inherits Window {
+@@ -2312,9 +2309,9 @@ export component YapfastWindow inherits Window {
                          }
                          DeviceToggle {
                              icon: root.shown-deafened ? @image-url("icons/headphone-off.svg") : @image-url("icons/headphones.svg");
@@ -21176,7 +21566,7 @@ index 2b2e644..288b212 100644
                              enabled: root.voice-ready || !root.voice-active;
                              clicked => { root.toggle-deafen(); }
                              menu => {
-@@ -2323,11 +2345,11 @@ export component YapfastWindow inherits Window {
+@@ -2323,11 +2320,11 @@ export component YapfastWindow inherits Window {
                              }
                          }
                          if !root.preview && !root.online: IconButton {
@@ -21190,7 +21580,7 @@ index 2b2e644..288b212 100644
                              clicked => { root.settings-open = true; root.refresh-devices(); }
                          }
                      }
-@@ -2360,7 +2382,7 @@ export component YapfastWindow inherits Window {
+@@ -2360,7 +2357,7 @@ export component YapfastWindow inherits Window {
                          if root.room-parent != "" && root.room-selected: parent-name := Text {
                              text: root.room-parent; font-size: 16px; font-weight: 700; vertical-alignment: center;
                              color: parent-touch.has-hover ? Theme.text : Theme.secondary;
@@ -21199,7 +21589,7 @@ index 2b2e644..288b212 100644
                              accessible-action-default => { root.select-room(root.room-parent-id); }
                              parent-touch := TouchArea {
                                  mouse-cursor: MouseCursor.pointer;
-@@ -2373,7 +2395,7 @@ export component YapfastWindow inherits Window {
+@@ -2373,7 +2370,7 @@ export component YapfastWindow inherits Window {
                          if root.friends-open: Image { source: @image-url("icons/users.svg"); width: 22px; image-fit: contain; colorize: Theme.muted; }
                          if root.browse-open: Image { source: @image-url("icons/hash.svg"); width: 22px; image-fit: contain; colorize: Theme.muted; }
                          Text {
@@ -21208,7 +21598,7 @@ index 2b2e644..288b212 100644
                              color: root.room-selected || root.requests-open || root.friends-open || root.browse-open ? Theme.text : Theme.secondary;
                              font-size: 16px; font-weight: 700; overflow: elide; vertical-alignment: center;
                              // The name gives way to what follows it, and fills the bar when nothing does.
-@@ -2385,7 +2407,7 @@ export component YapfastWindow inherits Window {
+@@ -2385,7 +2382,7 @@ export component YapfastWindow inherits Window {
                          if root.has-topic: topic-area := Rectangle {
                              horizontal-stretch: 1; min-width: 40px;
                              accessible-role: button;
@@ -21217,7 +21607,7 @@ index 2b2e644..288b212 100644
                              accessible-action-default => { root.topic-open = true; }
                              StyledText {
                                  width: parent.width; height: parent.height;
-@@ -2410,7 +2432,7 @@ export component YapfastWindow inherits Window {
+@@ -2410,7 +2407,7 @@ export component YapfastWindow inherits Window {
                                  alignment: start;
                                  Rectangle {
                                      height: 24px; border-radius: 12px; background: Theme.raised;
@@ -21226,7 +21616,7 @@ index 2b2e644..288b212 100644
                                      HorizontalLayout {
                                          padding-left: 10px; padding-right: 10px;
                                          Middle {
-@@ -2425,20 +2447,20 @@ export component YapfastWindow inherits Window {
+@@ -2425,20 +2422,20 @@ export component YapfastWindow inherits Window {
                          }
                          if root.friends-open: Middle { Rectangle { width: 1px; height: 24px; background: Theme.line; } }
                          if root.friends-open: Middle {
@@ -21252,7 +21642,7 @@ index 2b2e644..288b212 100644
                                  small: true; primary: root.dm-friend == 3;
                                  clicked => { root.befriend(root.dm-person); }
                              }
-@@ -2446,21 +2468,21 @@ export component YapfastWindow inherits Window {
+@@ -2446,21 +2443,21 @@ export component YapfastWindow inherits Window {
                          if root.has-voice-chat: Middle {
                              IconButton {
                                  icon: root.voice-chat ? @image-url("icons/volume-2.svg") : @image-url("icons/message-square-text.svg");
@@ -21277,7 +21667,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.threads-open ? Theme.text : Theme.secondary;
                                  clicked => {
-@@ -2473,7 +2495,7 @@ export component YapfastWindow inherits Window {
+@@ -2473,7 +2470,7 @@ export component YapfastWindow inherits Window {
                          if root.can-notify: Middle {
                              IconButton {
                                  icon: root.room-muted ? @image-url("icons/bell-off.svg") : @image-url("icons/bell.svg");
@@ -21286,7 +21676,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => {
                                      root.open-context-menu("notifications:" + root.room-id, false,
-@@ -2483,7 +2505,7 @@ export component YapfastWindow inherits Window {
+@@ -2483,7 +2480,7 @@ export component YapfastWindow inherits Window {
                          }
                          if root.can-pin: Middle {
                              IconButton {
@@ -21295,7 +21685,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.pins-open ? Theme.text : Theme.secondary;
                                  // Where the pins open from elsewhere, such as a pin's notice.
-@@ -2502,7 +2524,7 @@ export component YapfastWindow inherits Window {
+@@ -2502,7 +2499,7 @@ export component YapfastWindow inherits Window {
                          if root.can-add-people: Middle {
                              IconButton {
                                  icon: @image-url("icons/user-plus.svg");
@@ -21304,7 +21694,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.add-people-open ? Theme.text : Theme.secondary;
                                  clicked => {
-@@ -2517,7 +2539,7 @@ export component YapfastWindow inherits Window {
+@@ -2517,7 +2514,7 @@ export component YapfastWindow inherits Window {
                          if root.voice-here && root.voice-ready && CallLink.measured: Middle {
                              Rectangle {
                                  width: 32px; height: 32px;
@@ -21313,7 +21703,7 @@ index 2b2e644..288b212 100644
                                  SignalIcon { width: 20px; height: 20px; quality: CallLink.quality; }
                                  LinkTouch {
                                      tip-side: 2;
-@@ -2528,7 +2550,7 @@ export component YapfastWindow inherits Window {
+@@ -2528,7 +2525,7 @@ export component YapfastWindow inherits Window {
                          if root.members-available && root.room-direct: Middle {
                              HeaderToggle {
                                  icon: @image-url("icons/users.svg"); text: root.members; open: root.member-list;
@@ -21322,7 +21712,7 @@ index 2b2e644..288b212 100644
                                  clicked => { root.toggle-members(); }
                              }
                          }
-@@ -2537,7 +2559,7 @@ export component YapfastWindow inherits Window {
+@@ -2537,7 +2534,7 @@ export component YapfastWindow inherits Window {
                          if root.members-available && !root.room-direct: Middle {
                              IconButton {
                                  icon: @image-url("icons/users.svg");
@@ -21331,7 +21721,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  tint: root.member-list ? Theme.text : Theme.secondary;
                                  clicked => { root.toggle-members(); }
-@@ -2546,7 +2568,7 @@ export component YapfastWindow inherits Window {
+@@ -2546,7 +2543,7 @@ export component YapfastWindow inherits Window {
                          // A thread's, after its member list, as in Discord's toolbar.
                          if root.room-parent != "" && root.room-selected: Middle {
                              IconButton {
@@ -21340,7 +21730,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => {
                                      root.open-context-menu("thread-toolbar:" + root.room-id, false,
-@@ -2556,7 +2578,7 @@ export component YapfastWindow inherits Window {
+@@ -2556,7 +2553,7 @@ export component YapfastWindow inherits Window {
                          }
                          if root.profile-available: Middle {
                              IconButton {
@@ -21349,7 +21739,7 @@ index 2b2e644..288b212 100644
                                  size: 32px; glyph: 20px; tip-side: 2;
                                  clicked => { root.toggle-profile-panel(); }
                              }
-@@ -2587,7 +2609,7 @@ export component YapfastWindow inherits Window {
+@@ -2587,7 +2584,7 @@ export component YapfastWindow inherits Window {
                                  padding-left: 16px; padding-right: 16px; padding-top: 7px; padding-bottom: 7px; spacing: 10px;
                                  Image { source: @image-url("icons/triangle-alert.svg"); width: 16px; image-fit: contain; colorize: Theme.accent; }
                                  Text {
@@ -21358,7 +21748,16 @@ index 2b2e644..288b212 100644
                                      color: Theme.secondary; font-size: 14px; font-weight: 500; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1;
                                  }
                              }
-@@ -2700,7 +2722,7 @@ export component YapfastWindow inherits Window {
+@@ -2651,7 +2648,7 @@ export component YapfastWindow inherits Window {
+                                     toggle-mute => { root.toggle-mute(); }
+                                     toggle-deafen => { root.toggle-deafen(); }
+                                     toggle-share => { root.toggle-share(); }
+-                                    open-share-menu(x, y) => { root.open-share-menu(x, y); }
++                                    open-share-menu => { root.open-share-menu(); }
+                                     open-soundboard(x, y) => { root.open-soundboard(x, y); }
+                                     leave-voice => { root.leave-voice(); }
+                                 }
+@@ -2700,7 +2697,7 @@ export component YapfastWindow inherits Window {
                                  width: parent.width; height: parent.height;
                                  focus-on-click: false;
                                  accessible-role: list;
@@ -21367,7 +21766,7 @@ index 2b2e644..288b212 100644
                                  key-pressed(event) => {
                                      if root.messages.length == 0 { return reject; }
                                      if root.confirm-delete != "" && root.confirm-delete == root.active-item {
-@@ -2869,11 +2891,11 @@ export component YapfastWindow inherits Window {
+@@ -2869,11 +2866,11 @@ export component YapfastWindow inherits Window {
                                                          if message.day != "" && message.unread-start: Text { text: "·"; color: Theme.muted; font-size: 13px; font-weight: 700; vertical-alignment: center; }
                                                          if message.unread-start: Rectangle {
                                                              width: new-text.preferred-width + 10px;
@@ -21381,7 +21780,7 @@ index 2b2e644..288b212 100644
                                                                      horizontal-alignment: center; vertical-alignment: center;
                                                                  }
                                                              }
-@@ -2928,9 +2950,9 @@ export component YapfastWindow inherits Window {
+@@ -2928,9 +2925,9 @@ export component YapfastWindow inherits Window {
                                                      padding: 3px; spacing: 0px;
                                                      if root.confirm-delete == message.item: HorizontalLayout {
                                                          spacing: 4px; padding-left: 8px;
@@ -21394,7 +21793,7 @@ index 2b2e644..288b212 100644
                                                      }
                                                      // Frequent reactions, then the picker, Edit on your own message or
                                                      // Reply on someone else's, and everything else under More.
-@@ -2948,17 +2970,17 @@ export component YapfastWindow inherits Window {
+@@ -2948,17 +2945,17 @@ export component YapfastWindow inherits Window {
                                                                  Rectangle { width: 1px; height: 20px; background: Theme.line; }
                                                              }
                                                              IconButton {
@@ -21416,7 +21815,7 @@ index 2b2e644..288b212 100644
                                                              clicked => {
                                                                  root.anchor(self.absolute-position.x, self.absolute-position.y, self.width, self.height, false);
                                                                  root.open-menu(message);
-@@ -3074,7 +3096,7 @@ export component YapfastWindow inherits Window {
+@@ -3074,7 +3071,7 @@ export component YapfastWindow inherits Window {
                                      Image { source: root.is-editing ? @image-url("icons/pencil.svg") : @image-url("icons/reply.svg"); width: 16px; image-fit: contain; colorize: Theme.muted; }
                                      Text { text: root.compose-label; color: Theme.secondary; font-size: 14px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                      if !root.is-editing: VerticalLayout { alignment: center; PingToggle { on: root.reply-ping; toggled => { root.toggle-reply-ping(); } } }
@@ -21425,7 +21824,7 @@ index 2b2e644..288b212 100644
                                  }
                              }
                              composer-box := Rectangle {
-@@ -3108,7 +3130,7 @@ export component YapfastWindow inherits Window {
+@@ -3108,7 +3105,7 @@ export component YapfastWindow inherits Window {
                                              // of uploading a file or starting a thread.
                                              IconButton {
                                                  icon: @image-url("icons/circle-plus.svg");
@@ -21434,7 +21833,7 @@ index 2b2e644..288b212 100644
                                                  glyph: 22px;
                                                  enabled: root.can-attach || root.can-start-threads || root.can-create-polls;
                                                  clicked => {
-@@ -3123,8 +3145,8 @@ export component YapfastWindow inherits Window {
+@@ -3123,8 +3120,8 @@ export component YapfastWindow inherits Window {
                                              }
                                          }
                                          composer := Composer {
@@ -21445,7 +21844,7 @@ index 2b2e644..288b212 100644
                                              edited(text) => { root.draft-edited(text); }
                                              accepted => { root.send(); }
                                              suggesting: !root.suggesting-aside && (root.mentions.length > 0 || root.emoji-suggestions.length > 0);
-@@ -3162,7 +3184,7 @@ export component YapfastWindow inherits Window {
+@@ -3162,7 +3159,7 @@ export component YapfastWindow inherits Window {
                                          if root.can-pick-gifs: VerticalLayout {
                                              alignment: end; padding-bottom: 8px;
                                              gif-button := IconButton {
@@ -21454,7 +21853,7 @@ index 2b2e644..288b212 100644
                                                  glyph: 22px; enabled: root.composer-enabled;
                                                  tint: root.expressions-open && root.expression-tab == 0 ? Theme.text : Theme.secondary;
                                                  clicked => {
-@@ -3174,7 +3196,7 @@ export component YapfastWindow inherits Window {
+@@ -3174,7 +3171,7 @@ export component YapfastWindow inherits Window {
                                          VerticalLayout {
                                              alignment: end; padding-bottom: 8px;
                                              emoji-button := IconButton {
@@ -21463,7 +21862,7 @@ index 2b2e644..288b212 100644
                                                  glyph: 22px; enabled: root.composer-enabled;
                                                  tint: root.react-item == "yapfast:composer" && (!root.expressions-open || root.expression-tab == 1) ? Theme.text : Theme.secondary;
                                                  clicked => {
-@@ -3191,7 +3213,7 @@ export component YapfastWindow inherits Window {
+@@ -3191,7 +3188,7 @@ export component YapfastWindow inherits Window {
                                              alignment: end; padding-bottom: 8px;
                                              IconButton {
                                                  icon: @image-url("icons/send-horizontal.svg");
@@ -21472,7 +21871,7 @@ index 2b2e644..288b212 100644
                                                  enabled: root.can-send; emphasis: root.can-send;
                                                  clicked => { root.send(); }
                                              }
-@@ -3396,12 +3418,12 @@ export component YapfastWindow inherits Window {
+@@ -3396,12 +3393,12 @@ export component YapfastWindow inherits Window {
          x: (root.pip-left ? self.left : self.right) + self.drag-x;
          y: (root.pip-bottom ? self.bottom : self.top) + self.drag-y;
          animate x, y { duration: self.dragging ? 0ms : 180ms; easing: ease-out; }
@@ -21487,7 +21886,57 @@ index 2b2e644..288b212 100644
          viewers: root.pip-kind == 1 ? root.watch-viewers : root.pip-kind == 2 ? root.share-viewers : [];
          viewer-names: root.pip-kind == 1 ? root.watch-viewer-names : root.pip-kind == 2 ? root.share-viewer-names : "";
          open-call => {
-@@ -3505,6 +3527,8 @@ export component YapfastWindow inherits Window {
+@@ -3439,6 +3436,10 @@ export component YapfastWindow inherits Window {
+                 stream-tiles: root.stream-tiles; watch-user: root.watch-user; watch-frame: root.watch-frame;
+                 watch-status: root.watch-status; watch-viewers: root.watch-viewers; watch-viewer-names: root.watch-viewer-names;
+                 focused: root.call-focus;
++                focus-tile(slot) => {
++                    if slot < 0 { root.stage-full = false; }
++                    root.focus-tile(slot);
++                }
+                 full-screen(on) => { root.stage-full = on; }
+                 stop-watching => { root.stop-watching(); }
+                 open-volume(person, x, y) => { root.open-voice-menu(root.voice-channel, person, x, y); }
+@@ -3449,6 +3450,38 @@ export component YapfastWindow inherits Window {
+         }
+     }
+ 
++    if root.share-open: Rectangle {
++        background: #00000099;
++        TouchArea { clicked => { root.share-open = false; } }
++        FocusScope {
++            width: parent.width; height: parent.height;
++            init => { self.focus(); }
++            key-pressed(event) => {
++                if event.text == Key.Escape { root.share-open = false; return accept; }
++                return reject;
++            }
++            ShareMenu {
++                width: min(650px, parent.width - 32px);
++                height: min(510px, parent.height - 32px);
++                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
++                screens: root.share-screens; windows: root.share-windows; cameras: root.share-cameras;
++                dialog: !root.share-lists; switching: root.pick-switch; loading: root.share-loading;
++                destination: root.voice-name;
++                pick-source <=> root.pick-source; pick-resolution <=> root.pick-resolution; pick-fps <=> root.pick-fps;
++                pick-high-quality <=> root.pick-high-quality; pick-capture-sound <=> root.pick-capture-sound;
++                close => { root.share-open = false; }
++                go-live(source, resolution, fps, high-quality, capture-sound) => {
++                    root.share-open = false;
++                    if root.pick-switch {
++                        root.switch-live(source, capture-sound);
++                    } else {
++                        root.go-live(source, resolution, fps, high-quality, capture-sound);
++                    }
++                }
++            }
++        }
++    }
++
+     // A call ringing this account elsewhere, at the top until it's answered or stops.
+     if root.incoming-open: IncomingCall {
+         x: (root.width - self.width) / 2; y: root.title-height + 64px;
+@@ -3505,6 +3538,8 @@ export component YapfastWindow inherits Window {
              sign-out => { root.settings-open = false; root.logout(); }
          }
          if root.settings-section == 7: AppearanceSettings {
@@ -21496,7 +21945,7 @@ index 2b2e644..288b212 100644
              themes: root.themes; theme-id: root.theme-id;
              editor: root.theme-editor; colours: root.theme-colours;
              theme-name <=> root.theme-name; theme-dark <=> root.theme-dark;
-@@ -3522,11 +3546,27 @@ export component YapfastWindow inherits Window {
+@@ -3522,11 +3557,27 @@ export component YapfastWindow inherits Window {
              cancel-theme => { root.cancel-theme(); }
              delete-theme => { root.delete-theme(); }
          }
@@ -21524,7 +21973,7 @@ index 2b2e644..288b212 100644
              unmute-on-join <=> root.unmute-on-join; level-voice <=> root.level-voice;
              noise-suppression <=> root.noise-suppression; noise-strength <=> root.noise-strength; dereverb <=> root.dereverb; discord: root.discord-linked;
              sensitivity <=> root.sensitivity; gate-level: root.gate-level; gate-sending: root.gate-sending; gate-meter-note: root.gate-meter-note;
-@@ -3737,7 +3777,7 @@ export component YapfastWindow inherits Window {
+@@ -3737,7 +3788,7 @@ export component YapfastWindow inherits Window {
              close => { root.close-add-people(); }
          }
      }
@@ -21533,7 +21982,7 @@ index 2b2e644..288b212 100644
      // their card over it; Escape or a click outside closes it.
      role-motion := PopupMotion { open: root.role-open; }
      if role-motion.shown: Rectangle {
-@@ -3805,9 +3845,15 @@ export component YapfastWindow inherits Window {
+@@ -3805,9 +3856,15 @@ export component YapfastWindow inherits Window {
          ProfileCard {
              opacity: Popup.opacity(large-profile-motion.amount); transform-scale: Popup.scale(large-profile-motion.amount);
              large: true;
@@ -21550,7 +21999,7 @@ index 2b2e644..288b212 100644
              close => { root.close-profile(); }
              befriend => { root.befriend(root.profile.id); }
              open-link(link) => { root.open-link(link); }
-@@ -3958,6 +4004,7 @@ export component YapfastWindow inherits Window {
+@@ -3958,6 +4015,7 @@ export component YapfastWindow inherits Window {
          pick(kind) => { root.pick-profile-picture(kind); }
          reset(kind) => { root.reset-profile-picture(kind); }
          unlock-nitro => { root.unlock-nitro(); }
@@ -21558,7 +22007,7 @@ index 2b2e644..288b212 100644
          undo => { root.undo-profile(); }
          save => { root.save-profile(); }
          close => { root.close-profile-editor(); }
-@@ -4077,7 +4124,7 @@ export component YapfastWindow inherits Window {
+@@ -4077,7 +4135,7 @@ export component YapfastWindow inherits Window {
          width: zoom-text.preferred-width + 28px; height: 36px;
          border-radius: 18px; background: Theme.tooltip;
          drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 3px;
@@ -21567,7 +22016,7 @@ index 2b2e644..288b212 100644
          zoom-text := Text { text: root.zoom-note; color: Theme.text; font-size: 15px; font-weight: 700; }
      }
      // Who reacted, over the reaction the pointer stays on: its emoji, then
-@@ -4128,7 +4175,7 @@ export component YapfastWindow inherits Window {
+@@ -4128,7 +4186,7 @@ export component YapfastWindow inherits Window {
      if root.dragging || root.drop-refusal != "": Rectangle {
          background: #000000a6;
          accessible-role: groupbox;
@@ -21576,7 +22025,7 @@ index 2b2e644..288b212 100644
          TouchArea { clicked => { root.drop-refusal = ""; } }
          // Over the part the files go to: the thread beside, or the rest.
          property <length> aside-part: root.workspace && root.aside-docked ? root.aside-shown : 0px;
-@@ -4152,11 +4199,11 @@ export component YapfastWindow inherits Window {
+@@ -4152,11 +4210,11 @@ export component YapfastWindow inherits Window {
                  }
                  if root.dragging: HorizontalLayout {
                      alignment: center;
@@ -21590,7 +22039,7 @@ index 2b2e644..288b212 100644
                      color: Theme.on-accent; font-size: 15px; horizontal-alignment: center; wrap: word-wrap;
                  }
                  if !root.dragging: Text {
-@@ -4169,7 +4216,7 @@ export component YapfastWindow inherits Window {
+@@ -4169,7 +4227,7 @@ export component YapfastWindow inherits Window {
                  }
                  if !root.dragging: HorizontalLayout {
                      alignment: center; padding-top: 8px;
@@ -21599,7 +22048,7 @@ index 2b2e644..288b212 100644
                  }
              }
          }
-@@ -4195,10 +4242,10 @@ export component YapfastWindow inherits Window {
+@@ -4195,10 +4253,10 @@ export component YapfastWindow inherits Window {
          cancel => { root.cancel-mfa(); }
      }
      // The title bar and the edges that resize the window, above all but the
@@ -21612,7 +22061,7 @@ index 2b2e644..288b212 100644
          focused: root.window-focused; maximized: root.window-maximized;
          move-window => { root.move-window(); }
          minimize-window => { root.minimize-window(); }
-@@ -4209,14 +4256,14 @@ export component YapfastWindow inherits Window {
+@@ -4209,14 +4267,14 @@ export component YapfastWindow inherits Window {
          resize-window(direction) => { root.resize-window(direction); }
      }
      if Tip.text != "": Rectangle {

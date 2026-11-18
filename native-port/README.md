@@ -4,7 +4,9 @@ Voxcord uses Rust and Slint for the complete desktop interface. It does not embe
 
 ## This build
 
-- Profile cards use a compact banner, an activity section and a separate mutual-connections tab. Games and rich activities follow live member, friend and DM updates, including clearing stopped activities. The account's own rich activity is carried into its profile and profile editor. The status menu also opens the account's own profile directly.
+- Full profiles use separate About Me, Activity, Mutual Servers and Mutual Friends tabs. The editor shows the editable fields alongside a live profile preview when the window is wide enough.
+- Windows receives Discord Rich Presence from local apps such as Nova. The profile shows the track, artist, album, cover and playback progress when provided. A detected game can remain visible alongside the music.
+- A focused camera or stream tile has a return-to-grid button, including in full screen. The screen-share dialog has separate application, screen and video-device tabs, followed by a review of the selected source, audio and stream quality.
 
 - Test the selected camera and microphone in Voice & Video. Camera preview tries three capture formats without blocking the window. The microphone test plays the selected input back in real time on the selected output until stopped. Test capture is local and releases its devices when closed or when a call starts.
 - In Discord calls, direct microphone mode is the default. Voice activity opens the microphone on the first block that crosses the sensitivity threshold. Push-to-talk is also available. Direct mode bypasses Voxcord's echo cancellation, denoising, automatic gain and leveling. Windows raw capture is requested when the device supports it.
