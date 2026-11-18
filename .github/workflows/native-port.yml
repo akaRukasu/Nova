@@ -161,10 +161,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Screen bandwidth regression failed" }
           & ./media-tests/yapfast_core.exe voxcord_ --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Voxcord device or soundboard regression failed" }
-          & ./media-tests/yapfast.exe voxcord_profile --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw "Live profile activity regression failed" }
-          & ./media-tests/yapfast.exe a_profile_shows_activities_as_discord_cards --test-threads=1
-          if ($LASTEXITCODE -ne 0) { throw "Rich activity card regression failed" }
+          foreach ($filter in @('voxcord_profile', 'a_profile_shows_activities_as_discord_cards')) {
+            $log = Join-Path $PWD "$filter.log"
+            $errorLog = Join-Path $PWD "$filter-error.log"
+            $test = Start-Process ./media-tests/yapfast.exe -ArgumentList @($filter, '--test-threads=1') -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError $errorLog
+            if (!$test.WaitForExit(60000)) { Stop-Process -Id $test.Id; throw "Profile regression timed out: $filter" }
+            Get-Content $log
+            Get-Content $errorLog
+            if ($test.ExitCode -ne 0 -or !(Select-String -Path $log -Pattern 'test result: ok. 1 passed; 0 failed')) {
+              throw "Profile regression failed or was not run: $filter"
+            }
+          }
       - name: Package the installer and test the installed binary
         shell: pwsh
         run: |
