@@ -161,7 +161,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Screen bandwidth regression failed" }
           & ./media-tests/yapfast_core.exe voxcord_ --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Voxcord device or soundboard regression failed" }
-          foreach ($filter in @('voxcord_profile', 'a_profile_shows_activities_as_discord_cards')) {
+          & ./media-tests/yapfast_discord.exe rpc::tests --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Rich Presence IPC regressions failed" }
+          & ./media-tests/yapfast_discord.exe service::tracker::tests::voxcord_ --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Remote music presence regression failed" }
+          foreach ($filter in @('voxcord_profile_uses_live_activities_in_the_card_and_editor', 'voxcord_profile_displays_nova_music_as_a_song', 'a_profile_shows_activities_as_discord_cards')) {
             $log = Join-Path $PWD "$filter.log"
             $errorLog = Join-Path $PWD "$filter-error.log"
             $test = Start-Process ./media-tests/yapfast.exe -ArgumentList @($filter, '--test-threads=1') -WindowStyle Hidden -PassThru -RedirectStandardOutput $log -RedirectStandardError $errorLog
