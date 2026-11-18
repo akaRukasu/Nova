@@ -7479,7 +7479,7 @@ index 24fd463..1318a7b 100644
          if window.get_window_title() != title.as_str() {
              window.set_window_title(title.into());
 diff --git a/src/ui/tests.rs b/src/ui/tests.rs
-index 9214a90..2faa2df 100644
+index 9214a90..c5ed9a8 100644
 --- a/src/ui/tests.rs
 +++ b/src/ui/tests.rs
 @@ -1344,7 +1344,7 @@ fn a_link_showing_other_text_asks_before_it_opens() {
@@ -7518,7 +7518,7 @@ index 9214a90..2faa2df 100644
              ("f", "", true, false),
              ("g", "OTHER", false, false),
              ("h", "", false, false),
-@@ -3807,6 +3807,43 @@ fn a_right_click_on_a_folder_asks_for_its_menu() {
+@@ -3807,6 +3807,41 @@ fn a_right_click_on_a_folder_asks_for_its_menu() {
      );
  }
  
@@ -7529,11 +7529,9 @@ index 9214a90..2faa2df 100644
 +        {"type": 0, "name": "Factorio", "details": "On Nauvis",
 +         "timestamps": {"start": 1_700_000_000_000_u64}}
 +    ]));
-+    let mut state = AppState {
-+        discord_user: Some("10".into()),
-+        discord_own_activities: activities.clone(),
-+        ..Default::default()
-+    };
++    let mut state = AppState::default();
++    state.discord_user = Some("10".into());
++    state.discord_own_activities = activities.clone();
 +    let view = ProfileView {
 +        profile: yapfast_core::chat::Profile { id: "10".into(), ..Default::default() },
 +        ..Default::default()
@@ -7562,7 +7560,7 @@ index 9214a90..2faa2df 100644
  #[cfg(feature = "discord")]
  #[test]
  fn a_profile_shows_activities_as_discord_cards() {
-@@ -3819,21 +3856,21 @@ fn a_profile_shows_activities_as_discord_cards() {
+@@ -3819,21 +3854,21 @@ fn a_profile_shows_activities_as_discord_cards() {
      ]));
      let rows: Vec<ActivityRow> = profile::activity_rows(&activities).iter().collect();
      let spotify = &rows[0];
@@ -7587,7 +7585,7 @@ index 9214a90..2faa2df 100644
      // The line under the name goes when it only names one of them.
      assert!(profile::names_an_activity("Playing Factorio", &activities));
      assert!(!profile::names_an_activity("Playing Chess", &activities));
-@@ -6174,7 +6211,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
+@@ -6174,7 +6209,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
      assert_eq!(theme::Theme::shown(&again), nord);
      assert_eq!(again.get_theme_id(), "nord");
  
@@ -7596,7 +7594,7 @@ index 9214a90..2faa2df 100644
      // has shows Yap.
      again.invoke_choose_theme("missing".into());
      assert_eq!(theme::Theme::shown(&again), nord);
-@@ -6255,7 +6292,7 @@ fn a_custom_theme_keeps_its_colours_by_name_and_falls_back_to_its_base() {
+@@ -6255,7 +6290,7 @@ fn a_custom_theme_keeps_its_colours_by_name_and_falls_back_to_its_base() {
          custom
      );
  
@@ -7605,7 +7603,7 @@ index 9214a90..2faa2df 100644
      let unknown: theme::Custom =
          serde_json::from_value(serde_json::json!({ "base": "gone" })).unwrap();
      assert_eq!((unknown.base, unknown.theme), ("yap", theme::YAP));
-@@ -6696,7 +6733,7 @@ fn a_handed_link_waits_for_the_open_dialog() {
+@@ -6696,7 +6731,7 @@ fn a_handed_link_waits_for_the_open_dialog() {
      );
      let shown = query(&adapter);
      assert!(shown.is_some());

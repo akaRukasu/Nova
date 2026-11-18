@@ -4,8 +4,8 @@ set -euo pipefail
 # their executables on the Windows installer runner, not through emulation.
 export SKIA_BINARIES_URL="file://$(python3 nix/prepare-windows-skia.py)"
 source scripts/release-env x86_64-pc-windows-msvc
-cargo test --locked --release --target x86_64-pc-windows-msvc -p yapfast-discord -p yapfast-core --lib --no-run --message-format=json > target/native-test-binaries.json
-cargo test --locked --release --target x86_64-pc-windows-msvc --bin yapfast --no-run --message-format=json >> target/native-test-binaries.json
+cargo test --locked --release --target x86_64-pc-windows-msvc -p yapfast-discord -p yapfast-core --lib --no-run --message-format=json-render-diagnostics > target/native-test-binaries.json
+cargo test --locked --release --target x86_64-pc-windows-msvc --bin yapfast --no-run --message-format=json-render-diagnostics >> target/native-test-binaries.json
 python3 - <<'PY'
 import json, pathlib, shutil
 out = pathlib.Path('target/native-tests')
