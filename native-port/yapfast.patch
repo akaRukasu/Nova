@@ -384,10 +384,15 @@ index cb458e2..cb7f8b6 100644
          self.state.sound_catalog = None;
          self.show_lists()
 diff --git a/crates/yapfast-core/src/application/profiles.rs b/crates/yapfast-core/src/application/profiles.rs
-index 926a482..5801661 100644
+index 926a482..5424222 100644
 --- a/crates/yapfast-core/src/application/profiles.rs
 +++ b/crates/yapfast-core/src/application/profiles.rs
-@@ -5,6 +5,21 @@ use super::*;
+@@ -1,10 +1,26 @@
+ //! Profile cards, the profile beside a DM, and role cards.
+ 
+ use super::*;
++use crate::chat::Presence;
+ 
  impl Application {
      /// Shows someone in the open conversation, or else a Discord friend.
      pub(super) fn show_profile(&mut self, user: String, large: bool) -> Vec<Effect> {
@@ -409,7 +414,7 @@ index 926a482..5801661 100644
          let (Some(room), Some(member)) = (self.state.selected_room(), self.state.person(&user))
          else {
              let effects = self.show_friend_profile(user.clone(), large);
-@@ -272,3 +287,57 @@ pub(super) fn dm_profile(room: &ChatRoom, person: String) -> Profile {
+@@ -272,3 +288,57 @@ pub(super) fn dm_profile(room: &ChatRoom, person: String) -> Profile {
          ..Default::default()
      }
  }
@@ -468,16 +473,17 @@ index 926a482..5801661 100644
 +    }
 +}
 diff --git a/crates/yapfast-core/src/application/tests.rs b/crates/yapfast-core/src/application/tests.rs
-index b377e78..3b667f7 100644
+index b377e78..791cad9 100644
 --- a/crates/yapfast-core/src/application/tests.rs
 +++ b/crates/yapfast-core/src/application/tests.rs
-@@ -3776,6 +3776,56 @@ fn discord_dms_list_with_their_pictures_and_read_once_read() {
+@@ -3776,6 +3776,57 @@ fn discord_dms_list_with_their_pictures_and_read_once_read() {
      assert!(app.state.lists_members(), "a group DM does");
  }
  
 +#[test]
 +#[cfg(feature = "discord")]
 +fn voxcord_profiles_follow_activity_start_and_stop() {
++    use crate::chat::Presence;
 +    let mut app = Application::default();
 +    let game = yapfast_discord::activity::activities(&serde_json::json!([
 +        {"type": 0, "name": "Factorio", "details": "On Nauvis",
@@ -6915,9 +6921,31 @@ index a9b8e03..6f0606f 100644
      if adapter.placement_due.running() {
          adapter.placement_due.stop();
 diff --git a/src/ui/profile.rs b/src/ui/profile.rs
-index 3cddff5..1dc4025 100644
+index 3cddff5..374c53f 100644
 --- a/src/ui/profile.rs
 +++ b/src/ui/profile.rs
+@@ -77,8 +77,8 @@ fn activity_row(activity: &yapfast_core::chat::Activity) -> ActivityRow {
+     };
+     let (name_emoji, name) = yapfast_core::discord::status_parts(&name);
+     let state = match (&activity.state, activity.party) {
+-        (Some(state), Some((size, most))) => format!("{state} ({size} of {most})"),
+-        (None, Some((size, most))) => format!("{size} of {most}"),
++        (Some(state), Some((size, most))) => format!("{state} ({size} {} {most})", tr("of")),
++        (None, Some((size, most))) => format!("{size} {} {most}", tr("of")),
+         (state, None) => state.as_deref().unwrap_or_default().to_owned(),
+     };
+     // Spotify's card is titled by the song, then by whom and on which album.
+@@ -89,8 +89,8 @@ fn activity_row(activity: &yapfast_core::chat::Activity) -> ActivityRow {
+         };
+         (
+             activity.details.as_deref().unwrap_or(name).to_owned(),
+-            after("by", &activity.state),
+-            after("on", &activity.large_text),
++            after(tr("by"), &activity.state),
++            after(tr("on"), &activity.large_text),
+         )
+     } else {
+         (
 @@ -99,8 +99,17 @@ fn activity_row(activity: &yapfast_core::chat::Activity) -> ActivityRow {
              state,
          )
@@ -7451,7 +7479,7 @@ index 24fd463..1318a7b 100644
          if window.get_window_title() != title.as_str() {
              window.set_window_title(title.into());
 diff --git a/src/ui/tests.rs b/src/ui/tests.rs
-index 9214a90..7d7eaa5 100644
+index 9214a90..2faa2df 100644
 --- a/src/ui/tests.rs
 +++ b/src/ui/tests.rs
 @@ -1344,7 +1344,7 @@ fn a_link_showing_other_text_asks_before_it_opens() {
@@ -7534,7 +7562,7 @@ index 9214a90..7d7eaa5 100644
  #[cfg(feature = "discord")]
  #[test]
  fn a_profile_shows_activities_as_discord_cards() {
-@@ -3819,7 +3856,7 @@ fn a_profile_shows_activities_as_discord_cards() {
+@@ -3819,21 +3856,21 @@ fn a_profile_shows_activities_as_discord_cards() {
      ]));
      let rows: Vec<ActivityRow> = profile::activity_rows(&activities).iter().collect();
      let spotify = &rows[0];
@@ -7543,6 +7571,22 @@ index 9214a90..7d7eaa5 100644
      assert_eq!(
          (
              spotify.name.as_str(),
+             spotify.details.as_str(),
+             spotify.state.as_str()
+         ),
+-        ("Weightless", "by Marconi Union", "on Distance")
++        ("Weightless", format!("{} Marconi Union", tr("by")).as_str(), format!("{} Distance", tr("on")).as_str())
+     );
+     assert_eq!(spotify.end - spotify.start, 480);
+     assert_eq!(
+         spotify.link,
+         "https://open.spotify.com/track/6kkwzB6hXLIONkEk9JciA6"
+     );
+-    assert_eq!(rows[1].state, "In a party (2 of 4)");
++    assert_eq!(rows[1].state, format!("In a party (2 {} 4)", tr("of")));
+     // The line under the name goes when it only names one of them.
+     assert!(profile::names_an_activity("Playing Factorio", &activities));
+     assert!(!profile::names_an_activity("Playing Chess", &activities));
 @@ -6174,7 +6211,7 @@ fn a_chosen_theme_is_kept_and_survives_a_window_made_again() {
      assert_eq!(theme::Theme::shown(&again), nord);
      assert_eq!(again.get_theme_id(), "nord");
@@ -10248,7 +10292,7 @@ index 42b4b0d..da221a3 100644
          }
      }
 diff --git a/ui/people.slint b/ui/people.slint
-index 490d006..6ef4dd0 100644
+index 490d006..b50080e 100644
 --- a/ui/people.slint
 +++ b/ui/people.slint
 @@ -32,7 +32,7 @@ export component MemberPanel inherits Rectangle {
@@ -10449,7 +10493,7 @@ index 490d006..6ef4dd0 100644
 +    property <bool> mutual: root.full && (root.data.servers.length > 0 || root.data.friends.length > 0);
 +    property <bool> overview: root.section == 0 || !root.mutual;
 +    changed profile-id => { root.section = 0; profile-scroll.content-y = 0px; }
-+    height: min(root.limit, max(body.preferred-height, root.large ? 440px : 0px));
++    height: root.large ? min(root.limit, 680px) : min(body.preferred-height, root.limit);
      background: Theme.sidebar;
      border-radius: root.docked ? 0px : 12px; border-width: root.docked ? 0px : 1px; border-color: Theme.edge;
      drop-shadow-blur: root.docked ? 0px : 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: root.docked ? 0px : 8px;
@@ -14131,10 +14175,10 @@ index e6e465c..450589c 100644
      }
 diff --git a/ui/translations/fr.json b/ui/translations/fr.json
 new file mode 100644
-index 0000000..7f28278
+index 0000000..f519e8e
 --- /dev/null
 +++ b/ui/translations/fr.json
-@@ -0,0 +1,1128 @@
+@@ -0,0 +1,1131 @@
 +{
 +  "Off": "Désactivé",
 +  "Cancel": "Annuler",
@@ -15261,14 +15305,17 @@ index 0000000..7f28278
 +  "Listening to": "Écoute",
 +  "Watching": "Regarde",
 +  "Competing in": "Participe à",
-+  "Hanging out": "En vocal"
++  "Hanging out": "En vocal",
++  "of": "sur",
++  "by": "par",
++  "on": "sur"
 +}
 diff --git a/ui/translations/fr/LC_MESSAGES/yapfast-ui.po b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
 new file mode 100644
-index 0000000..f6c8b23
+index 0000000..323d781
 --- /dev/null
 +++ b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
-@@ -0,0 +1,3383 @@
+@@ -0,0 +1,3392 @@
 +msgid ""
 +msgstr ""
 +"Content-Type: text/plain; charset=UTF-8\n"
@@ -18641,11 +18688,20 @@ index 0000000..f6c8b23
 +msgid "Zoom "
 +msgstr "Zoom "
 +
++msgid "by"
++msgstr "par"
++
 +msgid "e.g.: cat hug"
 +msgstr "Par exemple, câlin de chat"
 +
 +msgid "members of "
 +msgstr "membres de "
++
++msgid "of"
++msgstr "sur"
++
++msgid "on"
++msgstr "sur"
 +
 +msgid "the GPU"
 +msgstr "la carte graphique"
