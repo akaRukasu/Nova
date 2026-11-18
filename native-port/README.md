@@ -1,12 +1,12 @@
-# Voxcord 0.7.2 — native Rust client
+# Voxcord 0.7.3 — native Rust client
 
 Voxcord uses Rust and Slint for the complete desktop interface. It does not embed Discord's website, Electron or WebView2. The engine is a GPL-3.0-or-later fork of [Yapfast](https://github.com/yapfast/yapfast), pinned to `28174c7227e9b5a7a7dd222378086e88a62cbdb1`; `yapfast.patch` contains the complete changes, including branding and the Windows icon. Every build distributes the patched source and dependency notices alongside the portable executable.
 
 ## This build
 
-- Full profiles use separate About Me, Activity, Mutual Servers and Mutual Friends tabs. The editor shows the editable fields alongside a live profile preview when the window is wide enough.
+- Full profiles follow Discord's two-column layout: banner, avatar, status, About Me, Member Since and roles on the left; Activity, Mutual Friends and Mutual Servers tabs on the right. The editor shows the editable fields alongside a live profile preview when the window is wide enough.
 - Windows receives Discord Rich Presence from local apps such as Nova. The profile shows the track, artist, album, cover and playback progress when provided. A detected game can remain visible alongside the music.
-- A focused camera or stream tile has a return-to-grid button, including in full screen. The screen-share dialog has separate application, screen and video-device tabs, followed by a review of the selected source, audio and stream quality.
+- Clicking a focused camera or stream tile returns it to the grid; double-clicking toggles full screen. A return-to-grid button remains available, including in full screen. The Go Live dialog has pill tabs for applications, screens and video devices, then a review with the source preview, streaming channel, resolution and frame-rate choices, and sound options.
 
 - Test the selected camera and microphone in Voice & Video. Camera preview tries three capture formats without blocking the window. The microphone test plays the selected input back in real time on the selected output until stopped. Test capture is local and releases its devices when closed or when a call starts.
 - In Discord calls, direct microphone mode is the default. Voice activity opens the microphone on the first block that crosses the sensitivity threshold. Push-to-talk is also available. Direct mode bypasses Voxcord's echo cancellation, denoising, automatic gain and leveling. Windows raw capture is requested when the device supports it.

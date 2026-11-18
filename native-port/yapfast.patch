@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index ec907bf..3477dca 100644
+index ec907bf..cef37f7 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -324,7 +324,7 @@ dependencies = [
@@ -267,7 +267,7 @@ index ec907bf..3477dca 100644
  [[package]]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.7.2"
++version = "0.7.3"
  dependencies = [
   "anyhow",
   "arboard",
@@ -303,14 +303,14 @@ index ec907bf..3477dca 100644
  
  [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index 74940f9..f696e9f 100644
+index 74940f9..1aebd83 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,6 +1,6 @@
  [package]
  name = "yapfast"
 -version = "0.3.0"
-+version = "0.7.2"
++version = "0.7.3"
  edition = "2024"
  rust-version = "1.97"
  publish = false
@@ -3129,6 +3129,69 @@ index 1d0fc6a..bf21b34 100644
      )
      .expect("could not compile Yapfast's Slint UI");
  }
+diff --git a/docs/discord/go-live.md b/docs/discord/go-live.md
+index 16c626c..5752070 100644
+--- a/docs/discord/go-live.md
++++ b/docs/discord/go-live.md
+@@ -14,7 +14,10 @@ streams by key (`guild:{server}:{channel}:{user}`) and
+ states carry `self_stream`, which shows as a LIVE badge beside the person.
+ Sharing starts from the call's controls or from the voice panel's Share
+ button, which works wherever the window is; the panel says when the stream
+-is live and stops it. A click on someone's tile watches their stream, which
++is live and stops it. Both open a dialog laid out as Discord's Go Live
++one: tabs for applications, screens and devices, then the chosen source's
++preview, the channel, the resolution and frame rate as radio buttons and the
++sound to share, before "Go Live". A click on someone's tile watches their stream, which
+ then shows large in it; someone who films as well has a second tile for the
+ stream. A stream being watched starts large, however watching began, and
+ stays watched in its tile after a click beside it. While the call is off
+@@ -54,9 +57,9 @@ one goes on. The encoder takes the new size on the same connection.
+ `YAPFAST_STREAM_TEST_PATTERN=1` shares moving colour bars instead of a screen.
+ 
+ A camera can be shared too, such as OBS's virtual camera (v4l2loopback on
+-Linux, its DirectShow filter on Windows). The share menu lists the cameras
+-[the call's camera](voice.md#camera-video) lists, under CAMERAS, after the
+-screens and windows; on Linux, where the portal picks a screen or window, a
++Linux, its DirectShow filter on Windows). The share dialog lists the cameras
++[the call's camera](voice.md#camera-video) lists, under its Devices tab,
++beside the Applications (windows) and Screens tabs; on Linux, where the portal picks a screen or window, a
+ "Screen or window" choice comes first, and switching with no camera listed
+ goes straight to the dialog. The worker films the camera through the same
+ capture module (`camera::Camera::open_at`), asking for the stream's
+diff --git a/docs/discord/people.md b/docs/discord/people.md
+index ce3d75e..b581d66 100644
+--- a/docs/discord/people.md
++++ b/docs/discord/people.md
+@@ -228,7 +228,10 @@ threads](servers.md#a-channels-list-of-threads).
+ Clicking someone in a channel's member list or under a voice channel, or
+ following a Discord `/users/{id}` link,
+ shows their profile in a small card beside it, whose picture or name
+-enlarges it into a centred one. The card leaves the dates and the roles'
++enlarges it into a centred one. The full profile is laid out as Discord's:
++the person on the left, with their banner, custom status, buttons, bio,
++dates and roles, and on the right tabs for their activity, mutual friends
++and mutual servers, opening on their activity. The card leaves the dates and the roles'
+ heading to the full profile, and ends in a box, "Message @name", as
+ Discord's does: Enter opens or starts the DM with them and sends what it
+ holds there, without touching the DM's own composer. The box shows only for
+diff --git a/docs/voice.md b/docs/voice.md
+index 8542b81..3b94dc7 100644
+--- a/docs/voice.md
++++ b/docs/voice.md
+@@ -59,9 +59,10 @@ their tiles largest within both the grid's width and height, so a call
+ above a DM's messages shows both people side by side without scrolling;
+ more take tiles at least 240px wide, and scroll. A click on a tile shows it
+ large, as Discord's focus does, with the others in rows of small tiles
+-beneath; a click beside it shows the grid again. The large tile goes full
+-screen from its button or a double click, over the whole window, until
+-Escape. Rust keeps which tile is large (`tiles::Focus`), by whose it is, so
++beneath; a click on it, beside it, or on its "Return to grid" button shows
++the grid again. That click waits out a double click's time, so a double
++click only takes the large tile full screen, over the whole window, as its
++button does, until Escape. Rust keeps which tile is large (`tiles::Focus`), by whose it is, so
+ it stays as people come and go. The grid tells Rust its columns, tile size,
+ scroll and large tile whenever they change (`call-tiles`), so each feed is
+ made at its tile's size in physical pixels, and only while the tile is in
 diff --git a/packaging/icon.svg b/packaging/icon.svg
 index 67fe81c..e6d6261 100644
 --- a/packaging/icon.svg
@@ -4484,7 +4547,7 @@ z8(>D~Jm4%$cHk~xBS^dFEwnqoC1_X$kR|%uxzIhuYY#rm3(f<1)@Juv0?Gdec2i78
 T6X^z*00000NkvXXu0mjfm^tMj
 
 diff --git a/packaging/windows/yapfast.rc b/packaging/windows/yapfast.rc
-index 33bfbcc..8aff75c 100644
+index 33bfbcc..63142ae 100644
 --- a/packaging/windows/yapfast.rc
 +++ b/packaging/windows/yapfast.rc
 @@ -1,3 +1,24 @@
@@ -4492,8 +4555,8 @@ index 33bfbcc..8aff75c 100644
 -// window loads by its number (src/icon.rs). scripts/make-windows-icon draws it.
  1 ICON "yapfast.ico"
 +1 VERSIONINFO
-+FILEVERSION 0,7,2,0
-+PRODUCTVERSION 0,7,2,0
++FILEVERSION 0,7,3,0
++PRODUCTVERSION 0,7,3,0
 +FILEOS 0x40004
 +FILETYPE 1
 +BEGIN
@@ -4501,11 +4564,11 @@ index 33bfbcc..8aff75c 100644
 +  BEGIN
 +    BLOCK "040904b0"
 +    BEGIN
-+      VALUE "FileVersion", "0.7.2.0\0"
++      VALUE "FileVersion", "0.7.3.0\0"
 +      VALUE "InternalName", "Voxcord\0"
 +      VALUE "FileDescription", "Voxcord - Native Discord client\0"
 +      VALUE "ProductName", "Voxcord\0"
-+      VALUE "ProductVersion", "0.7.2\0"
++      VALUE "ProductVersion", "0.7.3\0"
 +      VALUE "OriginalFilename", "voxcord.exe\0"
 +    END
 +  END
@@ -11250,7 +11313,7 @@ index 42b4b0d..da221a3 100644
          }
      }
 diff --git a/ui/people.slint b/ui/people.slint
-index 490d006..7e4f25e 100644
+index 490d006..af29dee 100644
 --- a/ui/people.slint
 +++ b/ui/people.slint
 @@ -32,7 +32,7 @@ export component MemberPanel inherits Rectangle {
@@ -11491,7 +11554,7 @@ index 490d006..7e4f25e 100644
  // A person's profile: a card beside the member list, large over the
  // window, where it scrolls once it's taller than the window allows, or
  // docked beside a one-to-one DM, where it fills the height.
-@@ -409,27 +459,47 @@ export component ProfileCard inherits Rectangle {
+@@ -409,27 +459,59 @@ export component ProfileCard inherits Rectangle {
      callback close;
      callback open-link(string);
      callback befriend;
@@ -11516,7 +11579,7 @@ index 490d006..7e4f25e 100644
 +    changed profile-id => {
 +        root.chosen-section = false;
 +        root.section = root.activity-count > 0 ? 1 : 0;
-+        profile-scroll.content-y = 0px;
++        root.scroll-reset += 1;
 +    }
 +    changed activity-count => {
 +        if !root.chosen-section { root.section = root.activity-count > 0 ? 1 : 0; }
@@ -11524,9 +11587,16 @@ index 490d006..7e4f25e 100644
 +    function choose-section(section: int) {
 +        root.chosen-section = true;
 +        root.section = section;
-+        profile-scroll.content-y = 0px;
++        root.scroll-reset += 1;
 +    }
-+    height: root.large ? min(root.limit, 680px) : min(body.preferred-height, root.limit);
++    /// Counts the times the views go back to their top: another person, or another tab.
++    property <int> scroll-reset;
++    /// The full profile's tabs, as Discord has them beside the person: their
++    /// activity first; "About me" sits on the left there, so it's never a tab.
++    property <int> tab: root.section == 0 ? 1 : root.section;
++    height: root.large ? min(root.limit, 680px) : min(root.natural-height, root.limit);
++    /// The card's own height, everything shown, as its body reports it.
++    property <length> natural-height;
      background: Theme.sidebar;
      border-radius: root.docked ? 0px : 12px; border-width: root.docked ? 0px : 1px; border-color: Theme.edge;
      drop-shadow-blur: root.docked ? 0px : 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: root.docked ? 0px : 8px;
@@ -11535,16 +11605,21 @@ index 490d006..7e4f25e 100644
 +    accessible-label: root.data.name + @tr("'s profile");
      // Clicks on the card stay on it, instead of closing it.
      TouchArea { }
-     Rectangle {
+-    Rectangle {
++    if !root.large: Rectangle {
          border-radius: root.docked ? 0px : 12px; clip: true;
++        property <length> natural: body.preferred-height;
++        init => { root.natural-height = self.natural; }
++        changed natural => { root.natural-height = self.natural; }
          // Sized by what the card wants rather than the least it can take, so a
          // long one scrolls to its end.
--        ScrollView {
-+        profile-scroll := ScrollView {
+         ScrollView {
++            property <int> resets: root.scroll-reset;
++            changed resets => { self.content-y = 0px; }
              content-height: body.preferred-height;
              body := VerticalLayout {
                  padding-bottom: root.pad; spacing: 0px;
-@@ -456,14 +526,14 @@ export component ProfileCard inherits Rectangle {
+@@ -456,14 +538,14 @@ export component ProfileCard inherits Rectangle {
                          if !root.large && !root.preview: TouchArea {
                              mouse-cursor: MouseCursor.pointer;
                              accessible-role: button;
@@ -11561,7 +11636,7 @@ index 490d006..7e4f25e 100644
                      VerticalLayout {
                          spacing: 2px;
                          Text {
-@@ -477,21 +547,60 @@ export component ProfileCard inherits Rectangle {
+@@ -477,21 +559,60 @@ export component ProfileCard inherits Rectangle {
                              color: Theme.secondary; font-size: 14px; wrap: word-wrap; max-height: 40px;
                          }
                      }
@@ -11628,7 +11703,7 @@ index 490d006..7e4f25e 100644
                          // The card shows the start; the full profile shows it all.
                          // A fixed height, since the text would otherwise stretch it past its limit.
                          Rectangle {
-@@ -506,25 +615,25 @@ export component ProfileCard inherits Rectangle {
+@@ -506,25 +627,25 @@ export component ProfileCard inherits Rectangle {
                          }
                      }
                      // The card leaves the dates to the full profile.
@@ -11660,7 +11735,7 @@ index 490d006..7e4f25e 100644
                          for row in (root.large ? root.data.role-rows-large : root.data.role-rows): HorizontalLayout {
                              spacing: 4px; alignment: start;
                              for role in row.roles: Rectangle {
-@@ -537,28 +646,28 @@ export component ProfileCard inherits Rectangle {
+@@ -537,28 +658,28 @@ export component ProfileCard inherits Rectangle {
                              }
                          }
                      }
@@ -11695,8 +11770,194 @@ index 490d006..7e4f25e 100644
                                  clicked => { root.open-friend(friend.id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
                              }
                          }
-@@ -590,11 +699,11 @@ export component ProfileCard inherits Rectangle {
+@@ -588,13 +709,197 @@ export component ProfileCard inherits Rectangle {
+             }
+         }
      }
++    // The full profile, laid out as Discord's: the person on the left, with
++    // their banner, bio and dates; their activity and what they share with
++    // this account in tabs on the right.
++    if root.large: Rectangle {
++        border-radius: 12px; clip: true;
++        HorizontalLayout {
++            spacing: 0px;
++            Rectangle {
++                width: min(340px, root.width * 0.45);
++                background: Theme.sidebar;
++                ScrollView {
++                    property <int> resets: root.scroll-reset;
++                    changed resets => { self.content-y = 0px; }
++                    content-height: side.preferred-height;
++                    side := VerticalLayout {
++                        padding-bottom: 20px; spacing: 0px;
++                        // The banner, with the avatar hanging over its lower edge.
++                        Rectangle {
++                            height: 120px + 48px + 8px;
++                            Rectangle {
++                                y: 0px; height: 120px;
++                                background: root.data.has-accent ? root.data.accent : Theme.raised;
++                                if root.data.banner.width > 0: Image {
++                                    width: parent.width; height: parent.height; source: root.data.banner; image-fit: cover;
++                                }
++                            }
++                            Rectangle {
++                                x: 14px; y: 120px - 48px - 6px;
++                                width: 96px + 12px; height: self.width; border-radius: self.width / 2;
++                                background: Theme.sidebar;
++                                Avatar { size: 96px; initial: root.data.initial; tint: root.data.tint; picture: root.data.picture; }
++                                if root.data.presence != "" && root.data.presence != "offline": StatusDot {
++                                    x: parent.width - self.width - 14px; y: parent.height - self.height - 14px;
++                                    presence: root.data.presence; ring: Theme.sidebar;
++                                }
++                            }
++                        }
++                        VerticalLayout {
++                            padding-left: 20px; padding-right: 20px; spacing: 16px;
++                            VerticalLayout {
++                                spacing: 2px;
++                                Text { text: root.data.name; color: Theme.text; font-size: 24px; font-weight: 700; overflow: elide; }
++                                if root.data.handle != "": Text { text: root.data.handle; color: Theme.secondary; font-size: 14px; overflow: elide; }
++                            }
++                            // Their custom status, in Discord's bubble.
++                            if root.data.activity != "" || root.data.activity-emoji != "": Rectangle {
++                                border-radius: 10px; background: Theme.raised;
++                                height: status-bubble.preferred-height;
++                                status-bubble := HorizontalLayout {
++                                    padding: 10px;
++                                    StatusText {
++                                        text: root.data.activity; emoji-url: root.data.activity-emoji;
++                                        color: Theme.text; font-size: 14px; wrap: word-wrap; max-height: 60px;
++                                    }
++                                }
++                            }
++                            if !root.preview && (root.data.own || root.data.message-hint != "" || root.data.friend > 0): HorizontalLayout {
++                                spacing: 8px;
++                                if root.data.own || root.data.message-hint != "": ActionButton {
++                                    horizontal-stretch: 1;
++                                    text: root.data.own ? @tr("Edit Profile") : @tr("Message");
++                                    primary: true;
++                                    clicked => {
++                                        if root.data.own { root.edit-profile(); }
++                                        else { root.message(); }
++                                    }
++                                }
++                                if root.data.friend > 0: ActionButton {
++                                    horizontal-stretch: 1;
++                                    primary: root.data.friend != 2 && root.data.message-hint == ""; enabled: root.data.friend != 2;
++                                    text: root.data.friend == 1 ? @tr("Send friend request") : root.data.friend == 2 ? @tr("Friend request sent") : @tr("Accept friend request");
++                                    clicked => { root.befriend(); }
++                                }
++                            }
++                            if root.data.has-bio: VerticalLayout {
++                                spacing: 6px;
++                                ProfileHeading { text: @tr("ABOUT ME"); }
++                                StyledText {
++                                    text: root.data.bio; default-color: Theme.text; link-color: Theme.link;
++                                    link-clicked(link) => { root.open-link(link); }
++                                }
++                            }
++                            if root.data.created != "" || root.data.joined != "": VerticalLayout {
++                                spacing: 6px;
++                                ProfileHeading { text: @tr("MEMBER SINCE"); }
++                                if root.data.created != "": HorizontalLayout {
++                                    spacing: 8px; alignment: start;
++                                    Text { text: root.data.created; color: Theme.text; font-size: 14px; }
++                                    Text { text: @tr("On Discord"); color: Theme.muted; font-size: 13px; vertical-alignment: center; }
++                                }
++                                if root.data.joined != "": HorizontalLayout {
++                                    spacing: 8px; alignment: start;
++                                    Text { text: root.data.joined; color: Theme.text; font-size: 14px; }
++                                    Text { text: @tr("In this server"); color: Theme.muted; font-size: 13px; vertical-alignment: center; }
++                                }
++                            }
++                            if root.data.role-rows.length > 0: VerticalLayout {
++                                spacing: 6px;
++                                ProfileHeading { text: @tr("ROLES"); }
++                                for row in root.data.role-rows: HorizontalLayout {
++                                    spacing: 4px; alignment: start;
++                                    for role in row.roles: Rectangle {
++                                        height: 24px; border-radius: 4px; background: Theme.raised;
++                                        HorizontalLayout {
++                                            padding-left: 8px; padding-right: 8px; spacing: 6px;
++                                            Middle { Rectangle { width: 10px; height: 10px; border-radius: 5px; background: role.has-color ? role.color : Theme.faint; } }
++                                            Text { text: role.name; color: Theme.secondary; font-size: 13px; font-weight: 500; vertical-alignment: center; }
++                                        }
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++            Rectangle { width: 1px; background: Theme.line; }
++            VerticalLayout {
++                horizontal-stretch: 1; spacing: 0px;
++                // Tabs along the top, clear of the close button.
++                HorizontalLayout {
++                    padding-left: 24px; padding-right: 56px; padding-top: 12px;
++                    spacing: 20px; alignment: start;
++                    ProfileTab {
++                        text: @tr("Activity"); selected: root.tab == 1;
++                        clicked => { root.choose-section(1); }
++                    }
++                    ProfileTab {
++                        text: @tr("Mutual friends") + (root.data.friends.length > 0 ? " (" + root.data.friends.length + ")" : "");
++                        selected: root.tab == 3; clicked => { root.choose-section(3); }
++                    }
++                    ProfileTab {
++                        text: @tr("Mutual servers") + (root.data.servers.length > 0 ? " (" + root.data.servers.length + ")" : "");
++                        selected: root.tab == 2; clicked => { root.choose-section(2); }
++                    }
++                }
++                Rectangle { height: 1px; background: Theme.line; }
++                ScrollView {
++                    vertical-stretch: 1;
++                    property <int> resets: root.scroll-reset;
++                    changed resets => { self.content-y = 0px; }
++                    content-height: pane.preferred-height;
++                    pane := VerticalLayout {
++                        padding: 24px; padding-top: 20px; spacing: 10px;
++                        if root.tab == 1 && root.data.activities.length == 0: Text {
++                            text: @tr("No activity shared at the moment.");
++                            color: Theme.muted; font-size: 14px; wrap: word-wrap;
++                        }
++                        if root.tab == 1: VerticalLayout {
++                            spacing: 10px;
++                            for activity in root.data.activities: ActivityCard {
++                                activity: activity;
++                                open-link(url) => { root.open-link(url); }
++                            }
++                        }
++                        if root.tab == 2 && root.data.servers.length == 0: Text {
++                            text: @tr("No servers in common."); color: Theme.muted; font-size: 14px; wrap: word-wrap;
++                        }
++                        if root.tab == 2: VerticalLayout {
++                            spacing: 0px;
++                            for server in root.data.servers: ProfileListRow {
++                                name: server.name; initial: server.initial; picture: server.picture;
++                                detail: server.nick;
++                                label: @tr("Open ") + server.name + (server.nick != "" ? @tr(", where they're ") + server.nick : "");
++                                clicked => { root.open-server(server, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
++                            }
++                        }
++                        if root.tab == 3 && root.data.friends.length == 0: Text {
++                            text: @tr("No friends in common."); color: Theme.muted; font-size: 14px; wrap: word-wrap;
++                        }
++                        if root.tab == 3: VerticalLayout {
++                            spacing: 0px;
++                            for friend in root.data.friends: ProfileListRow {
++                                person: true; name: friend.name; initial: friend.initial; tint: friend.tint;
++                                picture: friend.picture; presence: friend.presence;
++                                label: friend.name + @tr("'s profile");
++                                clicked => { root.open-friend(friend.id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
++                            }
++                        }
++                        if root.data.note != "": Text { text: root.data.note; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
++                    }
++                }
++            }
++        }
++    }
      if root.large: Rectangle {
          x: parent.width - 44px; y: 10px; width: 34px; height: 34px; border-radius: 17px; background: #00000080;
 -        IconButton { icon: @image-url("icons/x.svg"); label: "Close profile"; tint: #ffffff; clicked => { root.close(); } }
@@ -11709,7 +11970,7 @@ index 490d006..7e4f25e 100644
  export component RoleCard inherits Rectangle {
      in property <string> role-name;
      in property <color> role-color;
-@@ -611,7 +720,7 @@ export component RoleCard inherits Rectangle {
+@@ -611,7 +916,7 @@ export component RoleCard inherits Rectangle {
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
      drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
      accessible-role: groupbox;
@@ -15575,10 +15836,10 @@ index e6e465c..450589c 100644
      }
 diff --git a/ui/translations/fr.json b/ui/translations/fr.json
 new file mode 100644
-index 0000000..ef46f57
+index 0000000..d6f11c2
 --- /dev/null
 +++ b/ui/translations/fr.json
-@@ -0,0 +1,1155 @@
+@@ -0,0 +1,1159 @@
 +{
 +  "Off": "Désactivé",
 +  "Cancel": "Annuler",
@@ -16239,7 +16500,7 @@ index 0000000..ef46f57
 +  "Higher quality": "Qualité supérieure",
 +  "Sharper, at twice the CPU": "Plus net, avec davantage de calcul",
 +  "Switch": "Changer",
-+  "Go Live": "Partager en direct",
++  "Go Live": "Passer en direct",
 +  "'s volume": " : volume",
 +  "User volume": "Volume de la personne",
 +  "Stream volume": "Volume du partage",
@@ -16732,14 +16993,18 @@ index 0000000..ef46f57
 +  "STREAM QUALITY": "QUALITÉ DU STREAM",
 +  "Share application audio": "Partager le son de l’application",
 +  "Share system audio": "Partager le son du système",
-+  "Change": "Modifier"
++  "Change": "Modifier",
++  "Resolution": "Résolution",
++  "Frame rate": "Fréquence d’images",
++  "No servers in common.": "Aucun serveur en commun.",
++  "No friends in common.": "Aucun ami en commun."
 +}
 diff --git a/ui/translations/fr/LC_MESSAGES/yapfast-ui.po b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
 new file mode 100644
-index 0000000..367e26e
+index 0000000..6b67d8d
 --- /dev/null
 +++ b/ui/translations/fr/LC_MESSAGES/yapfast-ui.po
-@@ -0,0 +1,3464 @@
+@@ -0,0 +1,3476 @@
 +msgid ""
 +msgstr ""
 +"Content-Type: text/plain; charset=UTF-8\n"
@@ -18028,7 +18293,7 @@ index 0000000..367e26e
 +msgstr "Lueur"
 +
 +msgid "Go Live"
-+msgstr "Partager en direct"
++msgstr "Passer en direct"
 +
 +msgid "Go back"
 +msgstr "Retour"
@@ -20204,8 +20469,20 @@ index 0000000..367e26e
 +
 +msgid "the processor"
 +msgstr "le processeur"
++
++msgid "Resolution"
++msgstr "Résolution"
++
++msgid "Frame rate"
++msgstr "Fréquence d’images"
++
++msgid "No servers in common."
++msgstr "Aucun serveur en commun."
++
++msgid "No friends in common."
++msgstr "Aucun ami en commun."
 diff --git a/ui/voice.slint b/ui/voice.slint
-index 84be8a2..298bfb9 100644
+index 84be8a2..aa6fa8a 100644
 --- a/ui/voice.slint
 +++ b/ui/voice.slint
 @@ -1,6 +1,6 @@
@@ -20460,7 +20737,7 @@ index 84be8a2..298bfb9 100644
      accessible-action-default => { root.open-call(); }
      Image { width: parent.width; height: parent.height; source: root.frame; image-fit: contain; }
      // The stage is black in every theme, so its note is a fixed grey.
-@@ -621,6 +621,7 @@ component StageTile inherits Rectangle {
+@@ -621,16 +621,30 @@ component StageTile inherits Rectangle {
      callback right-clicked(length, length);
      callback stop;
      callback full-screen(bool);
@@ -20468,7 +20745,33 @@ index 84be8a2..298bfb9 100644
      border-radius: root.full ? 0px : 12px; clip: true;
      accessible-role: button; accessible-label: root.label;
      accessible-action-default => { root.clicked(); }
-@@ -647,10 +648,16 @@ component StageTile inherits Rectangle {
+     animate x, y, width, height { duration: root.full ? 0ms : 160ms; easing: ease-out; }
+     property <bool> stop-shown: root.stop-label != "" && (touch.has-hover || root.focused);
++    // As in Discord, a click on the large tile puts it back in the grid. It
++    // waits out a double click's time, so a double click only toggles full
++    // screen and the tile doesn't shrink and grow again in between.
++    property <bool> restore-pending;
++    Timer {
++        interval: 250ms; running: root.restore-pending;
++        triggered => { root.restore-pending = false; root.restore-grid(); }
++    }
+     @children
+     touch := TouchArea {
+-        mouse-cursor: root.focused ? MouseCursor.default : MouseCursor.pointer;
+-        clicked => { root.clicked(); }
+-        double-clicked => { if root.focused { root.full-screen(!root.full); } }
++        mouse-cursor: MouseCursor.pointer;
++        clicked => {
++            if root.focused && !root.full { root.restore-pending = true; } else if !root.focused { root.clicked(); }
++        }
++        double-clicked => {
++            root.restore-pending = false;
++            if root.focused { root.full-screen(!root.full); }
++        }
+         pointer-event(event) => {
+             if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                 root.right-clicked(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+@@ -647,10 +661,16 @@ component StageTile inherits Rectangle {
              fill: #000000a6; radius: 16px;
              clicked => { root.stop(); }
          }
@@ -20486,7 +20789,7 @@ index 84be8a2..298bfb9 100644
              fill: #000000a6; radius: 16px;
              clicked => { root.full-screen(!root.full); }
          }
-@@ -819,9 +826,10 @@ export component ParticipantGrid inherits Flickable {
+@@ -819,9 +839,10 @@ export component ParticipantGrid inherits Flickable {
          visible: !root.full || root.large(0);
          focused: root.large(0); full: root.full;
          background: #000000;
@@ -20498,7 +20801,7 @@ index 84be8a2..298bfb9 100644
          full-screen(on) => { root.full-screen(on); }
          Image { width: parent.width; height: parent.height; source: root.share-frame; image-fit: contain; }
          if root.share-frame.width == 0: VerticalLayout {
-@@ -830,7 +838,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -830,7 +851,7 @@ export component ParticipantGrid inherits Flickable {
              Image { height: 34px; source: @image-url("icons/screen-share.svg"); image-fit: contain; colorize: #b5b8c1; }
              Text { text: root.share-status; color: #b5b8c1; font-size: 14px; horizontal-alignment: center; wrap: word-wrap; }
          }
@@ -20507,7 +20810,7 @@ index 84be8a2..298bfb9 100644
      }
      for index[position] in root.stream-tiles: stream := StageTile {
          property <int> slot: position + (root.sharing ? 1 : 0);
-@@ -842,10 +850,10 @@ export component ParticipantGrid inherits Flickable {
+@@ -842,10 +863,10 @@ export component ParticipantGrid inherits Flickable {
          visible: !root.full || root.large(self.slot);
          focused: root.large(self.slot); full: root.full;
          background: #000000;
@@ -20520,7 +20823,7 @@ index 84be8a2..298bfb9 100644
          clicked => {
              if !self.watched {
                  root.watch-stream(self.person.id);
-@@ -855,6 +863,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -855,6 +876,7 @@ export component ParticipantGrid inherits Flickable {
          }
          right-clicked(x, y) => { root.open-volume(self.person, x, y); }
          stop => { root.stop-watching(); }
@@ -20528,7 +20831,7 @@ index 84be8a2..298bfb9 100644
          full-screen(on) => { root.full-screen(on); }
          if stream.watched: StreamPicture { frame: root.watch-frame; status: root.watch-status; }
          if !stream.watched: VerticalLayout {
-@@ -865,7 +874,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -865,7 +887,7 @@ export component ParticipantGrid inherits Flickable {
                  Rectangle {
                      height: 26px; width: stream-label.preferred-width + 20px; border-radius: 13px;
                      background: Theme.danger;
@@ -20537,7 +20840,7 @@ index 84be8a2..298bfb9 100644
                  }
              }
          }
-@@ -888,10 +897,10 @@ export component ParticipantGrid inherits Flickable {
+@@ -888,10 +910,10 @@ export component ParticipantGrid inherits Flickable {
          property <bool> streams-here: person.live && !person.local && !person.video;
          property <bool> watched: self.streams-here && person.id == root.watch-user;
          background: self.filmed || self.watched ? #000000 : Theme.raised;
@@ -20550,7 +20853,7 @@ index 84be8a2..298bfb9 100644
          clicked => {
              if self.streams-here && !self.watched {
                  root.watch-stream(person.id);
-@@ -901,6 +910,7 @@ export component ParticipantGrid inherits Flickable {
+@@ -901,6 +923,7 @@ export component ParticipantGrid inherits Flickable {
          }
          right-clicked(x, y) => { root.open-volume(person, x, y); }
          stop => { root.stop-watching(); }
@@ -20558,7 +20861,7 @@ index 84be8a2..298bfb9 100644
          full-screen(on) => { root.full-screen(on); }
          if tile.filmed: Image { width: tile.width; height: tile.height; source: tile.frame; image-fit: contain; }
          if tile.watched: StreamPicture { frame: root.watch-frame; status: root.watch-status; }
-@@ -917,21 +927,21 @@ export component ParticipantGrid inherits Flickable {
+@@ -917,21 +940,21 @@ export component ParticipantGrid inherits Flickable {
              x: 10px; y: 10px; height: 26px;
              width: starting-label.preferred-width + 20px; border-radius: 13px;
              background: #000000a6; opacity: (0.6 + 0.4 * sin(animation-tick() / 1ms * 0.36deg));
@@ -20584,7 +20887,7 @@ index 84be8a2..298bfb9 100644
              if person.muted && !person.deafened: Image { source: @image-url("icons/mic-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }
              if person.deafened: Image { source: @image-url("icons/headphone-off.svg"); width: 14px; image-fit: contain; colorize: Theme.danger; }
          }
-@@ -959,7 +969,7 @@ export component CallControls inherits HorizontalLayout {
+@@ -959,7 +982,7 @@ export component CallControls inherits HorizontalLayout {
      /// The call has Discord's soundboard.
      in property <bool> can-soundboard;
      /// Sharing starts from a menu, opened at this point in the window.
@@ -20593,7 +20896,7 @@ index 84be8a2..298bfb9 100644
      /// The soundboard, opened above this point in the window.
      callback open-soundboard(length, length);
      callback leave-voice;
-@@ -967,7 +977,7 @@ export component CallControls inherits HorizontalLayout {
+@@ -967,7 +990,7 @@ export component CallControls inherits HorizontalLayout {
      IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.muted ? @image-url("icons/mic-off.svg") : @image-url("icons/mic.svg");
@@ -20602,7 +20905,7 @@ index 84be8a2..298bfb9 100644
          enabled: root.voice-ready;
          fill: self.alert ? Theme.danger.with-alpha(0.18) : Theme.raised;
          clicked => { root.toggle-mute(); }
-@@ -975,21 +985,21 @@ export component CallControls inherits HorizontalLayout {
+@@ -975,21 +998,21 @@ export component CallControls inherits HorizontalLayout {
      IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.deafened ? @image-url("icons/headphone-off.svg") : @image-url("icons/headphones.svg");
@@ -20627,7 +20930,7 @@ index 84be8a2..298bfb9 100644
          enabled: root.voice-ready; opacity: root.camera-starting ? (0.6 + 0.4 * sin(animation-tick() / 1ms * 0.36deg)) : 1;
          fill: root.camera-on ? Theme.live.with-alpha(0.22) : Theme.raised;
          clicked => { root.toggle-camera(); }
-@@ -997,14 +1007,14 @@ export component CallControls inherits HorizontalLayout {
+@@ -997,14 +1020,14 @@ export component CallControls inherits HorizontalLayout {
      if root.can-share || root.sharing: IconButton {
          size: 52px; glyph: 22px; radius: 26px;
          icon: root.sharing ? @image-url("icons/screen-share-off.svg") : @image-url("icons/screen-share.svg");
@@ -20644,7 +20947,7 @@ index 84be8a2..298bfb9 100644
              }
          }
      }
-@@ -1012,7 +1022,7 @@ export component CallControls inherits HorizontalLayout {
+@@ -1012,7 +1035,7 @@ export component CallControls inherits HorizontalLayout {
          width: 76px; height: 52px; border-radius: 26px;
          background: leave-touch.has-hover ? Theme.danger-hover : Theme.danger;
          opacity: root.voice-leaving ? 0.5 : 1;
@@ -20653,7 +20956,7 @@ index 84be8a2..298bfb9 100644
          accessible-action-default => { if !root.voice-leaving { root.leave-voice(); } }
          Image { source: @image-url("icons/phone-off.svg"); width: 22px; height: 22px; colorize: Theme.on-danger; }
          leave-touch := TouchArea { enabled: !root.voice-leaving; mouse-cursor: MouseCursor.pointer; clicked => { root.leave-voice(); } }
-@@ -1032,7 +1042,7 @@ export component IncomingCall inherits Rectangle {
+@@ -1032,7 +1055,7 @@ export component IncomingCall inherits Rectangle {
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
      drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
      accessible-role: groupbox;
@@ -20662,7 +20965,7 @@ index 84be8a2..298bfb9 100644
      // Clicks on the card never reach what's under it.
      TouchArea { }
      incoming-content := VerticalLayout {
-@@ -1057,11 +1067,11 @@ export component IncomingCall inherits Rectangle {
+@@ -1057,11 +1080,11 @@ export component IncomingCall inherits Rectangle {
          HorizontalLayout {
              alignment: center; spacing: 20px; padding-top: 6px;
              CallButton {
@@ -20676,7 +20979,7 @@ index 84be8a2..298bfb9 100644
                  clicked => { root.answer-call(root.incoming-room, true); }
              }
          }
-@@ -1095,7 +1105,7 @@ export component SwitchDialog inherits Rectangle {
+@@ -1095,7 +1118,7 @@ export component SwitchDialog inherits Rectangle {
          background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 12px;
          drop-shadow-blur: 32px; drop-shadow-color: #00000066; drop-shadow-offset-y: 12px;
          accessible-role: groupbox;
@@ -20685,7 +20988,7 @@ index 84be8a2..298bfb9 100644
          // Clicks on the dialog itself never reach the backdrop.
          TouchArea { enabled: root.switching; }
          switch-keys := FocusScope {
-@@ -1118,15 +1128,15 @@ export component SwitchDialog inherits Rectangle {
+@@ -1118,15 +1141,15 @@ export component SwitchDialog inherits Rectangle {
                      }
                      VerticalLayout {
                          spacing: 6px; horizontal-stretch: 1;
@@ -20704,7 +21007,7 @@ index 84be8a2..298bfb9 100644
                  }
              }
          }
-@@ -1141,12 +1151,12 @@ export component InputLevel inherits VerticalLayout {
+@@ -1141,12 +1164,12 @@ export component InputLevel inherits VerticalLayout {
      /// Why the level can't be shown, if it can't.
      in property <string> meter-note;
      padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px; spacing: 8px;
@@ -20720,7 +21023,7 @@ index 84be8a2..298bfb9 100644
          // Muted, the level still shows, in a faded green: heard here, sent nowhere.
          for segment in 24: Rectangle {
              border-radius: 2px;
-@@ -1155,7 +1165,7 @@ export component InputLevel inherits VerticalLayout {
+@@ -1155,7 +1178,7 @@ export component InputLevel inherits VerticalLayout {
          }
      }
      if root.meter-note != "": Label { text: root.meter-note; }
@@ -20729,7 +21032,7 @@ index 84be8a2..298bfb9 100644
  }
  
  /// A screen in the share menu, and once it's taken, a picture of it.
-@@ -1165,6 +1175,7 @@ export struct ShareScreen { title: string, picture: image }
+@@ -1165,6 +1188,7 @@ export struct ShareScreen { title: string, picture: image }
  component ScreenCard inherits Rectangle {
      in property <string> text;
      in property <image> picture;
@@ -20737,7 +21040,7 @@ index 84be8a2..298bfb9 100644
      in property <bool> checked;
      callback clicked;
      border-radius: 6px;
-@@ -1182,7 +1193,7 @@ component ScreenCard inherits Rectangle {
+@@ -1182,7 +1206,7 @@ component ScreenCard inherits Rectangle {
              border-radius: 4px; background: Theme.sunken; clip: true;
              // Until its picture comes.
              if root.picture.width == 0: Image {
@@ -20746,13 +21049,59 @@ index 84be8a2..298bfb9 100644
              }
              Image { width: parent.width; height: parent.height; source: root.picture; image-fit: contain; }
              Rectangle {
-@@ -1211,124 +1222,171 @@ component ScreenCard inherits Rectangle {
+@@ -1211,124 +1235,258 @@ component ScreenCard inherits Rectangle {
      }
  }
  
 -// Going live: what to share, where Yapfast lists it, and the resolution, frame
 -// rate and quality to share it at; or while sharing, what to share instead.
-+// Choose a source, then review the stream settings before going live.
++// One of the share dialog's source kinds, as a pill in Discord's tab bar.
++component ShareTab inherits Rectangle {
++    in property <string> text;
++    in property <bool> selected;
++    callback clicked;
++    height: 32px; horizontal-stretch: 1;
++    border-radius: 6px;
++    background: root.selected ? Theme.active : tab-pointer.has-hover ? Theme.hover : transparent;
++    animate background { duration: Theme.quick; }
++    accessible-role: tab; accessible-label: root.text;
++    accessible-action-default => { root.clicked(); }
++    Text {
++        text: root.text; color: root.selected ? Theme.text : Theme.secondary;
++        font-size: 14px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
++    }
++    tab-pointer := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.clicked(); } }
++}
++
++// A choice in the share dialog's quality columns, drawn as a radio button.
++component ShareChoice inherits Rectangle {
++    in property <string> text;
++    in property <bool> checked;
++    callback clicked;
++    height: 36px; border-radius: 6px;
++    background: choice-pointer.has-hover ? Theme.hover : transparent;
++    accessible-role: radio-button; accessible-label: root.text;
++    accessible-checkable: true; accessible-checked: root.checked;
++    accessible-action-default => { root.clicked(); }
++    HorizontalLayout {
++        padding-left: 8px; padding-right: 8px; spacing: 10px;
++        Middle {
++            Rectangle {
++                width: 20px; height: 20px; border-radius: 10px;
++                border-width: 2px; border-color: root.checked ? Theme.accent : Theme.muted;
++                if root.checked: Rectangle { width: 10px; height: 10px; border-radius: 5px; background: Theme.accent; }
++            }
++        }
++        Text {
++            text: root.text; color: root.checked ? Theme.text : Theme.secondary;
++            font-size: 14px; font-weight: root.checked ? 600 : 400; vertical-alignment: center;
++        }
++    }
++    choice-pointer := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.clicked(); } }
++}
++
++// Discord's Go Live dialog: pick a source among applications, screens and
++// devices, then check the channel and quality before going live.
  export component ShareMenu inherits Rectangle {
 -    /// The screens, then the windows, then the cameras, to share; a pick
 -    /// counts the screens first.
@@ -20817,6 +21166,9 @@ index 84be8a2..298bfb9 100644
 +        : root.dialog && root.pick-source == root.dialog-index ? @tr("Screen or window")
 +        : root.cameras[root.pick-source - root.first-camera];
 +    property <bool> window-source: root.pick-source >= root.screens.length && root.pick-source < root.dialog-index;
++    property <bool> camera-source: root.reviewing && root.pick-source >= root.first-camera;
++    property <image> source-picture: root.reviewing && root.pick-source < root.screens.length
++        ? root.screens[root.pick-source].picture : @image-url("");
 +    changed loading => {
 +        if !root.loading {
 +            root.category = root.windows.length > 0 ? 0 : root.screens.length > 0 || root.dialog ? 1 : 2;
@@ -20871,19 +21223,23 @@ index 84be8a2..298bfb9 100644
 +        Rectangle { height: 1px; background: Theme.line; }
 +        if !root.reviewing: VerticalLayout {
 +            padding: 16px; spacing: 12px; vertical-stretch: 1;
-+            HorizontalLayout {
-+                spacing: 8px;
-+                ActionButton {
-+                    text: @tr("Applications"); small: true; primary: root.category == 0;
-+                    clicked => { root.category = 0; }
-+                }
-+                ActionButton {
-+                    text: @tr("Screens"); small: true; primary: root.category == 1;
-+                    clicked => { root.category = 1; }
-+                }
-+                ActionButton {
-+                    text: @tr("Devices"); small: true; primary: root.category == 2;
-+                    clicked => { root.category = 2; }
++            Rectangle {
++                height: 40px; border-radius: 8px; background: Theme.sunken;
++                accessible-role: tab-list;
++                HorizontalLayout {
++                    padding: 4px; spacing: 4px;
++                    ShareTab {
++                        text: @tr("Applications"); selected: root.category == 0;
++                        clicked => { root.category = 0; }
++                    }
++                    ShareTab {
++                        text: @tr("Screens"); selected: root.category == 1;
++                        clicked => { root.category = 1; }
++                    }
++                    ShareTab {
++                        text: @tr("Devices"); selected: root.category == 2;
++                        clicked => { root.category = 2; }
++                    }
                  }
              }
 -        }
@@ -20944,44 +21300,78 @@ index 84be8a2..298bfb9 100644
 +            vertical-stretch: 1;
 +            content-height: settings.preferred-height;
 +            settings := VerticalLayout {
-+                padding: 20px; spacing: 14px;
-+                VerticalLayout {
-+                    spacing: 4px;
-+                    Text { text: @tr("SOURCE"); color: Theme.muted; font-weight: 700; font-size: 12px; }
-+                    MenuItem {
-+                        text: root.source-title; subtitle: @tr("Change");
-+                        icon: @image-url("icons/screen-share.svg");
-+                        clicked => { root.pick-source = -1; }
++                padding: 20px; spacing: 18px;
++                // The chosen source, as Discord previews it, with a way back to the list.
++                HorizontalLayout {
++                    spacing: 14px;
++                    Rectangle {
++                        width: 160px; height: 90px; border-radius: 8px; background: #000000; clip: true;
++                        if root.source-picture.width == 0: Image {
++                            height: 30px; image-fit: contain; colorize: #b5b8c1;
++                            source: root.camera-source ? @image-url("icons/video.svg") : @image-url("icons/screen-share.svg");
++                        }
++                        Image { width: parent.width; height: parent.height; source: root.source-picture; image-fit: contain; }
++                    }
++                    VerticalLayout {
++                        alignment: center; spacing: 6px; horizontal-stretch: 1;
++                        Text { text: @tr("SOURCE"); color: Theme.muted; font-weight: 700; font-size: 12px; }
++                        Text { text: root.source-title; color: Theme.text; font-size: 16px; font-weight: 600; overflow: elide; }
++                        HorizontalLayout {
++                            alignment: start;
++                            ActionButton { text: @tr("Change"); small: true; clicked => { root.pick-source = -1; } }
++                        }
 +                    }
 +                }
 +                if root.destination != "": VerticalLayout {
-+                    spacing: 4px;
++                    spacing: 8px;
 +                    Text { text: @tr("STREAMING CHANNEL"); color: Theme.muted; font-weight: 700; font-size: 12px; }
-+                    Text { text: root.destination; color: Theme.text; font-size: 14px; overflow: elide; }
-+                }
-+                MenuItem {
-+                    text: root.window-source ? @tr("Share application audio") : @tr("Share system audio");
-+                    checkbox: true; checked: root.pick-capture-sound;
-+                    clicked => { root.pick-capture-sound = !root.pick-capture-sound; }
++                    Rectangle {
++                        height: 44px; border-radius: 8px; background: Theme.raised;
++                        border-width: 1px; border-color: Theme.accent;
++                        HorizontalLayout {
++                            padding-left: 12px; padding-right: 12px; spacing: 10px;
++                            Middle { Image { width: 18px; height: 18px; source: @image-url("icons/volume-2.svg"); colorize: Theme.secondary; } }
++                            Text { text: root.destination; color: Theme.text; font-size: 14px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
++                            Middle {
++                                Rectangle {
++                                    width: 20px; height: 20px; border-radius: 10px; background: Theme.accent;
++                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: Theme.on-accent; }
++                                }
++                            }
++                        }
++                    }
 +                }
 +                if !root.switching: VerticalLayout {
 +                    spacing: 8px;
 +                    Text { text: @tr("STREAM QUALITY"); color: Theme.muted; font-weight: 700; font-size: 12px; }
 +                    HorizontalLayout {
-+                        spacing: 8px;
-+                        for choice[index] in ["720p", "1080p", @tr("Source")]: ActionButton {
-+                            text: choice; small: true; primary: index == root.pick-resolution;
-+                            clicked => { root.pick-resolution = index; }
++                        spacing: 16px;
++                        VerticalLayout {
++                            horizontal-stretch: 1; spacing: 2px;
++                            Text { text: @tr("Resolution"); color: Theme.secondary; font-size: 13px; font-weight: 600; }
++                            for choice[index] in ["720p", "1080p", @tr("Source")]: ShareChoice {
++                                text: choice; checked: index == root.pick-resolution;
++                                clicked => { root.pick-resolution = index; }
++                            }
++                        }
++                        VerticalLayout {
++                            horizontal-stretch: 1; spacing: 2px;
++                            Text { text: @tr("Frame rate"); color: Theme.secondary; font-size: 13px; font-weight: 600; }
++                            for fps in [15, 30, 60]: ShareChoice {
++                                text: fps + " FPS"; checked: fps == root.pick-fps;
++                                clicked => { root.pick-fps = fps; }
++                            }
 +                        }
 +                    }
-+                    HorizontalLayout {
-+                        spacing: 8px;
-+                        for fps in [15, 30, 60]: ActionButton {
-+                            text: fps + " fps"; small: true; primary: fps == root.pick-fps;
-+                            clicked => { root.pick-fps = fps; }
-+                        }
-+                    }
++                }
++                VerticalLayout {
++                    spacing: 2px;
 +                    MenuItem {
++                        text: root.window-source ? @tr("Share application audio") : @tr("Share system audio");
++                        checkbox: true; checked: root.pick-capture-sound;
++                        clicked => { root.pick-capture-sound = !root.pick-capture-sound; }
++                    }
++                    if !root.switching: MenuItem {
 +                        text: @tr("Higher quality"); subtitle: @tr("Sharper, at twice the CPU");
 +                        checkbox: true; checked: root.pick-high-quality;
 +                        clicked => { root.pick-high-quality = !root.pick-high-quality; }
@@ -21015,7 +21405,7 @@ index 84be8a2..298bfb9 100644
              }
          }
      }
-@@ -1348,18 +1406,18 @@ export component VolumeMenu inherits Rectangle {
+@@ -1348,18 +1506,18 @@ export component VolumeMenu inherits Rectangle {
      callback volume-changed(string, bool, int, bool);
      background: Theme.raised; border-color: Theme.edge; border-width: 1px; border-radius: 8px;
      drop-shadow-blur: 24px; drop-shadow-color: #00000080; drop-shadow-offset-y: 8px;
@@ -21037,7 +21427,7 @@ index 84be8a2..298bfb9 100644
              value <=> root.stream-volume;
              changed(volume) => { root.volume-changed(root.volume-person, true, volume, false); }
              committed(volume) => { root.volume-changed(root.volume-person, true, volume, true); }
-@@ -1379,7 +1437,7 @@ component SoundButton inherits Rectangle {
+@@ -1379,7 +1537,7 @@ component SoundButton inherits Rectangle {
      in property <string> emoji-font;
      in property <bool> enabled;
      in property <bool> extras;
@@ -21046,7 +21436,7 @@ index 84be8a2..298bfb9 100644
      callback clicked;
      callback preview;
      callback favorite(bool);
-@@ -1410,7 +1468,7 @@ component SoundButton inherits Rectangle {
+@@ -1410,7 +1568,7 @@ component SoundButton inherits Rectangle {
          x: parent.width - 2 * (self.width + 4px); y: (parent.height - self.height) / 2;
          size: 26px; glyph: 15px; radius: 6px; fill: Theme.button-default-hover;
          visible: root.extras && root.hovered;
@@ -21055,7 +21445,7 @@ index 84be8a2..298bfb9 100644
          clicked => { root.preview(); }
      }
      star := IconButton {
-@@ -1419,7 +1477,7 @@ component SoundButton inherits Rectangle {
+@@ -1419,7 +1577,7 @@ component SoundButton inherits Rectangle {
          visible: root.extras && (root.hovered || root.sound.favorite);
          icon: root.sound.favorite ? @image-url("icons/star-filled.svg") : @image-url("icons/star.svg");
          tint: root.sound.favorite ? #f0b232 : Theme.secondary;
@@ -21064,7 +21454,7 @@ index 84be8a2..298bfb9 100644
          clicked => { root.favorite(!root.sound.favorite); }
      }
  }
-@@ -1432,10 +1490,12 @@ component SoundButton inherits Rectangle {
+@@ -1432,10 +1590,12 @@ component SoundButton inherits Rectangle {
  export component Soundboard inherits Rectangle {
      in property <[SoundRow]> rows;
      in property <string> emoji-font;
@@ -21079,7 +21469,7 @@ index 84be8a2..298bfb9 100644
      /// Why no sound can be played now, such as being deafened; empty when
      /// they can.
      in property <string> note;
-@@ -1462,8 +1522,12 @@ export component Soundboard inherits Rectangle {
+@@ -1462,8 +1622,12 @@ export component Soundboard inherits Rectangle {
          top := VerticalLayout {
              padding: 14px; padding-bottom: 4px; spacing: 4px;
              Text { text: root.title; color: Theme.text; font-size: 16px; font-weight: 700; }
@@ -21094,7 +21484,7 @@ index 84be8a2..298bfb9 100644
          ListView {
              vertical-stretch: 1;
 diff --git a/ui/yapfast.slint b/ui/yapfast.slint
-index 2b2e644..d23017f 100644
+index 2b2e644..ed91e76 100644
 --- a/ui/yapfast.slint
 +++ b/ui/yapfast.slint
 @@ -18,7 +18,7 @@ import "fonts/AtkinsonHyperlegibleNext-ExtraBold.ttf";
@@ -21913,7 +22303,7 @@ index 2b2e644..d23017f 100644
 +            }
 +            ShareMenu {
 +                width: min(650px, parent.width - 32px);
-+                height: min(510px, parent.height - 32px);
++                height: min(640px, parent.height - 32px);
 +                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
 +                screens: root.share-screens; windows: root.share-windows; cameras: root.share-cameras;
 +                dialog: !root.share-lists; switching: root.pick-switch; loading: root.share-loading;
@@ -21987,7 +22377,7 @@ index 2b2e644..d23017f 100644
              opacity: Popup.opacity(large-profile-motion.amount); transform-scale: Popup.scale(large-profile-motion.amount);
              large: true;
 -            width: min(600px, root.width - 64px); limit: root.height - 64px;
-+            width: min(760px, root.width - 64px); limit: root.height - 64px;
++            width: min(920px, root.width - 64px); limit: root.height - 64px;
              x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
              data: root.profile;
 +            edit-profile => { root.close-profile(); root.edit-profile(); }
