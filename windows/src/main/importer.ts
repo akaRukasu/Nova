@@ -5,16 +5,44 @@ import { collection } from './yt.js';
 
 const browserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
+/** En-tête Retry-After : secondes, ou date HTTP. */
+export function retryAfter(value: string | null): number | undefined {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, (date - Date.now()) / 1000);
+}
+
+function rateLimited(service: string, wait?: number): Error {
+  const delay = wait == null ? 'dans quelques minutes' : wait >= 90 ? `dans ${Math.ceil(wait / 60)} min` : 'dans une minute';
+  const alternative = service === 'Spotify' ? ' En attendant, tu peux importer le fichier exporté avec Exportify (exportify.app).' : '';
+  return new Error(`${service} reçoit trop de demandes et met l’import en pause (erreur 429). Réessaie ${delay}.${alternative}`);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Requête qui patiente et réessaie sur « trop de demandes » (429) ou panne passagère (5xx). */
+export async function request(url: string, headers: Record<string, string>, service: string, wait = sleep): Promise<Response> {
+  const attempts = 5;
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url, { headers });
+    if (response.ok) return response;
+    if (![429, 500, 502, 503, 504].includes(response.status)) throw new Error(`${service} a répondu ${response.status}.`);
+    const asked = retryAfter(response.headers.get('retry-after'));
+    // Attente trop longue pour patienter fenêtre ouverte : on le dit plutôt que de bloquer.
+    if (asked != null && asked > 30) throw rateLimited(service, asked);
+    if (attempt >= attempts) throw response.status === 429 ? rateLimited(service, asked) : new Error(`${service} a répondu ${response.status}.`);
+    await wait(Math.max(1000, (asked ?? 2 ** attempt + Math.random()) * 1000));
+  }
+}
+
 async function fetchText(url: string, service: string): Promise<string> {
-  const response = await fetch(url, { headers: { 'user-agent': browserAgent, 'accept-language': 'fr-FR,fr;q=0.9' } });
-  if (!response.ok) throw new Error(`${service} a répondu ${response.status}.`);
-  return response.text();
+  return (await request(url, { 'user-agent': browserAgent, 'accept-language': 'fr-FR,fr;q=0.9' }, service)).text();
 }
 
 async function fetchJSON(url: string, service: string): Promise<any> {
-  const response = await fetch(url, { headers: { 'user-agent': browserAgent } });
-  if (!response.ok) throw new Error(`${service} a répondu ${response.status}.`);
-  return response.json();
+  return (await request(url, { 'user-agent': browserAgent }, service)).json();
 }
 
 function scriptJSON(html: string, id: string): any {

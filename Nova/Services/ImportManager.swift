@@ -86,11 +86,11 @@ final class ImportManager {
         var playlist = source
         do {
             if playlist.tracks.isEmpty, playlist.youTubeTracks == nil {
-                playlist.tracks = try await loadTracks(of: playlist)
+                playlist.tracks = try await loadTracksInTurn(of: playlist)
             }
         } catch {
             update(jobID) {
-                $0.error = error.localizedDescription
+                if !(error is CancellationError) { $0.error = error.localizedDescription }
                 $0.isFinished = true
             }
             finishIfIdle()
@@ -238,6 +238,25 @@ final class ImportManager {
         guard backgroundTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
+    }
+
+    /// Chargements des playlists d'un compte, l'un après l'autre : lancés tous ensemble, Spotify
+    /// répond « trop de demandes » (429) dès qu'on importe plusieurs playlists.
+    @ObservationIgnored private var loadQueue: Task<Void, Never>?
+
+    private func loadTracksInTurn(of playlist: ImportedPlaylist) async throws -> [ImportedTrack] {
+        let previous = loadQueue
+        let load = Task { () async throws -> [ImportedTrack] in
+            await previous?.value
+            try Task.checkCancellation()
+            return try await self.loadTracks(of: playlist)
+        }
+        loadQueue = Task { _ = try? await load.value }
+        return try await withTaskCancellationHandler {
+            try await load.value
+        } onCancel: {
+            load.cancel()
+        }
     }
 
     /// Titres d'une playlist annoncée par un compte (chargés au moment de l'import).

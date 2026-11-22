@@ -31,6 +31,8 @@ enum ImportError: LocalizedError {
     case unsupportedLink
     case nothingFound
     case http(Int, String)
+    /// Trop de demandes (erreur 429) : le service demande d'attendre (durée en secondes, si elle est connue).
+    case rateLimited(String, TimeInterval?)
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +42,12 @@ enum ImportError: LocalizedError {
             return "Aucun titre trouvé. La playlist est peut-être privée : rends-la publique ou exporte-la en fichier."
         case .http(let code, let service):
             return "\(service) a répondu avec l'erreur \(code)."
+        case .rateLimited(let service, let wait):
+            let delay = wait.map { $0 >= 90 ? "dans \(Int(($0 / 60).rounded(.up))) min" : "dans une minute" } ?? "dans quelques minutes"
+            let alternative = service == "Spotify"
+                ? " En attendant, tu peux coller le lien public d'une playlist, ou importer le fichier exporté avec Exportify (exportify.app)."
+                : ""
+            return "\(service) reçoit trop de demandes et met l'import en pause (erreur 429). Réessaie \(delay).\(alternative)"
         }
     }
 }
@@ -158,7 +166,8 @@ enum ImportSources {
     static func spotifyPlaylistTracks(id: String, token: String) async throws -> [ImportedTrack] {
         do {
             return try await spotifyTracks(URL(string: "https://api.spotify.com/v1/playlists/\(id)/items?limit=100")!, token: token)
-        } catch {
+        } catch ImportError.http(let status, _) where [400, 403, 404].contains(status) {
+            // Ancienne adresse de l'API (pas en cas de 429 : ce serait une demande de plus).
             return try await spotifyTracks(URL(string: "https://api.spotify.com/v1/playlists/\(id)/tracks?limit=100")!, token: token)
         }
     }
@@ -177,6 +186,8 @@ enum ImportSources {
                 tracks.append(ImportedTrack(title: title, artist: artists.joined(separator: ", "), album: album, duration: duration))
             }
             next = (page["next"] as? String).flatMap(URL.init(string:))
+            // Pages espacées : Spotify limite le nombre de demandes par seconde.
+            if next != nil { try await Task.sleep(for: .milliseconds(250)) }
         }
         return tracks
     }
@@ -184,9 +195,7 @@ enum ImportSources {
     private static func spotifyGET(_ url: URL, token: String) async throws -> [String: Any] {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw ImportError.http(status, "Spotify") }
+        let data = try await send(request, service: "Spotify")
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
@@ -461,22 +470,50 @@ enum ImportSources {
 
     // MARK: - Outils
 
+    /// Envoie la requête ; sur « trop de demandes » (429) ou panne passagère (5xx), attend le délai
+    /// demandé par le service (Retry-After) ou un délai croissant, puis réessaie.
+    static func send(_ request: URLRequest, service: String) async throws -> Data {
+        let attempts = 5
+        for attempt in 1...attempts {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            if status == 200 { return data }
+            guard [429, 500, 502, 503, 504].contains(status) else { throw ImportError.http(status, service) }
+            let asked = http.flatMap { retryAfter($0.value(forHTTPHeaderField: "Retry-After")) }
+            // Attente trop longue pour patienter écran ouvert : on le dit plutôt que de bloquer.
+            if let asked, asked > 30 { throw ImportError.rateLimited(service, asked) }
+            guard attempt < attempts else {
+                throw status == 429 ? ImportError.rateLimited(service, asked) : ImportError.http(status, service)
+            }
+            let wait = asked ?? (pow(2, Double(attempt)) + Double.random(in: 0...1))
+            try await Task.sleep(for: .seconds(max(1, wait)))
+        }
+        throw ImportError.http(0, service)
+    }
+
+    /// En-tête Retry-After : secondes, ou date HTTP.
+    static func retryAfter(_ value: String?) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if let seconds = TimeInterval(value) { return max(0, seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value).map { max(0, $0.timeIntervalSinceNow) }
+    }
+
     private static func fetchText(_ url: URL, service: String) async throws -> String {
         var request = URLRequest(url: url)
         request.setValue(browserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("fr-FR,fr;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw ImportError.http(status, service) }
-        return String(decoding: data, as: UTF8.self)
+        return String(decoding: try await send(request, service: service), as: UTF8.self)
     }
 
     private static func fetchJSON(_ url: URL, service: String) async throws -> [String: Any] {
         var request = URLRequest(url: url)
         request.setValue(browserAgent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw ImportError.http(status, service) }
+        let data = try await send(request, service: service)
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
