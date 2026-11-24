@@ -1,8 +1,10 @@
 // Appels au processus principal (YouTube Music, disque, compte, import, Jam).
 import type {
-  Account, BrowseLink, Collection, CollectionPage, Concert, ImportedPlaylist, ImportedTrack, LibraryState, Lyrics,
+  Account, BrowseLink, Collection, CollectionPage, Concert, ImportedPlaylist, ImportedTrack, ImportJournalEntry, LibraryState, Lyrics,
   NearbyJam, Page, PageHeader, Settings, Shelf, Track,
 } from '../../shared/types';
+import type { OctaveCommand, OctaveStart } from '../../shared/octave';
+import type { OctaveLibraryImport } from '../../shared/octaveBackup';
 
 declare global {
   interface Window {
@@ -10,6 +12,7 @@ declare global {
       invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
       on: (channel: string, listener: (...args: any[]) => void) => () => void;
       platform?: 'android';
+      octave?: boolean;
     };
   }
 }
@@ -17,6 +20,7 @@ declare global {
 const call = <T,>(channel: string, ...args: unknown[]) => window.nova.invoke<T>(channel, ...args);
 /** Nova pour Android (téléphone et Android TV) : même interface, lecteur officiel de YouTube Music. */
 export const isAndroid = window.nova?.platform === 'android';
+export const supportsOctave = !isAndroid || window.nova.octave === true;
 export const on = (channel: string, listener: (...args: any[]) => void) => window.nova.on(channel, listener);
 
 export type SearchScope = 'all' | 'song' | 'video' | 'album' | 'artist' | 'playlist';
@@ -25,6 +29,7 @@ export const api = {
   search: (query: string, scope: SearchScope) => call<Shelf[]>('yt:search', query, scope),
   suggestions: (query: string) => call<string[]>('yt:suggestions', query),
   home: () => call<Page>('yt:home'),
+  popular: () => call<Page>('yt:popular'),
   homeMore: () => call<Page>('yt:homeMore'),
   explore: () => call<Page>('yt:explore'),
   browse: (link: BrowseLink) => call<Page>('yt:browse', link),
@@ -34,6 +39,7 @@ export const api = {
   radio: (id: string) => call<Track[]>('yt:radio', id),
   related: (id: string) => call<Shelf[]>('yt:related', id),
   squareArtwork: (id: string) => call<string | undefined>('yt:squareArtwork', id),
+  trackArtwork: (track: Track) => call<string | undefined>('art:track', track),
   palette: (url: string) => call<{ background: [number, number, number]; vivid: [number, number, number] } | null>('art:palette', url),
   lyrics: (track: Track, duration?: number) => call<Lyrics | undefined>('lyrics:get', track, duration),
   prefetch: (id: string) => call<void>('stream:prefetch', id),
@@ -50,15 +56,22 @@ export const api = {
   accountLiked: () => call<Track[]>('account:liked'),
   accountPlaylists: () => call<Collection[]>('account:playlists'),
   setLike: (id: string, liked: boolean) => call<void>('account:like', id, liked),
+  saveYouTubeAlbum: (album: Collection, tracks: Track[]) => call<void>('account:saveAlbum', album, tracks),
   createAccountPlaylist: (name: string, ids: string[], privacy?: string) => call<string | undefined>('account:createPlaylist', name, ids, privacy),
   openYouTube: (url: string) => call<void>('youtube:open', url),
   addToAccountPlaylist: (playlistId: string, ids: string[]) => call<void>('account:addToPlaylist', playlistId, ids),
 
   importLink: (link: string) => call<ImportedPlaylist[]>('import:link', link),
   importFile: () => call<ImportedPlaylist[]>('import:file'),
+  importAudio: () => call<{ tracks: Track[]; errors: string[] }>('audio:import'),
+  localAudioURL: (id: string) => call<string>('audio:url', id),
+  importJournal: () => call<ImportJournalEntry[]>('import:journal'),
+  resolveImportJournal: (id: string, track: Track) => call<void>('import:resolve', id, track),
   runImport: (playlists: ImportedPlaylist[], toAccount: boolean) =>
     call<{ name: string; tracks: Track[]; youtubeId?: string; missing: number }[]>('import:run', playlists, toAccount),
   matchTrack: (wanted: ImportedTrack) => call<Track | undefined>('import:match', wanted),
+  octaveMatch: (track: Track) => call<Track | undefined>('octave:match', track),
+  openOctaveBackup: () => call<OctaveLibraryImport | undefined>('octave:openBackup'),
   cancelImport: () => call<void>('import:cancel'),
 
   phonePairing: () => call<{ link: string; address: string; paired: boolean; phoneName?: string; lastSync?: number }>('phone:pairing'),
@@ -66,8 +79,9 @@ export const api = {
   phoneNetwork: () => call<{ publicNetworks: string[]; allowed: boolean }>('phone:network'),
   allowPhoneNetwork: () => call<boolean>('phone:allowNetwork'),
   openPhoneExport: () => call<unknown>('phone:openFile'),
+  exportPhoneBackup: (state: LibraryState) => call<string | undefined>('phone:exportBackup', state),
 
-  concerts: (options: { artist?: string; city?: string; key: string }) => call<Concert[]>('concerts:search', options),
+  concerts: (options: { artist?: string; city?: string; key?: string; country?: string }) => call<Concert[]>('concerts:search', options),
 
   jamHost: (name: string) => call<{ port: number; addresses: string[] }>('jam:host', name),
   jamBroadcast: (message: unknown) => call<void>('jam:broadcast', message),
@@ -76,8 +90,17 @@ export const api = {
   jamJoin: (address: string, port: number, name: string) => call<void>('jam:join', address, port, name),
   jamToHost: (message: unknown) => call<void>('jam:toHost', message),
   jamStop: () => call<void>('jam:stop'),
+  copyJamInvitation: (url: string) => call<void>('jam:copyInvitation', url),
 
   openExternal: (url: string) => call<void>('shell:open', url),
+  openOctave: (url?: string) => call<void>('octave:open', url),
+  hideOctave: () => call<void>('octave:hide'),
+  stopOctave: () => call<void>('octave:stop'),
+  youtubeRecording: (track: Track) => call<Track | undefined>('octave:youtube-match', track),
+  playOctave: (track: Track, request: number, volume: number, position: number) => call<OctaveStart>('octave:play', track, request, volume, position),
+  octaveQueueNext: (request: number, track?: Track, reset?: boolean) => call<string | undefined>('octave:queue-next', request, track, reset),
+  octaveCommand: (request: number, command: OctaveCommand) => call<boolean>('octave:command', request, command),
+  claimMediaShortcuts: () => call<void>('media:claim'),
 };
 
 export type { NearbyJam };

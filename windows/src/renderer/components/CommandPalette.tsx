@@ -25,7 +25,7 @@ const normalize = (text: string) => text.normalize('NFKD').replace(/[̀-ͯ]/g, '
 
 const pages: [string, string, Route][] = [
   ['Accueil', 'home', { name: 'home' }],
-  ['Nouveautés', 'grid', { name: 'explore' }],
+  [isAndroid ? 'Nouveautés' : 'Classements', 'grid', { name: 'explore' }],
   ['Mes mix', 'sparkles', { name: 'mix', kind: 'discovery' }],
   ['Concerts', 'ticket', { name: 'concerts' }],
   ['Jam', 'jam', { name: 'jam' }],
@@ -70,7 +70,7 @@ function commands(query: string): Command[] {
   // Les commandes dont le nom commence par la recherche d'abord.
   all.sort((a, b) => Number(!normalize(a.label).startsWith(q)) - Number(!normalize(b.label).startsWith(q)));
   const result = [...all.slice(0, 8), ...tracks];
-  if (q) result.push({ id: 'search', label: `Rechercher « ${query.trim()} »`, icon: 'search', hint: 'YouTube Music', run: () => open({ name: 'search', query: query.trim() }) });
+  if (q) result.push({ id: 'search', label: `Rechercher « ${query.trim()} »`, icon: 'search', hint: isAndroid ? 'YouTube Music' : 'Octave', run: () => open({ name: 'search', query: query.trim() }) });
   return result.map((c) => ({ ...c, run: () => { close(); c.run(); } }));
 }
 

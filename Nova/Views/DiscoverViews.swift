@@ -190,8 +190,12 @@ struct ReleasesView: View {
     @State private var errorText: String?
     @State private var showGenres = false
     @State private var filter: Filter = .all
+    @State private var upcoming = false
     @State private var opening: Int?
     @State private var previousSeen = Date.distantPast
+    @State private var loadedArtistCount = 0
+    @State private var loadingMore = false
+    @State private var discoveryArtists: [String] = []
 
     enum Filter: String, CaseIterable, Identifiable {
         case all = "Tout"
@@ -209,30 +213,36 @@ struct ReleasesView: View {
         let followed = library.saved.filter { $0.kind == .artist }.map(\.title)
         var plays: [String: Int] = [:]
         for track in library.songs + library.recents {
-            let main = track.artist.components(separatedBy: CharacterSet(charactersIn: ",&")).first?
-                .replacingOccurrences(of: " et ", with: ",").components(separatedBy: ",").first?
-                .trimmingCharacters(in: .whitespaces) ?? track.artist
-            guard !main.isEmpty else { continue }
-            plays[main, default: 0] += max(1, library.stats[track.id]?.playCount ?? 0)
+            let credit = track.artist.components(separatedBy: " · ").first ?? track.artist
+            for name in Set([credit] + TrackMatcher.artistNames(credit)) where !name.isEmpty {
+                plays[name, default: 0] += max(1, library.stats[track.id]?.playCount ?? 0)
+            }
         }
-        let top = plays.sorted { $0.value > $1.value }.prefix(25).map(\.key)
+        let top = plays.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map(\.key)
         var seen = Set<String>()
         return (followed + top).filter { seen.insert($0.lowercased()).inserted }
     }
 
     private var visible: [Release] {
         releases.filter { release in
+            guard release.isUpcoming == upcoming else { return false }
             switch filter {
             case .all: return true
             case .albums: return release.typeLabel == "Album" || release.typeLabel == "Compilation"
             case .singles: return release.typeLabel == "Single" || release.typeLabel == "EP"
             }
-        }
+        }.sorted { upcoming ? ($0.releaseDate ?? .distantFuture) < ($1.releaseDate ?? .distantFuture) : ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
     }
 
     var body: some View {
         List {
             Section {
+                Picker("Calendrier", selection: $upcoming) {
+                    Text("Récentes").tag(false)
+                    Text("À venir").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .listRowSeparator(.hidden)
                 Picker("Type", selection: $filter) {
                     ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -246,7 +256,7 @@ struct ReleasesView: View {
                         .lineLimit(2)
                 }
             } footer: {
-                Text("Sorties des \(windowDays) derniers jours : artistes phares de tes genres, artistes que tu suis et ceux que tu écoutes le plus.")
+                Text(upcoming ? "Dates annoncées pour les artistes de ta bibliothèque et de tes genres. Ouvre une sortie pour consulter sa fiche." : "Sorties des \(windowDays) derniers jours : artistes phares de tes genres, artistes que tu suis et ceux que tu écoutes le plus.")
             }
 
             ForEach(groupedByDay, id: \.0) { day, items in
@@ -257,6 +267,12 @@ struct ReleasesView: View {
                     }
                 }
             }
+            if !isLoading && loadedArtistCount > 0 && loadedArtistCount < discoveryArtists.count {
+                ProgressView("Recherche d’autres sorties…")
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+                    .task(id: loadedArtistCount) { await loadMore() }
+            }
         }
         .listStyle(.insetGrouped)
         .overlay {
@@ -264,9 +280,9 @@ struct ReleasesView: View {
                 ProgressView("Recherche des sorties…")
             } else if let errorText, releases.isEmpty {
                 ContentUnavailableView("Sorties indisponibles", systemImage: "wifi.exclamationmark", description: Text(errorText))
-            } else if !isLoading && releases.isEmpty {
-                ContentUnavailableView("Aucune sortie", systemImage: "sparkles",
-                                       description: Text("Choisis des genres ou suis des artistes pour voir leurs nouveautés ici."))
+            } else if !isLoading && !loadingMore && visible.isEmpty {
+                ContentUnavailableView(upcoming ? "Aucune sortie annoncée" : "Aucune sortie", systemImage: "sparkles",
+                                       description: Text(upcoming ? "Aucune date future n’est encore disponible pour les artistes déjà vérifiés. La recherche continue au défilement." : "Choisis des genres ou suis des artistes pour voir leurs nouveautés ici."))
             }
         }
         .navigationTitle("Sorties")
@@ -298,7 +314,7 @@ struct ReleasesView: View {
     private var groupedByDay: [(String, [Release])] {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "fr_FR")
-        formatter.dateFormat = "EEEE d MMMM"
+        formatter.dateFormat = "EEEE d MMMM yyyy"
         var order: [String] = []
         var groups: [String: [Release]] = [:]
         for release in visible {
@@ -341,6 +357,10 @@ struct ReleasesView: View {
 
     /// Retrouve la sortie sur YouTube Music et l'ouvre.
     private func open(_ release: Release) {
+        if release.isUpcoming, let url = release.sourceURL {
+            UIApplication.shared.open(url)
+            return
+        }
         opening = release.id
         Task {
             defer { opening = nil }
@@ -356,25 +376,52 @@ struct ReleasesView: View {
 
     private func load(force: Bool = false) async {
         isLoading = true
-        defer { isLoading = false }
+        loadedArtistCount = 0
+        defer { if !Task.isCancelled { isLoading = false } }
         let since = Date().addingTimeInterval(-Double(windowDays) * 86_400)
         let genres = self.genres
         let names = artistNames
-        let key = "releases-\(genres.map(\.id))-\(names.joined(separator: ",").hashValue)-\(windowDays)"
+        discoveryArtists = names
+        let firstNames = Array(names.prefix(40))
+        let key = "releases-v3-\(genres.map(\.id))-\(firstNames.joined(separator: ",").hashValue)-\(windowDays)"
         do {
             try await loadCached(key, freshFor: force ? 0 : 6 * 3600, fetch: {
                 var all: [Release] = []
-                for genre in genres {
+                let discoveryGenres = genres.isEmpty && names.isEmpty ? [ReleaseGenre(id: 0, name: "Tendances")] : genres
+                for genre in discoveryGenres {
+                    try Task.checkCancellation()
                     all += (try? await ReleasesService.releases(genre: genre, since: since)) ?? []
                 }
-                all += (try? await ReleasesService.releases(artistNames: names, since: since)) ?? []
-                var seen = Set<Int>()
-                return all.filter { seen.insert($0.id).inserted }
-                    .sorted { ($0.releaseDate ?? .distantPast) > ($1.releaseDate ?? .distantPast) }
-            }) { releases = $0 }
+                all += (try? await ReleasesService.releases(artistNames: firstNames, since: since)) ?? []
+                return ReleasesService.combine(all)
+            }) { if !Task.isCancelled { releases = $0 } }
+            try Task.checkCancellation()
+            loadedArtistCount = firstNames.count
             errorText = nil
         } catch {
-            errorText = error.localizedDescription
+            if !Task.isCancelled { errorText = error.localizedDescription }
+        }
+    }
+
+    private func loadMore() async {
+        guard !loadingMore, !isLoading else { return }
+        loadingMore = true
+        defer { loadingMore = false }
+        let offset = loadedArtistCount
+        let names = Array(discoveryArtists.dropFirst(offset).prefix(40))
+        let since = Date().addingTimeInterval(-Double(windowDays) * 86_400)
+        let key = "releases-v3-artists-\(names.joined(separator: ",").hashValue)-\(windowDays)"
+        do {
+            try await loadCached(key, freshFor: 6 * 3600, fetch: {
+                try await ReleasesService.releases(artistNames: names, since: since)
+            }) { batch in
+                guard !Task.isCancelled, loadedArtistCount == offset else { return }
+                releases = ReleasesService.combine(releases + batch)
+            }
+            try Task.checkCancellation()
+            if loadedArtistCount == offset { loadedArtistCount += names.count }
+        } catch {
+            if !Task.isCancelled { errorText = error.localizedDescription }
         }
     }
 }

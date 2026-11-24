@@ -4,7 +4,7 @@ import type { Collection, Item, Shelf, Track } from '../../shared/types';
 import { Artwork } from '../components/Artwork';
 import { Icon } from '../components/icons';
 import { CardGrid, CategoryGrid, ShelfView } from '../components/Shelf';
-import { api, type SearchScope } from '../lib/api';
+import { api, isAndroid, supportsOctave, type SearchScope } from '../lib/api';
 import { addSearch, clearSearches, library, songs } from '../lib/library';
 import { player, playerState } from '../lib/player';
 import { open } from '../lib/router';
@@ -118,7 +118,7 @@ export function HomePage() {
   const personal = useMemo(personalShelves, [state.playlists, state.recents.length > 0]);
   const loadingMore = useRef(false);
   const sentinel = useRef<HTMLDivElement>(null);
-  const mixes = useMemo(() => mixKinds(), [state.recents.length > 5, state.liked.length > 5]);
+  const mixes = mixKinds();
 
   useEffect(() => {
     const element = sentinel.current;
@@ -141,10 +141,10 @@ export function HomePage() {
   }, [data]);
 
   const all = data?.shelves ?? [];
-  // Grille de titres de YouTube Music (« Sélection rapide ») mise en avant, juste après les mix.
-  const youtubePicks = all.find((shelf) => shelf.layout === 'grid' && shelf.items.some((i) => i.type === 'track'));
-  const quickPicks = useQuickPicks(state.recents[0], youtubePicks);
-  const shelves = all.filter((shelf) => shelf !== youtubePicks);
+  const { data: popular } = useCached('popular-tracks', () => api.popular(), 15 * 60_000);
+  const catalogPicks = all.find((shelf) => shelf.layout === 'grid' && shelf.items.some((i) => i.type === 'track'));
+  const quickPicks = useQuickPicks(state.recents[0], popular?.shelves[0] ?? catalogPicks);
+  const shelves = all.filter((shelf) => shelf !== catalogPicks);
   const { data: explore } = useCached('explore', () => api.explore(), 60 * 60_000);
   const moods = explore?.shelves.find((shelf) => shelf.items.length > 6 && shelf.items.every((i) => i.type === 'category'));
   return (
@@ -159,7 +159,7 @@ export function HomePage() {
           {mixes.map((kind) => <MixCard key={kind.id} kind={kind} />)}
         </section>
       )}
-      {quickPicks && <ShelfView shelf={{ ...quickPicks, title: quickPicks.title || 'Sélection rapide' }} />}
+      {quickPicks && <ShelfView shelf={{ ...quickPicks, title: quickPicks.title || 'Sélection rapide' }} moreRoute={{ name: 'explore' }} />}
       {state.recents.length > 0 && (
         <ShelfView shelf={{ id: 'recents', title: 'Écoutés récemment', layout: 'cards', items: recentItems(state.recents) }}
           moreRoute={{ name: 'history' }} />
@@ -187,7 +187,7 @@ export function ExplorePage() {
   if (error && !data) return <ErrorState message={error} retry={() => reload(true)} />;
   return (
     <div className="page">
-      <PageTitle>Nouveautés</PageTitle>
+      <PageTitle>{supportsOctave ? 'Classements' : 'Nouveautés'}</PageTitle>
       {data?.shelves.map((shelf) => (shelf.id === 'explore-top'
         ? <div key={shelf.id} className="top-buttons"><CategoryGrid shelf={shelf} /></div>
         : <ShelfView key={shelf.id} shelf={shelf} ranked={shelf.layout === 'grid'} />))}
@@ -225,15 +225,18 @@ export function SearchPage({ query: initial }: { query?: string }) {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [results, setResults] = useState<Shelf[] | null>(null);
   const [error, setError] = useState<string>();
-  const moods = useCached('moods', () => api.browse({ browseId: 'FEmusic_moods_and_genres' }), 24 * 3600_000);
+  const moods = useCached('moods', () => isAndroid ? api.browse({ browseId: 'FEmusic_moods_and_genres' }) : Promise.resolve({ shelves: [] as Shelf[] }), 24 * 3600_000);
   useStore(playerState);
 
   useEffect(() => { setQuery(initial ?? ''); setSubmitted(initial ?? ''); }, [initial]);
 
   useEffect(() => {
     if (!query.trim() || query === submitted) return setSuggestions([]);
-    const timer = setTimeout(() => void api.suggestions(query).then(setSuggestions).catch(() => setSuggestions([])), 200);
-    return () => clearTimeout(timer);
+    let active = true;
+    const timer = setTimeout(() => void api.suggestions(query)
+      .then((values) => { if (active) setSuggestions(values); })
+      .catch(() => { if (active) setSuggestions([]); }), 200);
+    return () => { active = false; clearTimeout(timer); };
   }, [query, submitted]);
 
   useEffect(() => {
@@ -256,7 +259,7 @@ export function SearchPage({ query: initial }: { query?: string }) {
     <div className="page">
       <form className="search-field" onSubmit={(e) => { e.preventDefault(); submit(query); }}>
         <Icon name="search" size={20} />
-        <input autoFocus placeholder="Titres, artistes, albums, playlists" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input autoFocus placeholder={supportsOctave ? 'Rechercher dans Octave' : 'Titres, artistes, albums, playlists'} value={query} onChange={(e) => setQuery(e.target.value)} />
         {query && <button type="button" className="icon-button" onClick={() => { setQuery(''); setSubmitted(''); }}><Icon name="close" size={16} /></button>}
         {suggestions.length > 0 && (
           <div className="suggestions">
@@ -267,7 +270,7 @@ export function SearchPage({ query: initial }: { query?: string }) {
       {submitted ? (
         <>
           <div className="chips">
-            {scopes.map(([value, label]) => <button key={value} className={`chip ${scope === value ? 'on' : ''}`} onClick={() => setScope(value)}>{label}</button>)}
+            {scopes.filter(([value]) => isAndroid || value !== 'video').map(([value, label]) => <button key={value} className={`chip ${scope === value ? 'on' : ''}`} onClick={() => setScope(value)}>{label}</button>)}
           </div>
           {error && <ErrorState message={error} />}
           {!results && !error && <Loading />}
@@ -285,7 +288,7 @@ export function SearchPage({ query: initial }: { query?: string }) {
               <div className="chips">{state.searches.slice(0, 12).map((s) => <button key={s} className="chip" onClick={() => submit(s)}><Icon name="clock" size={13} /> {s}</button>)}</div>
             </section>
           )}
-          {songs().length > 0 && <p className="eyebrow">Parcourir</p>}
+          {isAndroid && songs().length > 0 && <p className="eyebrow">Parcourir</p>}
           {moods.data?.shelves.filter((s) => s.items.every((i) => i.type === 'category')).map((shelf) => <CategoryGrid key={shelf.id} shelf={shelf} />)}
           {moods.loading && !moods.data && <Loading />}
         </>

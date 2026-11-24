@@ -19,9 +19,9 @@ struct RootView: View {
                     HomeView().withRoutes()
                 }
             }
-            Tab("Nouveautés", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
+            Tab("Classements", systemImage: "square.grid.2x2.fill", value: AppTab.explore) {
                 NavigationStack(path: $router.explorePath) {
-                    BrowseView(title: "Nouveautés", link: BrowseLink(browseID: "FEmusic_explore"),
+                    BrowseView(title: "Classements", link: BrowseLink(browseID: "octave:charts"),
                                largeTitle: true, showsReleasesCard: true)
                         .withRoutes()
                 }
@@ -43,6 +43,15 @@ struct RootView: View {
         }
         .sheet(isPresented: $router.showPlayer) {
             NowPlayingView()
+        }
+        .sheet(isPresented: Binding(
+            get: { player.showsOctaveAccount && !router.showPlayer },
+            set: { if !$0 { player.showsOctaveAccount = false } }
+        ), onDismiss: {
+            player.octave.hideAccount()
+            Task { await player.octaveLibrary.refresh() }
+        }) {
+            OctaveAccountSheet()
         }
         .newPlaylistAlert(isActive: !router.showPlayer)
         .alert("Oups", isPresented: Binding(
@@ -75,6 +84,16 @@ struct RootView: View {
             get: { transfer != nil && !transferring },
             set: { if !$0 && !transferring { transfer = nil } }
         )) {
+            Button("Restaurer depuis ce PC") {
+                guard let request = transfer else { return }
+                transferring = true
+                Task {
+                    do { transferMessage = try await PCSync.shared.pair(request, library: player.library, restoring: true) }
+                    catch { transferMessage = error.localizedDescription }
+                    transferring = false
+                    transfer = nil
+                }
+            }
             Button("Associer et envoyer") {
                 guard let request = transfer else { return }
                 transferring = true
@@ -91,7 +110,7 @@ struct RootView: View {
             }
             Button("Annuler", role: .cancel) { transfer = nil }
         } message: {
-            Text("Playlists, titres likés, historique, albums et artistes suivis partent vers \(transfer?.computer ?? "Nova") (PC ou Android), sur ton Wi-Fi (\(transfer?.url.host ?? "")). Ensuite, tes ajouts y seront envoyés automatiquement.")
+            Text("Récupère la bibliothèque de \(transfer?.computer ?? "Nova") sur cet iPhone, ou envoie celle de l’iPhone vers cet appareil. Le transfert utilise ton Wi-Fi. Les données déjà présentes sont conservées sans doublons.")
         }
         .alert("Transfert vers Nova (PC ou Android)", isPresented: Binding(
             get: { transferMessage != nil },
@@ -110,12 +129,18 @@ struct RootView: View {
         }
         // Nova pour Windows associé : les changements de la bibliothèque y partent tout seuls.
         .onChange(of: player.library.revision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .onChange(of: player.library.historyRevision) { _, _ in PCSync.shared.libraryChanged(player.library) }
+        .onChange(of: player.account.revision) { _, _ in Task { await player.octaveLibrary.syncYouTube() } }
         .task {
+            player.octave.warmUp()
+            player.octaveLibrary.start(using: player.octave)
+            await player.library.refreshImportedRecordings()
             PCSync.shared.startHeartbeat(library: player.library)
             RemoteControl.shared.watchComputer(player: player)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                player.octave.attach()
                 Task { try? await PCSync.shared.sync(library: player.library, includeHistory: true) }
                 RemoteControl.shared.releaseIfIdle(player: player)
             }

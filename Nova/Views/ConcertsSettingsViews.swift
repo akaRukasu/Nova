@@ -43,7 +43,7 @@ struct ConcertsView: View {
         List {
             if apiKey.isEmpty {
                 Section {
-                    Text("Les concerts viennent de Ticketmaster. Crée une clé gratuite sur developer.ticketmaster.com (rubrique « My Apps »), puis colle la « Consumer Key » ici.")
+                    Text("OpenAgenda est disponible. Une clé Ticketmaster gratuite permet de consulter aussi les dates de sa billetterie.")
                         .font(.subheadline)
                     TextField("Clé Ticketmaster", text: $apiKey)
                         .textInputAutocapitalization(.never)
@@ -72,7 +72,6 @@ struct ConcertsView: View {
                 } label: {
                     Label("Rechercher", systemImage: "magnifyingglass")
                 }
-                .disabled(apiKey.isEmpty)
             } header: {
                 Text("Recherche")
             } footer: {
@@ -92,10 +91,9 @@ struct ConcertsView: View {
                             }
                         }
                     }
-                    Button("Concerts de tous mes artistes", systemImage: "person.3") {
+                    Button("Concerts de mes artistes", systemImage: "person.3") {
                         Task { await searchMyArtists() }
                     }
-                    .disabled(apiKey.isEmpty)
                 }
             }
 
@@ -140,7 +138,7 @@ struct ConcertsView: View {
         .onAppear {
             if artist.isEmpty, let initialArtist { artist = initialArtist }
             if city.isEmpty { city = savedCity }
-            guard !apiKey.isEmpty, concerts.isEmpty, !isLoading else { return }
+            guard concerts.isEmpty, !isLoading else { return }
             // À l'ouverture : l'artiste demandé, sinon les concerts de tous tes artistes.
             Task { if initialArtist != nil { await search() } else { await searchMyArtists() } }
         }
@@ -174,10 +172,10 @@ struct ConcertsView: View {
                 Text(concert.name)
                     .font(.body.weight(.medium))
                     .lineLimit(2)
-                Text(concert.place)
+                Text([concert.place, concert.source].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
                 if let distance = distance(to: concert) {
                     Text("à \(distance) km")
                         .font(.caption)
@@ -221,8 +219,10 @@ struct ConcertsView: View {
     }
 
     private func search() async {
+        guard !isLoading else { return }
         isLoading = true
         errorText = nil
+        concerts = []
         defer { isLoading = false }
         origin = await resolveOrigin()
         do {
@@ -235,7 +235,7 @@ struct ConcertsView: View {
                 let place = useMyLocation ? "autour de toi" : (city.isEmpty ? "" : "à \(city)")
                 errorText = origin == nil && !useMyLocation && !city.isEmpty
                     ? "Lieu « \(city) » introuvable. Vérifie l'orthographe ou active « Autour de moi »."
-                    : "Ticketmaster n'annonce aucun concert \(place) pour cette recherche. Essaie un rayon plus grand."
+                    : "Aucun concert trouvé \(place) dans les agendas consultés. Essaie un rayon plus grand."
             }
         } catch {
             errorText = error.localizedDescription
@@ -243,6 +243,7 @@ struct ConcertsView: View {
     }
 
     private func searchMyArtists() async {
+        guard !isLoading else { return }
         isLoading = true
         errorText = nil
         defer { isLoading = false }
@@ -332,6 +333,16 @@ struct ActivitySheet: UIViewControllerRepresentable {
 
 struct SettingsView: View {
     @Environment(AccountStore.self) private var account
+    @Environment(PlayerModel.self) private var player
+    @AppStorage("playlistSource") private var playlistSource = PlaybackSource.octave
+    @AppStorage("octaveQuality") private var octaveQuality = "lossless"
+    @AppStorage("octaveTransition") private var octaveTransition = "automix"
+    @AppStorage("octaveAutomixStyle") private var octaveAutomixStyle = "apple"
+    @AppStorage("octaveAutoplay") private var octaveAutoplay = true
+    @AppStorage("octaveGapless") private var octaveGapless = true
+    @AppStorage("octaveSoundCheck") private var octaveSoundCheck = true
+    @AppStorage("octaveSmartShuffle") private var octaveSmartShuffle = true
+    @AppStorage("syncOctaveToYouTube") private var syncOctaveToYouTube = true
     @AppStorage("audioQualityHigh") private var highQuality = true
     @AppStorage("autoplayRadio") private var autoplayRadio = true
     @AppStorage("transitionStyle") private var transition = PlaybackSettings.Transition.automix.rawValue
@@ -376,13 +387,71 @@ struct SettingsView: View {
                 Button("Importer depuis une autre plateforme") { showImport = true }
             }
 
+            LibraryRestoreSection()
+
+            Section("Bibliothèque Octave") {
+                if let state = player.octaveLibrary.status {
+                    LabeledContent("Références musicales", value: state.tracks.formatted())
+                    if let count = state.playlists { LabeledContent("Playlists", value: count.formatted()) }
+                    if let count = state.libraryAlbums { LabeledContent("Albums dans les morceaux", value: count.formatted()) }
+                    if let count = state.libraryArtists { LabeledContent("Artistes dans les morceaux", value: count.formatted()) }
+                    LabeledContent("Albums enregistrés sur Octave", value: state.albums.formatted())
+                    if !state.connected { Text("Connecte le compte cloud dans Compte Octave.").foregroundStyle(.secondary) }
+                }
+                if player.octaveLibrary.pending > 0 {
+                    Text("\(player.octaveLibrary.pending) ajout(s) en attente de confirmation par Octave.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if player.octaveLibrary.youtubePending > 0 {
+                    Text("\(player.octaveLibrary.youtubePending) ajout(s) en attente de confirmation par YouTube Music.").font(.footnote).foregroundStyle(.secondary)
+                }
+                if let error = player.octaveLibrary.error { Text(error).font(.footnote).foregroundStyle(.secondary) }
+                Button {
+                    Task { await player.octaveLibrary.refresh() }
+                } label: {
+                    HStack {
+                        Text("Actualiser la bibliothèque Octave")
+                        if player.octaveLibrary.busy { Spacer(); ProgressView() }
+                    }
+                }.disabled(player.octaveLibrary.busy)
+                Text("Les nouveaux titres et albums ajoutés dans Nova sont envoyés à Octave et à YouTube Music quand les comptes sont connectés.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+
+            Section("Lecture Octave") {
+                Button("Compte et réglages Octave") { player.openOctaveAccount() }
+                Picker("Source des playlists", selection: $playlistSource) {
+                    ForEach(PlaybackSource.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Qualité Octave", selection: $octaveQuality) {
+                    Text("Économie de données").tag("low")
+                    Text("Haute").tag("high")
+                    Text("Lossless (FLAC)").tag("lossless")
+                }
+                Picker("Transitions Octave", selection: $octaveTransition) {
+                    ForEach(PlaybackSettings.Transition.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                if octaveTransition == "automix" {
+                    Picker("Style AutoMix", selection: $octaveAutomixStyle) {
+                        Text("Octave · phrases courtes").tag("legacy")
+                        Text("Automatique").tag("automatic")
+                        Text("Apple · phrases longues").tag("apple")
+                    }
+                }
+                Toggle("Autoplay", isOn: $octaveAutoplay)
+                Toggle("Lecture sans blanc", isOn: $octaveGapless)
+                Toggle("Sound Check", isOn: $octaveSoundCheck)
+                Toggle("Smart Shuffle", isOn: $octaveSmartShuffle)
+                Toggle("Ajouter les écoutes à l’historique YouTube Music", isOn: $syncOctaveToYouTube)
+                    .disabled(!recordHistory || !account.isSignedIn)
+            }
+
             Section {
                 if let computer = PCSync.shared.pairedComputer {
                     LabeledContent("Associé à", value: computer)
                     if let last = PCSync.shared.lastSync {
                         LabeledContent("Dernier envoi", value: last.formatted(date: .abbreviated, time: .shortened))
                     }
-                    Button("Envoyer maintenant") { Task { try? await PCSync.shared.sync(library: library, force: true) } }
+                    Button("Synchroniser maintenant") { Task { try? await PCSync.shared.sync(library: library, force: true) } }
                         .disabled(PCSync.shared.isSyncing)
                     Button("Dissocier", role: .destructive) { PCSync.shared.unpair() }
                 }
@@ -404,7 +473,7 @@ struct SettingsView: View {
                 Toggle("Lecture automatique", isOn: $autoplayRadio)
                 Toggle("Historique d'écoute", isOn: $recordHistory)
             } header: {
-                Text("Lecture")
+                Text("Lecture YouTube Music")
             } footer: {
                 Text("Haute qualité : le meilleur flux AAC que YouTube fournit à Nova (128 kbit/s, qualité « élevée » de YouTube Music). L'égaliseur de volume baisse les titres très forts au niveau des autres. La lecture automatique enchaîne avec des titres similaires à la fin de la file. AirPlay se choisit depuis le lecteur.")
             }
@@ -493,6 +562,11 @@ struct SettingsView: View {
                 .presentationDetents([.medium, .large])
         }
         .navigationTitle("Réglages")
+        .onDisappear { if player.source == .octave { player.octave.refreshSettings() } }
+        .onChange(of: "\(octaveQuality)|\(octaveTransition)|\(octaveAutomixStyle)|\(octaveAutoplay)|\(octaveGapless)|\(octaveSoundCheck)|\(octaveSmartShuffle)") {
+            player.octave.refreshSettings()
+        }
+        .task { await player.octaveLibrary.refresh() }
         .sheet(isPresented: $showAccount) { AccountSheet() }
         .sheet(isPresented: $showImport) { ImportView() }
         .task { cacheSize = await AudioCache.shared.sizeInBytes() }

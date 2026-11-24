@@ -64,6 +64,7 @@ jobs:
           path: windows/smoke-*.png
 
       - name: Publier
+        if: github.ref_name != 'codex/nova-mobile-octave'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,7 +73,7 @@ jobs:
           BRANCH="${GITHUB_REF_NAME//\//-}"
           if [ "$GITHUB_REF_NAME" = "main" ]; then TAG="windows-latest"; else TAG="windows-preview-$BRANCH"; fi
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" release/Nova-Windows-Setup.exe release/Nova-Windows-Portable.exe \
+          gh release create "$TAG" release/Nova-Octave-*-Windows-Setup.exe release/Nova-Windows-Portable.exe \
             --target "$GITHUB_SHA" \
             --title "Nova pour Windows — $GITHUB_REF_NAME — build ${{ github.run_number }}" \
             --notes "Commit $GITHUB_SHA. Nova-Windows-Setup.exe : installateur. Nova-Windows-Portable.exe : version sans installation. Windows peut afficher « Windows a protégé votre ordinateur » (app non signée) : Informations complémentaires → Exécuter quand même." \

@@ -1,0 +1,130 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { octaveHandoff } from '../src/shared/octave.ts';
+import { mixVolumes } from '../src/renderer/lib/analysis.ts';
+
+const source = fs.readFileSync(new URL('../../Nova/Resources/nova-octave.js', import.meta.url), 'utf8');
+
+test('Octave welcome and owner notes close without dismissing an account gate; retries still play the row', () => {
+  let welcome = true, note = false, gate = false, doubles = 0, clicks = 0;
+  const skip = {getAttribute: () => 'Skip', click() {welcome = false;}};
+  const close = {getAttribute: () => 'Close', click() {note = false;}};
+  const welcomeDialog = {getClientRects: () => welcome ? [1] : [], querySelectorAll: () => [skip]};
+  const noteDialog = {getClientRects: () => note ? [1] : [], querySelectorAll: () => [close]};
+  const heading = {closest: () => noteDialog, getClientRects: () => note ? [1] : []};
+  const title = {getClientRects: () => [1], click() {clicks++;}, dispatchEvent(e) {if (e.type === 'dblclick') doubles++;}};
+  const row = {querySelector: () => title};
+  const document = {
+    querySelector(selector) {
+      if (selector === '[aria-label="Link Discord to unlock Octave"]') return gate ? {getClientRects: () => [1]} : null;
+      if (selector === '[aria-label="Welcome to Octave"]') return welcome ? welcomeDialog : null;
+      if (selector === '#owner-note-title') return note ? heading : null;
+      if (selector === '[aria-label="Welcome to Octave"], #owner-note-title') return welcome ? welcomeDialog : note ? heading : null;
+      return selector.includes('main [data-track-id="42"]') ? row : null;
+    }, querySelectorAll: () => [],
+  };
+  const window = {requestAnimationFrame: () => 1, cancelAnimationFrame() {}, Audio: class {}};
+  vm.runInNewContext(source, {window, document, navigator:{}, location:{origin:'https://music.octavestreaming.com'},
+    performance, setTimeout, clearTimeout, Map, WeakRef, Promise, MouseEvent:class {constructor(type) {this.type=type;}}});
+  assert.equal(window.novaOctave('sample').blocked, null);
+  assert.equal(welcome, false);
+  note = true;
+  assert.equal(window.novaOctave('sample').blocked, null);
+  assert.equal(note, false);
+  gate = true; welcome = true;
+  assert.equal(window.novaOctave('sample').blocked, 'sign-in');
+  assert.equal(welcome, true);
+  window.novaOctave('select', {id:'42'});
+  window.novaOctave('select', {id:'42', retry:true});
+  assert.equal(doubles, 2);
+  assert.equal(clicks, 0);
+});
+
+test('Android without MediaSession reports the actual track, audio clock and autoplay queue control', () => {
+  let queueOpened = false;
+  const queue = { getAttribute: () => 'Queue', closest: () => null, click() { queueOpened = true; } };
+  const title = { textContent: 'Cross Off' };
+  const artist = { textContent: 'Mark Morton & Chester Bennington · Autoplay' };
+  const cover = { src: 'https://example.com/cover.jpg' };
+  const nowPlaying = { querySelector: selector => selector.includes('marquee') ? title : selector === 'p' ? artist : cover };
+  const document = {
+    querySelector: selector => selector === '[data-np-zoom-host="true"]' ? nowPlaying : null,
+    querySelectorAll: selector => selector === 'button[aria-label]' ? [queue] : [],
+  };
+  const window = { requestAnimationFrame: () => 1, cancelAnimationFrame() {}, Audio: class {} };
+  window.__octaveEngine = { isFading: true };
+  vm.runInNewContext(source, { window, document, navigator: {}, location: {origin:'https://music.octavestreaming.com'},
+    performance, setTimeout, clearTimeout, Map, WeakRef });
+  const audio = new window.Audio();
+  Object.assign(audio, { duration:253, currentTime:12, paused:false, ended:false, muted:false, readyState:4 });
+  let state = window.novaOctave('sample');
+  assert.equal(state.title, 'Cross Off');
+  assert.equal(state.artist, 'Mark Morton & Chester Bennington');
+  assert.equal(state.artwork, cover.src);
+  assert.equal(state.position, 12);
+  const firstDeck = state.audioId;
+  assert.equal(state.playing, true);
+  assert.equal(state.audible, true);
+  assert.equal(queueOpened, true);
+  assert.equal(state.fading, false);
+  assert.equal(state.mixing, false); // Un drapeau moteur obsolète ne suspend pas la progression.
+  window.__octaveEngine.isFading = false;
+  audio.paused = true;
+  audio.currentTime = 18;
+  state = window.novaOctave('sample');
+  assert.equal(state.playing, false);
+  assert.equal(state.fading, false);
+  assert.equal(state.position, 18);
+
+  audio.paused = false;
+  window.__octaveEngine.active = audio;
+  window.novaOctave('sample');
+  const incoming = new window.Audio();
+  Object.assign(incoming, { duration: 178, currentTime: 1.2, paused: false, ended: false, readyState: 4 });
+  window.__octaveEngine.active = incoming;
+  audio.currentTime = 249;
+  state = window.novaOctave('sample');
+  assert.equal(state.mixing, true); // Le second lecteur a démarré avant le drapeau Octave.
+  assert.equal(state.outgoingPosition, 249);
+  assert.notEqual(state.audioId, firstDeck);
+  assert.equal(state.position, 1.2);
+  window.__octaveEngine.isFading = true;
+  audio.paused = true;
+  title.textContent = 'Titre suivant';
+  incoming.currentTime = 4;
+  state = window.novaOctave('sample');
+  assert.equal(state.fading, false);
+  assert.equal(state.outgoingPosition, undefined);
+  assert.equal(state.title, 'Titre suivant');
+  assert.equal(state.duration, 178);
+  assert.equal(state.position, 4);
+  incoming.readyState = 2;
+  assert.equal(window.novaOctave('sample').buffering, true);
+  window.__octavePlayerStore = {getState:()=>({currentTrack:{id:900,title:'Titre réellement lu',artist:{name:'Artiste suivant'},album:{title:'Album suivant',cover_big:'https://example.com/new.jpg'}}})};
+  state = window.novaOctave('sample');
+  assert.equal(state.id,'900');assert.equal(state.title,'Titre réellement lu');
+  assert.equal(state.artist,'Artiste suivant');assert.equal(state.position,4);
+});
+
+test('a metadata change on the same deck and clock does not commit a handoff', () => {
+  const previous = { audioId: 1, position: 174, duration: 175 };
+  const earlyMetadata = { ...previous, position: 174.5, title: 'Upcoming track' };
+  assert.equal(octaveHandoff(previous, earlyMetadata), false);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, duration: 200 }), false);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, audioId: 2 }), true);
+  assert.equal(octaveHandoff(previous, { ...earlyMetadata, position: 1 }), true);
+});
+
+test('the overlap keeps full gain at each endpoint and bounds the sum of both gains', () => {
+  assert.deepEqual(mixVolumes(0), [0, 1]);
+  assert.deepEqual(mixVolumes(1), [1, 0]);
+  let previous = 0;
+  for (let step = 1; step <= 100; step++) {
+    const [incoming, outgoing] = mixVolumes(step / 100);
+    assert(incoming >= previous && outgoing >= 0);
+    assert(incoming + outgoing <= 1);
+    previous = incoming;
+  }
+});

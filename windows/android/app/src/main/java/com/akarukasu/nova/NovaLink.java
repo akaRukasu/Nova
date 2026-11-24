@@ -11,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -141,6 +142,92 @@ class NovaLink {
 
     void unpair() {
         prefs.edit().putString("token", newToken()).putBoolean("paired", false).remove("phoneName").remove("lastSync").apply();
+    }
+
+    interface HistoryCallback { void complete(String history, String error); }
+    private volatile String libraryETag = null;
+    private volatile String libraryPeer = null;
+
+    void exchangeHistory(String host, int port, String token, String json, HistoryCallback callback) {
+        transferJSON(host, port, token, "POST", "/history", json, 4_000_000, callback);
+    }
+
+    void transferLibrary(String host, int port, String token, String direction, String json, HistoryCallback callback) {
+        boolean download = "download".equals(direction);
+        transferJSON(host, port, token, download ? "GET" : "POST", download ? "/library" : "/sync", json, 300_000_000, callback);
+    }
+
+    private void transferJSON(String host, int port, String token, String method, String path, String json, int limit, HistoryCallback callback) {
+        pool.execute(() -> {
+            try {
+                if (host == null || !host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}") || port < 1 || port > 65535
+                        || token == null || !token.matches("[0-9a-f]{32}") || json == null) {
+                    throw new IllegalArgumentException("Lien de synchronisation Nova invalide.");
+                }
+                InetAddress address = InetAddress.getByName(host);
+                if (!(address instanceof Inet4Address) || !(address.isSiteLocalAddress() || address.isLinkLocalAddress())) {
+                    throw new IllegalArgumentException("Le PC doit être sur ton réseau local.");
+                }
+                byte[] body = json.getBytes(StandardCharsets.UTF_8);
+                String peer = host + ":" + port + ":" + token;
+                if (!peer.equals(libraryPeer)) { libraryPeer = peer; libraryETag = null; }
+                if (body.length > limit) throw new IllegalArgumentException("La bibliothèque est trop volumineuse.");
+                try (Socket socket = new Socket()) {
+                    socket.connect(new InetSocketAddress(address, port), 4000);
+                    socket.setSoTimeout(90000);
+                    String header = method + " " + path + " HTTP/1.1\r\nHost: " + host + ":" + port
+                            + "\r\nConnection: close\r\nContent-Type: application/json\r\nX-Nova-Token: " + token
+                            + "\r\nX-Nova-Device: Android"
+                            + ("GET".equals(method) && libraryETag != null ? "\r\nIf-None-Match: " + libraryETag : "")
+                            + "\r\nContent-Length: " + body.length + "\r\n\r\n";
+                    OutputStream out = socket.getOutputStream();
+                    out.write(header.getBytes(StandardCharsets.US_ASCII));
+                    out.write(body);
+                    out.flush();
+                    InputStream in = new BufferedInputStream(socket.getInputStream());
+                    ByteArrayOutputStream response = new ByteArrayOutputStream();
+                    int tail = 0;
+                    while (tail != 0x0D0A0D0A) {
+                        int value = in.read();
+                        if (value < 0 || response.size() >= 8192) throw new java.io.IOException();
+                        response.write(value);
+                        tail = (tail << 8) | value;
+                    }
+                    String[] lines = response.toString("US-ASCII").split("\r\n");
+                    if ("GET".equals(method) && lines[0].contains(" 304 ")) {
+                        callback.complete("{\"notModified\":true}", null); return;
+                    }
+                    if (lines[0].contains(" 403 ")) {
+                        callback.complete(null, "Le PC a refusé l’association. Copie un nouveau lien dans Nova pour Windows.");
+                        return;
+                    }
+                    int length = -1;
+                    String receivedETag = null;
+                    for (String line : lines) {
+                        if ("GET".equals(method) && line.toLowerCase(Locale.ROOT).startsWith("etag:")) receivedETag = line.substring(5).trim();
+                        if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+                            length = Integer.parseInt(line.substring(15).trim());
+                        }
+                    }
+                    if (!lines[0].contains(" 200 ") || length < 1 || length > limit) {
+                        callback.complete(null, "Mets Nova à jour sur le PC pour synchroniser l’historique.");
+                        return;
+                    }
+                    byte[] payload = new byte[length];
+                    for (int offset = 0; offset < length;) {
+                        int count = in.read(payload, offset, length - offset);
+                        if (count < 0) throw new java.io.IOException();
+                        offset += count;
+                    }
+                    if ("GET".equals(method)) libraryETag = receivedETag;
+                    callback.complete(new String(payload, StandardCharsets.UTF_8), null);
+                }
+            } catch (IllegalArgumentException error) {
+                callback.complete(null, error.getMessage());
+            } catch (Exception error) {
+                callback.complete(null, "PC inaccessible. Ouvre Nova sur le PC et vérifie le réseau local.");
+            }
+        });
     }
 
     void setRemoteState(String state) {

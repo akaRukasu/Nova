@@ -7,12 +7,13 @@ on:
       - "Nova/Services/**"
       - "Tools/Diagnostic/**"
       - "Tools/AutoMixTest/**"
+      - "Tools/OctaveTest/**"
       - ".github/workflows/diagnostic.yml"
   workflow_dispatch:
 
 jobs:
   diagnostic:
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +27,7 @@ jobs:
             Nova/Models/*.swift \
             Nova/Services/InnerTubeParser.swift \
             Nova/Services/InnerTubeClient.swift \
+            Nova/Services/OctaveCatalog.swift \
             Nova/Services/Account.swift \
             Nova/Services/ImportSources.swift \
             Nova/Services/PlaybackSettings.swift \
@@ -33,6 +35,7 @@ jobs:
             Nova/Services/ArtworkResolver.swift \
             Nova/Services/LyricsService.swift \
             Nova/Services/LibraryStore.swift \
+            Nova/Services/OctaveBackup.swift \
             Nova/Services/SharedPlaylists.swift \
             Tools/Diagnostic/main.swift \
             -o diag/nova-diagnostic
@@ -43,6 +46,7 @@ jobs:
             Nova/Models/*.swift \
             Nova/Services/InnerTubeParser.swift \
             Nova/Services/InnerTubeClient.swift \
+            Nova/Services/OctaveCatalog.swift \
             Nova/Services/Account.swift \
             Nova/Services/ImportSources.swift \
             Nova/Services/PlaybackSettings.swift \
@@ -50,6 +54,7 @@ jobs:
             Nova/Services/ArtworkResolver.swift \
             Nova/Services/LyricsService.swift \
             Nova/Services/LibraryStore.swift \
+            Nova/Services/OctaveBackup.swift \
             Nova/Services/SharedPlaylists.swift \
             Nova/Services/AudioAnalysis.swift \
             Tools/AutoMixTest/main.swift \
@@ -60,3 +65,23 @@ jobs:
         env:
           TICKETMASTER_KEY: ${{ secrets.TICKETMASTER_KEY }}
         run: ./diag/nova-diagnostic
+
+      - name: Vérifier le catalogue Octave et la fusion de l’historique
+        run: |
+          xcrun --sdk macosx swiftc -O \
+            Nova/Models/*.swift \
+            Nova/Services/InnerTubeParser.swift \
+            Nova/Services/InnerTubeClient.swift \
+            Nova/Services/OctaveCatalog.swift \
+            Nova/Services/Account.swift \
+            Nova/Services/ImportSources.swift \
+            Nova/Services/PlaybackSettings.swift \
+            Nova/Services/DiscoverySources.swift \
+            Nova/Services/ArtworkResolver.swift \
+            Nova/Services/LyricsService.swift \
+            Nova/Services/LibraryStore.swift \
+            Nova/Services/OctaveBackup.swift \
+            Nova/Services/SharedPlaylists.swift \
+            Tools/OctaveTest/main.swift \
+            -o diag/octave-test
+          ./diag/octave-test

@@ -344,12 +344,11 @@ struct MixPlan: Sendable, Equatable {
     let outgoingGain: Double
     let incomingGain: Double
 
-    /// Volumes (entrant, sortant) à l'instant `t` du mélange (0 → 1) : puissance constante (ni creux ni bosse),
-    /// avec une courbe douce aux extrémités.
+    /// Courbe douce avec une somme de gains plafonnée pendant le recouvrement.
     static func volumes(at t: Double) -> (incoming: Double, outgoing: Double) {
         let x = min(max(t, 0), 1)
         let u = x * x * (3 - 2 * x)
-        return (sin(.pi / 2 * u), cos(.pi / 2 * u))
+        return (u, 1 - u)
     }
 
     /// Gain de l'égaliseur de volume : les titres plus forts que la cible sont baissés (jamais montés).

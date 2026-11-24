@@ -57,7 +57,7 @@ final class DownloadStore {
 
     func download(_ list: [Track]) {
         var seen = Set(pending.map(\.id))
-        for track in list where !downloadedIDs.contains(track.id) && seen.insert(track.id).inserted {
+        for track in list where !track.id.hasPrefix("local:") && !downloadedIDs.contains(track.id) && seen.insert(track.id).inserted {
             pending.append(track)
         }
         failedCount = 0

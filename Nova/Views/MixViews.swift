@@ -4,6 +4,7 @@ import SwiftUI
 struct MixesRow: View {
     @Environment(LibraryStore.self) private var library
     @State private var entries: [Entry] = []
+    var compactGrid = false
 
     struct Entry: Identifiable {
         let kind: MixKind
@@ -30,7 +31,18 @@ struct MixesRow: View {
                 Text("Tes mix")
                     .font(.title2.weight(.bold))
                     .padding(.horizontal, 16)
-                ScrollView(.horizontal, showsIndicators: false) {
+                if compactGrid {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        ForEach(entries.prefix(4)) { entry in
+                            NavigationLink(value: Route.mix(entry.kind)) {
+                                MixCard(kind: entry.kind, previews: entry.previews, titleFont: .headline.weight(.heavy))
+                                    .frame(height: 108)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                } else { ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 14) {
                         ForEach(entries) { entry in
                             NavigationLink(value: Route.mix(entry.kind)) {
@@ -51,6 +63,7 @@ struct MixesRow: View {
                     .padding(.horizontal, 16)
                 }
                 .scrollTargetBehavior(.viewAligned)
+                }
             }
     }
 }
